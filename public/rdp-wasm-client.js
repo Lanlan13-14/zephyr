@@ -1,3 +1,4 @@
+import { installTerminalSftpPro } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui123';
 /**
  * rdp-wasm-client.js — Zephyr RDP Client powered by grdp WASM
  *
@@ -3409,6 +3410,13 @@ window.addEventListener('message', (e) => {
     updateInfo();
     initToolbar();
     initFilePanel();
+    try {
+        installTerminalSftpPro({
+            showToast: (m, k) => showNotesToast(m, k),
+            t,
+            hostName: params?.name || params?.host || 'RDP',
+        });
+    } catch (_) {}
     loadRemoteNotesSettings();
     // render20 no longer navigates the iframe for resize reconnects. Discard
     // any transition snapshot left by the legacy reload path.

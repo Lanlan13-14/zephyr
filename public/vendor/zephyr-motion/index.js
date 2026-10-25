@@ -5,7 +5,7 @@
  *   // or after load: window.Motion
  */
 import { engine, Engine } from './runtime.js';
-import { Motion } from './motion.js?v=20261019-ui122';
+import { Motion } from './motion.js?v=20261019-ui123';
 import { PRESETS, MOTION_STANDARDS, STANDARD_FALLBACKS, resolvePreset } from './presets.js';
 
 export { engine, Engine, Motion, PRESETS, MOTION_STANDARDS, STANDARD_FALLBACKS, resolvePreset };

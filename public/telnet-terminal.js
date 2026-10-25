@@ -1,4 +1,4 @@
-import { StreamingCharsetDecoder } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui122';
+import { installTerminalSftpPro, StreamingCharsetDecoder } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui123';
 /* Telnet terminal page — no SFTP / Docker / remote stats. Fork of terminal.js. */
 // terminal-grid-converge1 supersedes terminal-stability1 / kb-xterm-fit2 / aux-bar-fly1.
 import { applyZephyrColorScheme } from './theme-runtime.js?v=20260615-visual-color-picker';
@@ -34,7 +34,7 @@ import {
     ensureFloatingPanelPhysicsDrag,
     consumeLayoutClickSuppression,
     markLayoutClickSuppressed,
-} from './floating-panel.js?v=20261019-ui122';
+} from './floating-panel.js?v=20261019-ui123';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20260830-desktop-panel-pin8';
 
 /** @type {ReturnType<typeof createTerminalSurfaceController> | null} */
@@ -2127,7 +2127,7 @@ wtermThemeToggle?.addEventListener('click', () => {
     applyWtermTheme(currentMode === 'light' ? 'default' : 'light');
 });
 
-themeToggle.addEventListener('click', () => {
+themeToggle?.addEventListener('click', () => {
     const current = document.documentElement.getAttribute('data-theme');
     applyTheme(current === 'dark' ? 'light' : 'dark', { terminalOverride: true });
 });
@@ -3584,7 +3584,7 @@ fontIncreaseBtn?.addEventListener('click', () => applyTerminalFontSize(terminalF
 setupTerminalPinchZoom();
 
 // ---------- 复制功能 ----------
-copyBtn.addEventListener('click', async () => {
+copyBtn?.addEventListener('click', async () => {
     const text = getCopyableSelectionText();
     if (!text) {
         toast?.(t('请先选择要复制的终端内容'));
@@ -3641,8 +3641,8 @@ pasteBtn?.addEventListener('click', async () => {
     }
 });
 
-copyBtn.addEventListener('pointerdown', (e) => e.preventDefault(), { passive: false });
-copyBtn.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+copyBtn?.addEventListener('pointerdown', (e) => e.preventDefault(), { passive: false });
+copyBtn?.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
 pasteBtn?.addEventListener('pointerdown', (e) => e.preventDefault(), { passive: false });
 pasteBtn?.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
 
@@ -4013,11 +4013,11 @@ function ensureTransferPopover() {
     transferPopover.innerHTML = `<div class="transfer-popover-head"><strong>${t('文件传输')}</strong><button type="button" class="transfer-popover-close" aria-label="${t('关闭')}">×</button></div><div class="transfer-popover-body"></div>`;
     document.body.appendChild(transferPopover);
     transferPopover.querySelector('.transfer-popover-close')?.addEventListener('click', (e) => { e.stopPropagation(); hideTransferPopover(true); });
-    transferPopover.addEventListener('pointerdown', (e) => {
+    transferPopover?.addEventListener('pointerdown', (e) => {
         if (e.target.closest?.('[data-transfer-action]')) return;
         e.stopPropagation();
     });
-    transferPopover.addEventListener('pointerenter', () => window.clearTimeout(transferPopoverHideTimer));
+    transferPopover?.addEventListener('pointerenter', () => window.clearTimeout(transferPopoverHideTimer));
     return transferPopover;
 }
 
@@ -4586,7 +4586,7 @@ const terminalToastMotion = {
     _ensure() {
         if (this.engine) return Promise.resolve(this.engine);
         if (this._p) return this._p;
-        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui122')
+        this._p = import('./vendor/zephyr-motion/index.js?v=20261019-ui123')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
@@ -5127,7 +5127,7 @@ function refreshFileList() {
     wsConnection.send(JSON.stringify({ type: 'sftp-list', path: currentPath }));
     fmPathInput.value = currentPath;
 }
-fmRefreshBtn.addEventListener('click', refreshFileList);
+fmRefreshBtn?.addEventListener('click', refreshFileList);
 
 function navigateTo(path) {
     currentPath = path;
@@ -5137,22 +5137,22 @@ function navigateTo(path) {
     updateMobileFileActions();
     refreshFileList();
 }
-fmGoBtn.addEventListener('click', () => {
+fmGoBtn?.addEventListener('click', () => {
     const p = fmPathInput.value.trim();
     if (p) navigateTo(p);
 });
-fmPathInput.addEventListener('keydown', (e) => {
+fmPathInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
         const p = fmPathInput.value.trim();
         if (p) navigateTo(p);
     }
 });
-fmBackBtn.addEventListener('click', () => {
+fmBackBtn?.addEventListener('click', () => {
     const parts = currentPath.replace(/\/+$/, '').split('/');
     parts.pop();
     navigateTo(parts.join('/') || '/');
 });
-fmSearchInput.addEventListener('input', () => {
+fmSearchInput?.addEventListener('input', () => {
     searchQuery = fmSearchInput.value.trim();
     renderFileList(allFiles);
 });
@@ -5264,7 +5264,7 @@ fmPasteBtn?.addEventListener('click', (e) => {
     handleFileMenuAction('paste');
 });
 window.addEventListener('resize', updateMobileFileActions);
-fmList.addEventListener('click', (e) => {
+fmList?.addEventListener('click', (e) => {
     if (e.target.closest('.fm-item-actions') || fileContextMenu?.classList.contains('show')) return;
     const item = e.target.closest('.fm-item');
     if (!item) { clearFileSelection(); return; }
@@ -5274,7 +5274,7 @@ fmList.addEventListener('click', (e) => {
     else if (isTouchLikeDevice() && mobileFileSelectMode) toggleFileSelection(filePath);
     else selectSingleFile(filePath);
 });
-fmList.addEventListener('dblclick', (e) => {
+fmList?.addEventListener('dblclick', (e) => {
     if (e.target.closest('.fm-item-actions') || fileContextMenu?.classList.contains('show')) return;
     const item = e.target.closest('.fm-item');
     if (!item) return;
@@ -5285,14 +5285,14 @@ fmList.addEventListener('dblclick', (e) => {
     e.stopPropagation();
     openFileItem(filePath, fileType);
 });
-fmList.addEventListener('contextmenu', (e) => {
+fmList?.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const item = e.target.closest('.fm-item');
     if (item?.dataset.filePath && !selectedFilePaths.has(item.dataset.filePath)) selectSingleFile(item.dataset.filePath);
     else if (!item) clearFileSelection();
     showFileContextMenu(e.clientX, e.clientY, !!item);
 });
-fmList.addEventListener('touchstart', (e) => {
+fmList?.addEventListener('touchstart', (e) => {
     const item = e.target.closest('.fm-item');
     if (!item) return;
     const touch = e.touches?.[0];
@@ -5303,7 +5303,7 @@ fmList.addEventListener('touchstart', (e) => {
         showFileContextMenu(touch?.clientX || 24, touch?.clientY || 24, true);
     }, mobileFileSelectMode ? 900 : 460);
 }, { passive: true });
-['touchend', 'touchmove', 'touchcancel'].forEach((name) => fmList.addEventListener(name, () => clearTimeout(fileLongPressTimer), { passive: true }));
+['touchend', 'touchmove', 'touchcancel'].forEach((name) => fmList?.addEventListener(name, () => clearTimeout(fileLongPressTimer), { passive: true }));
 
 function svgIcon(name) {
     const icons = {
@@ -5334,8 +5334,8 @@ function ensureFileContextMenu() {
     fileContextMenu.className = 'fm-context-menu';
     document.body.appendChild(fileContextOverlay);
     document.body.appendChild(fileContextMenu);
-    fileContextOverlay.addEventListener('click', hideFileContextMenu);
-    fileContextMenu.addEventListener('click', (e) => {
+    fileContextOverlay?.addEventListener('click', hideFileContextMenu);
+    fileContextMenu?.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
         const action = btn.dataset.action;
@@ -5500,8 +5500,8 @@ function ensureFilePropertiesModal() {
     filePropertiesModal.className = 'fm-props-modal';
     document.body.appendChild(filePropertiesOverlay);
     document.body.appendChild(filePropertiesModal);
-    filePropertiesOverlay.addEventListener('click', hideFilePropertiesModal);
-    filePropertiesModal.addEventListener('click', (e) => {
+    filePropertiesOverlay?.addEventListener('click', hideFilePropertiesModal);
+    filePropertiesModal?.addEventListener('click', (e) => {
         const closeBtn = e.target.closest('[data-props-close]');
         if (closeBtn) { hideFilePropertiesModal(); return; }
         const copyBtn = e.target.closest('[data-props-copy-path]');
@@ -5762,13 +5762,13 @@ function renderFileList(files) {
 }
 
 // 新建文件夹
-fmNewFolderBtn.addEventListener('click', () => {
+fmNewFolderBtn?.addEventListener('click', () => {
     const name = prompt(t('请输入文件夹名称:'));
     if (!name) return;
     wsConnection.send(JSON.stringify({ type: 'sftp-mkdir', path: currentPath.replace(/\/+$/, '') + '/' + name }));
 });
 // 新建文件
-fmNewFileBtn.addEventListener('click', () => {
+fmNewFileBtn?.addEventListener('click', () => {
     const name = prompt(t('请输入文件名:'));
     if (!name) return;
     wsConnection.send(JSON.stringify({ type: 'sftp-touch', path: currentPath.replace(/\/+$/, '') + '/' + name }));
@@ -6024,7 +6024,7 @@ document.addEventListener('pointerdown', (e) => {
 }, { capture: true });
 window.addEventListener('resize', () => { if (transferPopover?.classList.contains('open')) positionTransferPopover(); });
 
-fmUploadInput.addEventListener('change', (e) => {
+fmUploadInput?.addEventListener('change', (e) => {
     uploadFiles(e.target.files);
     fmUploadInput.value = '';
 });
@@ -6061,20 +6061,20 @@ document.addEventListener('drop', (e) => {
 }, { passive: false });
 
 // 直接在文件管理器上处理拖拽
-fmDropOverlay.addEventListener('dragenter', (e) => {
+fmDropOverlay?.addEventListener('dragenter', (e) => {
     if (!hasDraggedFiles(e)) return;
     e.preventDefault();
     e.stopPropagation();
 }, { passive: false });
 
-fmDropOverlay.addEventListener('dragover', (e) => {
+fmDropOverlay?.addEventListener('dragover', (e) => {
     if (!hasDraggedFiles(e)) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'copy';
 }, { passive: false });
 
-fmDropOverlay.addEventListener('drop', (e) => {
+fmDropOverlay?.addEventListener('drop', (e) => {
     if (!hasDraggedFiles(e)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -6083,7 +6083,7 @@ fmDropOverlay.addEventListener('drop', (e) => {
     uploadFiles(e.dataTransfer?.files);
 }, { passive: false });
 
-fmList.addEventListener('dragenter', (e) => {
+fmList?.addEventListener('dragenter', (e) => {
     if (!hasDraggedFiles(e)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -6091,7 +6091,7 @@ fmList.addEventListener('dragenter', (e) => {
     setFileDragActive(true);
 }, { passive: false });
 
-fmList.addEventListener('dragover', (e) => {
+fmList?.addEventListener('dragover', (e) => {
     if (!hasDraggedFiles(e)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -6099,13 +6099,13 @@ fmList.addEventListener('dragover', (e) => {
     setFileDragActive(true);
 }, { passive: false });
 
-fmList.addEventListener('dragleave', (e) => {
+fmList?.addEventListener('dragleave', (e) => {
     if (!hasDraggedFiles(e)) return;
     fileDragDepth = Math.max(0, fileDragDepth - 1);
     if (fileDragDepth === 0) setFileDragActive(false);
 }, { passive: true });
 
-fmList.addEventListener('drop', (e) => {
+fmList?.addEventListener('drop', (e) => {
     if (!hasDraggedFiles(e)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -11467,7 +11467,7 @@ function toggleInfoModal() {
 
 infoBtn?.addEventListener('click', toggleInfoModal);
 
-infoCloseBtn.addEventListener('click', hideInfoModal);
+infoCloseBtn?.addEventListener('click', hideInfoModal);
 
 // ---------- 浮动面板拖动 / 缩放 ----------
 const panelState = new WeakMap();
@@ -11816,6 +11816,7 @@ function bringPanelToFront(panel) {
 }
 
 function setupFloatingPanel(panel, options) {
+    if (!panel) return;
     ensureFloatingPanel(panel, options);
     panel.addEventListener('pointerdown', (event) => {
         if (event.target.closest('.panel-traffic-btn, .panel-layout-menu')) return;
@@ -13243,7 +13244,7 @@ async function main() {
     }
 }
 
-reconnectBtn.addEventListener('click', reconnect);
+reconnectBtn?.addEventListener('click', reconnect);
 
 // ---------- 移动端软键盘处理 ----------
 function handleKeyboardShow() {
@@ -13270,7 +13271,7 @@ window.addEventListener('orientationchange', () => {
         else if (isMobileStableInputMode()) scheduleTerminalResize('orientationchange-settled', 900);
     }, 300);
 });
-disconnectBtn.addEventListener('click', () => {
+disconnectBtn?.addEventListener('click', () => {
     disconnect({ userInitiated: true });
     sessionStorage.removeItem(params?.tabId ? `zephyr_ssh_params_${params.tabId}` : 'zephyr_ssh_params');
     if (embeddedMode) {
@@ -13288,6 +13289,31 @@ window.addEventListener('beforeunload', () => {
     closeWebSocketOnly(t('页面卸载'), { sendDisconnect: !shouldDetach });
 });
 
+let telnetSftpPro = null;
+function ensureTelnetProInitialized() {
+    if (telnetSftpPro) return telnetSftpPro;
+    telnetSftpPro = installTerminalSftpPro({
+        getTerm: () => term,
+        getWs: () => wsConnection,
+        showToast: (m, k) => showToast(m, k),
+        t,
+        hostName: params?.name || params?.host || 'Telnet',
+    });
+    window.__zephyrSftpPro = telnetSftpPro;
+    return telnetSftpPro;
+}
+window.addEventListener('message', (ev) => {
+    const d = ev.data;
+    if (!d) return;
+    if (d.source === 'zephyr-app' && d.type === 'zephyr-pane-slot') {
+        window.__zephyrBroadcastInputActive = !!d.broadcastActive;
+    } else if (d.source === 'zephyr-app' && d.type === 'zephyr-broadcast-input-forward') {
+        if (d.data) sendData(d.data, { source: 'broadcast-peer', applyModifiers: false });
+    } else if (d.source === 'zephyr-app' && d.type === 'zephyr-inject-code') {
+        if (d.code) sendData(d.code, { normalizeNewlines: true, source: 'code-card-inject', forceFollow: true });
+    }
+});
+ensureTelnetProInitialized();
 main();
 requestParentSharedFileClipboard();
 

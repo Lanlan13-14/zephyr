@@ -1,4 +1,4 @@
-import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui122';
+import { Motion as ZephyrWasmMotion } from '../zephyr-motion/index.js?v=20261019-ui123';
 if (typeof window !== 'undefined' && ZephyrWasmMotion) { window.Motion = ZephyrWasmMotion; }
 
 export const IPV4_OR_IPV6_RE = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b|\[?(?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F:]+\]?(?::\d{1,5})?/g;
@@ -522,6 +522,7 @@ export function installTerminalSftpPro(ctx) {
   }
 
   function ensurePortForwardPanel() {
+    if (!document.getElementById('fileBtn')) return;
     const topbarActions = document.getElementById('topbarActions');
     if (topbarActions && !document.getElementById('portForwardBtn')) {
       const btn = document.createElement('button');
@@ -903,6 +904,10 @@ export function installTerminalSftpPro(ctx) {
     snippetPanel: 'snippetBtn',
     terminalNotesPanel: 'notesBtn',
     shortcutPanel: 'shortcutBtn',
+    clipboardPanel: 'clipboardBtn',
+    filesPanel: 'rdpFilesBtn',
+    shortcutsPanel: 'shortcutsBtn',
+    joystickPanel: (typeof document !== 'undefined' && document.getElementById('joystickBtn')) ? 'joystickBtn' : 'dragBtn',
   };
 
   function ensureDesktopEmbedFlag() {
@@ -2377,8 +2382,8 @@ export function installTerminalSftpPro(ctx) {
       aiBtn.style.display = 'none';
       aiBtn.title = t('AI 助手');
       aiBtn.setAttribute('aria-label', t('AI 助手'));
-      const shortcutBtn = document.getElementById('shortcutBtn');
-      const copyBtn = document.getElementById('copyBtn');
+      const shortcutBtn = document.getElementById('shortcutBtn') || document.getElementById('shortcutsBtn');
+      const copyBtn = document.getElementById('copyBtn') || document.getElementById('ctrlAltDelBtn') || document.getElementById('cadBtn');
       if (shortcutBtn && shortcutBtn.parentElement === topbarActions) {
         shortcutBtn.insertAdjacentElement('afterend', aiBtn);
       } else if (copyBtn && copyBtn.parentElement === topbarActions) {
@@ -2426,6 +2431,13 @@ export function installTerminalSftpPro(ctx) {
       { id: 'terminalAiBtn', label: 'AI', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6l1.4 1.4m10 10l1.4 1.4M5.6 18.4l1.4-1.4m10-10l1.4-1.4"/></svg>' },
       { id: 'copyBtn', label: '复制', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' },
       { id: 'pasteBtn', label: '粘贴', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>' },
+      { id: 'clipboardBtn', label: '剪贴板', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>' },
+      { id: 'rdpFilesBtn', label: '文件', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>' },
+      { id: 'shortcutsBtn', label: '快捷键', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="6" y1="9" x2="6.01" y2="9"/><line x1="10" y1="9" x2="10.01" y2="9"/><line x1="14" y1="9" x2="14.01" y2="9"/><line x1="18" y1="9" x2="18.01" y2="9"/><line x1="8" y1="15" x2="16" y2="15"/></svg>' },
+      { id: 'joystickBtn', label: '视区', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/></svg>' },
+      { id: 'dragBtn', label: '视区', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/></svg>' },
+      { id: 'ctrlAltDelBtn', label: 'Ctrl+Alt+Del', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' },
+      { id: 'cadBtn', label: 'Ctrl+Alt+Del', svg: '<svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' },
     ];
 
     for (const spec of TOPBAR_BUTTON_SPECS) {
@@ -2451,6 +2463,14 @@ export function installTerminalSftpPro(ctx) {
     const disconnectBtn = document.getElementById('disconnectBtn');
     if (disconnectBtn) {
       disconnectBtn.style.display = 'none';
+    }
+    const themeToggleBtn = document.getElementById('themeToggle');
+    if (themeToggleBtn) {
+      themeToggleBtn.style.display = 'none';
+    }
+    const kbBtn = document.getElementById('keyboardBtn');
+    if (kbBtn && document.documentElement.dataset.zephyrSurface === 'desktop') {
+      kbBtn.style.display = 'none';
     }
 
     const notesBtn = document.getElementById('notesBtn');
@@ -2611,6 +2631,14 @@ export function installTerminalSftpPro(ctx) {
   }
 
   function upgradeAllTerminalFloatingPanels() {
+    const rootPage = document.querySelector('.terminal-page, .rdp-page, .novnc-page') || document.body;
+    if (rootPage && rootPage !== document.body && !rootPage.classList.contains('terminal-page')) {
+      rootPage.classList.add('terminal-page');
+    }
+    const remoteStage = document.getElementById('rdpStage') || document.getElementById('novncStage') || document.querySelector('.rdp-stage, .novnc-stage');
+    if (remoteStage && !remoteStage.classList.contains('terminal-container')) {
+      remoteStage.classList.add('terminal-container');
+    }
     upgradeTopbarAndCommandBar();
     ensureTerminalNotesPanel();
 
@@ -2787,6 +2815,94 @@ export function installTerminalSftpPro(ctx) {
           document.getElementById('notesBtn')?.classList.remove('active');
         },
       });
+    }
+
+    // Upgrade RDP & VNC Tier-1 floating panels (#clipboardPanel, #filesPanel, #shortcutsPanel, #joystickPanel)
+    const rdpVncPanelSpecs = [
+      {
+        id: 'clipboardPanel',
+        btnId: 'clipboardBtn',
+        title: '跨设备剪贴板',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>',
+      },
+      {
+        id: 'filesPanel',
+        btnId: 'rdpFilesBtn',
+        title: '远程文件剪贴板',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+      },
+      {
+        id: 'shortcutsPanel',
+        btnId: 'shortcutsBtn',
+        title: '快捷键',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg>',
+      },
+      {
+        id: 'joystickPanel',
+        btnId: document.getElementById('joystickBtn') ? 'joystickBtn' : 'dragBtn',
+        title: '视区摇杆',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent, #0A84FF)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/></svg>',
+      },
+    ];
+
+    for (const rspec of rdpVncPanelSpecs) {
+      const rPanel = document.getElementById(rspec.id);
+      if (!rPanel) continue;
+      if (rootPage && rPanel.parentElement !== rootPage) {
+        rootPage.appendChild(rPanel);
+      }
+      rPanel.querySelector('.rdp-panel-content > .rdp-panel-head')?.remove();
+      let topHead = rPanel.querySelector(':scope > .panel-titlebar');
+      if (!topHead) {
+        topHead = document.createElement('div');
+        topHead.className = 'snippet-panel-header panel-titlebar';
+        topHead.innerHTML = '<strong>' + rspec.title + '</strong>';
+        rPanel.insertBefore(topHead, rPanel.firstChild);
+      }
+      if (!rPanel.classList.contains('open')) {
+        rPanel.style.display = 'none';
+      }
+      ensureUnifiedPanelTitlebar(rPanel, {
+        titlebarEl: topHead,
+        iconSvg: rspec.svg,
+        titleText: rspec.title,
+        onClose: () => {
+          rPanel.classList.remove('open', 'front');
+          rPanel.hidden = true;
+          rPanel.setAttribute('hidden', '');
+          rPanel.style.display = 'none';
+          document.getElementById(rspec.btnId)?.classList.remove('active');
+        },
+      });
+      const rBtn = document.getElementById(rspec.btnId);
+      if (rBtn && !rBtn.dataset.unifiedRdpBtnBound) {
+        rBtn.dataset.unifiedRdpBtnBound = '1';
+        rBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopImmediatePropagation();
+          const isOpen = rPanel.classList.contains('open') && rPanel.style.display !== 'none';
+          if (isOpen) {
+            rBtn.classList.remove('active');
+            closeUnifiedPanel(rPanel, {
+              triggerBtn: rBtn,
+              onAfterClose: () => {
+                rPanel.hidden = true;
+                rPanel.setAttribute('hidden', '');
+              },
+            });
+          } else {
+            rPanel.hidden = false;
+            rPanel.removeAttribute('hidden');
+            ensureFloatingDefaultPosition(rPanel, { triggerBtn: rBtn });
+            rPanel.style.display = 'flex';
+            rPanel.classList.add('open');
+            rBtn.classList.add('active');
+            setFocusedFloatingPanel(rPanel);
+            getMotion()?.panelOpenWasm?.(rPanel, rBtn, { preset: 'mac' });
+            syncHostWindowDockAndFloatState();
+          }
+        }, true);
+      }
     }
 
     observeDynamicSecondaryWindows();

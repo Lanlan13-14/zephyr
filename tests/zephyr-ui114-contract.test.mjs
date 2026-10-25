@@ -100,3 +100,26 @@ test('UI120 & UI121 Contract: Zero-jump page transitions, toolbar horizontal scr
   assert.ok(specCss.includes('calc(100% - 16px) 100%,'));
   assert.ok(sftpProJs.includes('const dockedRight = !isInactiveSlot && rawDockedRight;'));
 });
+
+
+test('UI123 Contract: Telnet, RDP, and VNC are unified onto v4.0 floating/docked panel & toolbar architecture (zero AI-tile display bugs) and Settings UI matches topbar pill palette', () => {
+  const telnetJs = read('public/telnet-terminal.js');
+  const rdpJs = read('public/rdp-wasm-client.js');
+  const vncJs = read('public/novnc.js');
+  const rdpHtml = read('public/rdp.html');
+  const vncHtml = read('public/novnc.html');
+
+  assert.match(telnetJs, /installTerminalSftpPro/);
+  assert.match(rdpJs, /installTerminalSftpPro/);
+  assert.match(vncJs, /installTerminalSftpPro/);
+  assert.match(rdpHtml, /dataset.zephyrSurface = 'desktop'/);
+  assert.match(vncHtml, /dataset.zephyrSurface = 'desktop'/);
+
+  assert.ok(sftpProJs.includes("clipboardPanel: 'clipboardBtn'"));
+  assert.ok(sftpProJs.includes("filesPanel: 'rdpFilesBtn'"));
+  assert.ok(sftpProJs.includes("shortcutsPanel: 'shortcutsBtn'"));
+  assert.ok(specCss.includes('html[data-zephyr-surface="desktop"] .rdp-topbar > .status'));
+  assert.ok(specCss.includes('.terminal-page > .z-unified-panel.rdp-floating-panel.open'));
+  assert.ok(specCss.includes('html[data-theme="light"] #view-settings .settings-menu .settings-tab.active'));
+  assert.ok(specCss.includes('#view-settings #settings-appearance.active'));
+});

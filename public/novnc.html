@@ -5,9 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title data-i18n="Zephyr - VNC 远程桌面">Zephyr - VNC 远程桌面</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
-    <link rel="stylesheet" href="style.css?v=20261019-ui122">
-    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261019-ui122">
+    <link rel="stylesheet" href="style.css?v=20261019-ui123">
+    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261019-ui123">
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
+<script>
+(function(){
+  try {
+    var sp = new URLSearchParams(location.search);
+    var isDesktop = sp.get('desktop') === '1' || sp.get('embed') === '1' || (window.innerWidth >= 761);
+    if (isDesktop) {
+      document.documentElement.dataset.zephyrSurface = 'desktop';
+      document.documentElement.classList.remove('mobile-stable-input');
+    }
+    var th = sp.get('theme') || (window.parent !== window && window.parent.document && window.parent.document.documentElement.dataset.theme);
+    if (th === 'light' || th === 'dark') {
+      document.documentElement.dataset.theme = th;
+    }
+  } catch (_){}
+})();
+</script>
 </head>
 <body>
     <div class="novnc-page rdp-page">

@@ -1,3 +1,4 @@
+import { installTerminalSftpPro } from './vendor/zephyr-pro/terminal-sftp-pro.js?v=20261019-ui123';
 import RFB from '/vendor/novnc/core/rfb.js';
 import { t, initI18n } from './i18n/runtime.js?v=20260728-ai-handle-only-drag1';
 import KeyTable from '/vendor/novnc/core/input/keysym.js';
@@ -1034,5 +1035,15 @@ function bindEvents() {
 
 applyDisplayOptions();
 bindEvents();
+try {
+    installTerminalSftpPro({
+        showToast: (m, k) => showNotesToast(m, k),
+        t,
+        hostName: params?.name || params?.host || 'VNC',
+    });
+    if (stage && typeof ResizeObserver === 'function') {
+        new ResizeObserver(() => refreshDisplaySize()).observe(stage);
+    }
+} catch (_) {}
 loadRemoteNotesSettings();
 connect();

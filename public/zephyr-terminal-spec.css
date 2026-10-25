@@ -6040,3 +6040,538 @@ body.app-body.terminal-mode #terminalWorkspace.z-view-entering,
   transform: translate3d(var(--z-view-enter-x, 0px), var(--z-view-enter-y, 0px), 0) !important;
   will-change: transform, opacity !important;
 }
+
+
+/* 27.8 UI123：Telnet / RDP / VNC 终端与远程桌面 UI 全面统一（对齐 v4.0 浮窗/磁贴/工具栏/AI磁贴零割裂） + 设置页面（#view-settings）Apple System Settings 级重设计 */
+
+/* ── A. Telnet / RDP / VNC 与 SSH 终端 v4.0 全面统一（消除双顶栏、内层双圆角、AI磁贴背面白边与旧版浮窗） ── */
+html[data-zephyr-surface="desktop"] .rdp-page,
+html[data-zephyr-surface="desktop"] .novnc-page,
+html[data-zephyr-surface="desktop"] .novnc-page.rdp-page,
+body.desktop-embed .rdp-page,
+body.desktop-embed .novnc-page {
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+html[data-zephyr-surface="desktop"] .rdp-page > .terminal-topbar,
+html[data-zephyr-surface="desktop"] .novnc-page > .terminal-topbar,
+html[data-zephyr-surface="desktop"] .rdp-topbar,
+html[data-zephyr-surface="desktop"] .novnc-topbar,
+body.desktop-embed .rdp-topbar,
+body.desktop-embed .novnc-topbar {
+  min-height: 44px !important;
+  height: 44px !important;
+  max-height: 44px !important;
+  padding: 4px 10px !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  margin-bottom: 0 !important;
+  border-radius: 0 !important;
+  border-top: 0 !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+  box-shadow: none !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+}
+html[data-zephyr-surface="desktop"] .terminal-page:not(.has-docked-right):not(.has-docked-left):not(.z-dock-cols-morphing) > .rdp-topbar,
+html[data-zephyr-surface="desktop"] .terminal-page:not(.has-docked-right):not(.has-docked-left):not(.z-dock-cols-morphing) > .novnc-topbar,
+html[data-zephyr-surface="desktop"] .terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .rdp-topbar,
+html[data-zephyr-surface="desktop"] .terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .novnc-topbar {
+  margin-top: 0 !important;
+}
+
+html[data-zephyr-surface="desktop"] .rdp-topbar > .status,
+html[data-zephyr-surface="desktop"] .rdp-topbar > .info,
+html[data-zephyr-surface="desktop"] .novnc-topbar > .status,
+html[data-zephyr-surface="desktop"] .novnc-topbar > .info,
+body.desktop-embed .rdp-topbar > .status,
+body.desktop-embed .rdp-topbar > .info,
+body.desktop-embed .novnc-topbar > .status,
+body.desktop-embed .novnc-topbar > .info {
+  display: none !important;
+}
+
+html[data-zephyr-surface="desktop"] .rdp-page .topbar-actions,
+html[data-zephyr-surface="desktop"] .novnc-page .topbar-actions,
+html[data-zephyr-surface="desktop"] .novnc-page .novnc-toolbar.topbar-actions,
+body.desktop-embed .rdp-page .topbar-actions,
+body.desktop-embed .novnc-page .topbar-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  width: 100% !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  margin: 0 !important;
+  padding: 3px 6px !important;
+  gap: 4px !important;
+  border-radius: 9px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  scrollbar-width: none !important;
+}
+html[data-zephyr-surface="desktop"] .novnc-page .novnc-toolbar.topbar-actions::-webkit-scrollbar,
+html[data-zephyr-surface="desktop"] .rdp-page .topbar-actions::-webkit-scrollbar {
+  display: none !important;
+  height: 0 !important;
+}
+
+/* 当工具栏按钮已注入统一 .tb-ico SVG 时，隐藏旧版彩色 mask ::before 图标，并统一其余图标为 currentColor */
+.topbar-actions .btn-sm:has(> .tb-ico)::before {
+  display: none !important;
+  content: none !important;
+}
+html[data-zephyr-surface="desktop"] .rdp-page .topbar-actions .btn-sm[data-rdp-icon],
+html[data-zephyr-surface="desktop"] .novnc-page .topbar-actions .btn-sm[data-vnc-icon] {
+  --rdp-toolbar-icon-color: currentColor !important;
+  --vnc-toolbar-icon-color: currentColor !important;
+}
+html[data-zephyr-surface="desktop"] .rdp-page .topbar-actions .btn-sm[data-rdp-icon]::before,
+html[data-zephyr-surface="desktop"] .novnc-page .topbar-actions .btn-sm[data-vnc-icon]::before {
+  width: 13px !important;
+  height: 13px !important;
+  flex: 0 0 13px !important;
+  opacity: 0.85 !important;
+}
+html[data-zephyr-surface="desktop"] .topbar-actions .telnet-encoding-select {
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 8px !important;
+  border-radius: 7px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--text-secondary) !important;
+  cursor: pointer !important;
+}
+html[data-zephyr-surface="desktop"] .topbar-actions .telnet-encoding-select:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent) !important;
+  color: var(--text) !important;
+}
+
+/* 消除 RDP / VNC 画布容器 (.rdp-stage / .novnc-stage) 的 6px 外边距、内层边框与底部双层圆角 */
+html[data-zephyr-surface="desktop"] .rdp-stage,
+html[data-zephyr-surface="desktop"] .novnc-stage,
+html[data-zephyr-surface="desktop"] .novnc-page .novnc-stage.rdp-stage,
+body.desktop-embed .rdp-stage,
+body.desktop-embed .novnc-stage {
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  width: 100% !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
+
+/* RDP / VNC 一级浮窗升级为 .z-unified-panel 后的显隐、自由浮窗与侧边磁贴停靠规则 */
+.terminal-page > .z-unified-panel.rdp-floating-panel:not(.open):not(.z-panel-morphing),
+.novnc-page .novnc-panel.rdp-floating-panel.z-unified-panel[hidden]:not(.open):not(.z-panel-morphing),
+.rdp-page .rdp-floating-panel.z-unified-panel[hidden]:not(.open):not(.z-panel-morphing) {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+.terminal-page > .z-unified-panel.rdp-floating-panel.open,
+.terminal-page > .z-unified-panel.rdp-floating-panel.z-panel-morphing {
+  display: flex !important;
+  flex-direction: column !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: none !important;
+}
+.terminal-page > .z-unified-panel.rdp-floating-panel > .panel-drag-handle {
+  display: none !important;
+}
+.terminal-page > .z-unified-panel.rdp-floating-panel > .rdp-panel-content {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow: auto !important;
+  padding: 14px !important;
+}
+.terminal-page > .z-unified-panel.rdp-floating-panel.joystick-panel.docked-left,
+.terminal-page > .z-unified-panel.rdp-floating-panel.joystick-panel.docked-right {
+  aspect-ratio: auto !important;
+}
+.terminal-page.pane-slot-inactive:not(.z-dock-cols-morphing) > .z-unified-panel.rdp-floating-panel.pinned {
+  display: none !important;
+}
+
+/* ── B. 设置页面（#view-settings）与顶栏导航 (.main-nav .nav-tabs) 同源配色与卡片系统重设计 ── */
+@media (min-width: 761px) {
+  #view-settings > .section-head {
+    margin-bottom: 14px !important;
+    padding: 0 2px !important;
+  }
+  #view-settings > .section-head .eyebrow {
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.06em !important;
+    margin-bottom: 2px !important;
+    color: var(--accent, #0A84FF) !important;
+  }
+  #view-settings > .section-head h1 {
+    font-size: 22px !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.02em !important;
+    margin: 0 !important;
+  }
+
+  #view-settings .settings-layout {
+    display: grid !important;
+    grid-template-columns: 236px minmax(0, 1fr) !important;
+    gap: 16px !important;
+    align-items: start !important;
+  }
+
+  /* 左侧导航栏 (.settings-menu)：与顶栏 .main-nav .nav-tabs 完全同源的浅灰毛玻璃凹槽底座 + 选中项纯白凸起胶囊 + 彩色文字 */
+  #view-settings .settings-menu {
+    position: sticky !important;
+    top: 72px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    padding: 8px !important;
+    border-radius: 14px !important;
+  }
+  html[data-theme="light"] #view-settings .settings-menu {
+    background: color-mix(in srgb, var(--bg, #EAEEF4) 62%, var(--surface, #FFFFFF)) !important;
+    backdrop-filter: blur(14px) saturate(145%) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(145%) !important;
+    border: 1px solid rgba(15, 23, 42, 0.07) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 12px rgba(15, 23, 42, 0.04) !important;
+  }
+  html[data-theme="dark"] #view-settings .settings-menu {
+    background: color-mix(in srgb, var(--bg, #0D1015) 62%, var(--surface, #161920)) !important;
+    backdrop-filter: blur(14px) saturate(145%) !important;
+    -webkit-backdrop-filter: blur(14px) saturate(145%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.28) !important;
+  }
+
+  #view-settings .settings-menu .settings-tab {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    width: 100% !important;
+    min-height: 36px !important;
+    padding: 7px 12px !important;
+    border-radius: 10px !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    color: var(--text-secondary) !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    text-align: left !important;
+    transform: none !important;
+    box-shadow: none !important;
+    transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease, border-color 150ms ease !important;
+  }
+  #view-settings .settings-menu .settings-tab.force-hidden {
+    display: none !important;
+  }
+  /* 彻底移除旧版 .settings-tab 底部蓝色横线 (::after) */
+  #view-settings .settings-menu .settings-tab::after {
+    display: none !important;
+    content: none !important;
+  }
+  #view-settings .settings-menu .settings-tab:hover:not(.active) {
+    background: color-mix(in srgb, var(--surface, #FFFFFF) 45%, transparent) !important;
+    color: var(--text) !important;
+    transform: none !important;
+  }
+  /* 选中项：与顶栏 .nav-tab.active 一致——纯白底色（深色模式下高亮浮层底色）+ 主题色文字与图标 + 立体柔光阴影 */
+  html[data-theme="light"] #view-settings .settings-menu .settings-tab.active {
+    background: #FFFFFF !important;
+    color: var(--accent, #0A84FF) !important;
+    border: 1px solid rgba(15, 23, 42, 0.06) !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
+  }
+  html[data-theme="dark"] #view-settings .settings-menu .settings-tab.active {
+    background: color-mix(in srgb, var(--surface, #2C3036) 88%, #FFFFFF) !important;
+    color: var(--accent, #0A84FF) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+  }
+
+  /* 为每个设置项注入清晰统一的 15px 矢量图标 (::before mask) */
+  #view-settings .settings-menu .settings-tab::before {
+    content: '' !important;
+    display: inline-block !important;
+    width: 15px !important;
+    height: 15px !important;
+    flex: 0 0 15px !important;
+    background-color: currentColor !important;
+    opacity: 0.82 !important;
+    -webkit-mask: var(--st-ico) center / contain no-repeat !important;
+    mask: var(--st-ico) center / contain no-repeat !important;
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Cpath d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab.active::before {
+    opacity: 1 !important;
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="security"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="language"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cline x1='2' y1='12' x2='22' y2='12'/%3E%3Cpath d='M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="beian"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/%3E%3Cpolyline points='14 2 14 8 20 8'/%3E%3Cpath d='m9 15 2 2 4-4'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="network"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='2' width='20' height='8' rx='2' ry='2'/%3E%3Crect x='2' y='14' width='20' height='8' rx='2' ry='2'/%3E%3Cline x1='6' y1='6' x2='6.01' y2='6'/%3E%3Cline x1='6' y1='18' x2='6.01' y2='18'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="ssh-keys"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="snippets"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='16 18 22 12 16 6'/%3E%3Cpolyline points='8 6 2 12 8 18'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="ai"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="agent"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='3' width='20' height='14' rx='2'/%3E%3Cline x1='8' y1='21' x2='16' y2='21'/%3E%3Cline x1='12' y1='17' x2='12' y2='21'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="link"]::before,
+  #view-settings .settings-menu .settings-tab[data-settings="sync"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='23 4 23 10 17 10'/%3E%3Cpolyline points='1 20 1 14 7 14'/%3E%3Cpath d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="data"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cellipse cx='12' cy='5' rx='9' ry='3'/%3E%3Cpath d='M21 12c0 1.66-4 3-9 3s-9-1.34-9-3'/%3E%3Cpath d='M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="appearance"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='13.5' cy='6.5' r='.5' fill='black'/%3E%3Ccircle cx='17.5' cy='10.5' r='.5' fill='black'/%3E%3Ccircle cx='8.5' cy='7.5' r='.5' fill='black'/%3E%3Ccircle cx='6.5' cy='12.5' r='.5' fill='black'/%3E%3Cpath d='M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="mail"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z'/%3E%3Cpolyline points='22,6 12,13 2,6'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="notes"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/%3E%3Cpolyline points='14 2 14 8 20 8'/%3E%3Cline x1='16' y1='13' x2='8' y2='13'/%3E%3Cline x1='16' y1='17' x2='8' y2='17'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="admin"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='9' cy='7' r='4'/%3E%3Cpath d='M23 21v-2a4 4 0 0 0-3-3.87'/%3E%3Cpath d='M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E");
+  }
+  #view-settings .settings-menu .settings-tab[data-settings="about"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cline x1='12' y1='16' x2='12' y2='12'/%3E%3Cline x1='12' y1='8' x2='12.01' y2='8'/%3E%3C/svg%3E");
+  }
+
+  /* 右侧内容舞台 (.settings-content)：柔和托盘底座 + 内部纯白卡片（与左侧菜单形成统一「灰槽托白卡」视觉语言） */
+  #view-settings .settings-content {
+    border-radius: 14px !important;
+    padding: 20px 22px !important;
+    min-height: calc(100vh - 156px) !important;
+  }
+  html[data-theme="light"] #view-settings .settings-content {
+    background: color-mix(in srgb, var(--bg, #EAEEF4) 55%, var(--surface, #FFFFFF)) !important;
+    border: 1px solid rgba(15, 23, 42, 0.07) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 8px 24px -12px rgba(15, 23, 42, 0.05) !important;
+  }
+  html[data-theme="dark"] #view-settings .settings-content {
+    background: color-mix(in srgb, var(--bg, #0D1015) 55%, var(--surface, #161920)) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 8px 24px -12px rgba(0, 0, 0, 0.35) !important;
+  }
+
+  /* 解除旧版 .settings-form 420px 窄宽限制，充分利用右侧空间 */
+  #view-settings .settings-form {
+    max-width: none !important;
+    gap: 12px !important;
+  }
+
+  /* 统一内部卡片 (.security-card / .data-settings-section)：纯白卡片底色（深色下为高亮卡片底色）+ 12px 圆角 */
+  #view-settings .security-card,
+  #view-settings .data-settings-section,
+  #view-settings #platformSecuritySettings > form,
+  #view-settings #settings-appearance > #appearanceForm,
+  #view-settings #settings-appearance > #terminalLayoutForm,
+  #view-settings #settings-mail > #mailForm,
+  #view-settings #settings-beian > #beianForm,
+  #view-settings #settings-language > #languageForm,
+  #view-settings #settings-notes > #notesSettingsForm {
+    border-radius: 12px !important;
+    padding: 18px 20px !important;
+    margin: 0 !important;
+  }
+  html[data-theme="light"] #view-settings .security-card,
+  html[data-theme="light"] #view-settings .data-settings-section,
+  html[data-theme="light"] #view-settings #platformSecuritySettings > form,
+  html[data-theme="light"] #view-settings #settings-appearance > #appearanceForm,
+  html[data-theme="light"] #view-settings #settings-appearance > #terminalLayoutForm,
+  html[data-theme="light"] #view-settings #settings-mail > #mailForm,
+  html[data-theme="light"] #view-settings #settings-beian > #beianForm,
+  html[data-theme="light"] #view-settings #settings-language > #languageForm,
+  html[data-theme="light"] #view-settings #settings-notes > #notesSettingsForm {
+    background: #FFFFFF !important;
+    border: 1px solid rgba(15, 23, 42, 0.07) !important;
+    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9) !important;
+  }
+  html[data-theme="dark"] #view-settings .security-card,
+  html[data-theme="dark"] #view-settings .data-settings-section,
+  html[data-theme="dark"] #view-settings #platformSecuritySettings > form,
+  html[data-theme="dark"] #view-settings #settings-appearance > #appearanceForm,
+  html[data-theme="dark"] #view-settings #settings-appearance > #terminalLayoutForm,
+  html[data-theme="dark"] #view-settings #settings-mail > #mailForm,
+  html[data-theme="dark"] #view-settings #settings-beian > #beianForm,
+  html[data-theme="dark"] #view-settings #settings-language > #languageForm,
+  html[data-theme="dark"] #view-settings #settings-notes > #notesSettingsForm {
+    background: var(--surface, #161920) !important;
+    border: 1px solid rgba(255, 255, 255, 0.09) !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  }
+
+  #view-settings .data-settings-stack {
+    width: 100% !important;
+    max-width: none !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) !important;
+    gap: 16px !important;
+    align-items: start !important;
+  }
+  #view-settings .data-settings-section + .data-settings-section {
+    margin-top: 0 !important;
+  }
+
+  #view-settings .security-card h2,
+  #view-settings .settings-panel > h2,
+  #view-settings .panel-title-row h2,
+  #view-settings .data-settings-section h2 {
+    font-size: 15.5px !important;
+    font-weight: 650 !important;
+    letter-spacing: -0.01em !important;
+    margin: 0 0 12px 0 !important;
+  }
+  #view-settings .security-card-head h2,
+  #view-settings .panel-title-row h2,
+  #view-settings .webdav-heading h2 {
+    margin: 0 !important;
+  }
+
+  /* 修复安全设置输入框堆叠 (.security-input-stack)：彻底清除 floating-label 的 translateY(-18px) 防止文字与标题重叠！ */
+  #view-settings .security-input-stack {
+    display: grid !important;
+    gap: 10px !important;
+  }
+  #view-settings .security-input-stack > .form-group {
+    position: static !important;
+    margin: 0 !important;
+  }
+  #view-settings .security-input-stack > .form-group label,
+  #view-settings .security-input-stack > .form-group:has(input:focus) label,
+  #view-settings .security-input-stack > .form-group:has(input:not(:placeholder-shown)) label,
+  #view-settings .security-input-stack > .form-group:has(input:-webkit-autofill) label {
+    display: block !important;
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    transform: none !important;
+    transition: none !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    line-height: 1.35 !important;
+    color: var(--text-secondary) !important;
+    margin: 0 0 5px 0 !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+  #view-settings .security-input-stack > .form-group input,
+  #view-settings .settings-form input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not(.color-hex-input),
+  #view-settings .settings-form select {
+    min-height: 38px !important;
+    height: 38px !important;
+    padding: 0 12px !important;
+    border-radius: 9px !important;
+    font-size: 13px !important;
+  }
+  #view-settings .settings-form textarea {
+    border-radius: 9px !important;
+    padding: 10px 12px !important;
+    font-size: 13px !important;
+  }
+
+  /* 平台安全策略区 (#platformSecuritySettings) 双栏卡片化 */
+  #view-settings #platformSecuritySettings {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 14px !important;
+    align-items: start !important;
+  }
+  #view-settings #platformSecuritySettings > h2 {
+    display: none !important;
+  }
+  #view-settings #platformSecuritySettings > #ipBanList {
+    grid-column: 1 / -1 !important;
+  }
+
+  /* 个性化设置 (#settings-appearance) 双栏卡片工作台布局（左：品牌/主题/终端外观，右：终端工作台布局） */
+  #view-settings #settings-appearance.active {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.95fr) !important;
+    gap: 16px !important;
+    align-items: start !important;
+  }
+  #view-settings #settings-appearance > h2 {
+    display: none !important;
+  }
+
+  /* 邮件通知 / 备案 / 语言 / 笔记设置面板合理宽度 */
+  #view-settings #settings-mail > #mailForm,
+  #view-settings #settings-beian > #beianForm,
+  #view-settings #settings-language > #languageForm,
+  #view-settings #settings-notes > #notesSettingsForm {
+    max-width: 680px !important;
+  }
+
+  /* 开关行 (.settings-switch-option) 与勾选行 (.check-line) 精致圆角卡片化 */
+  #view-settings .settings-switch-option {
+    border-radius: 10px !important;
+    padding: 11px 14px !important;
+    border: 1px solid color-mix(in srgb, var(--border) 85%, transparent) !important;
+    background: color-mix(in srgb, var(--bg) 38%, var(--surface)) !important;
+  }
+  #view-settings .check-line {
+    border-radius: 9px !important;
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+  }
+
+  /* 彻底消除桌面端设置页 100% 满宽大按钮，改为精致 Apple HIG 桌面按钮尺寸 (height: 36px, width: auto) */
+  #view-settings .settings-form .form-actions {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 10px !important;
+    margin-top: 8px !important;
+  }
+  #view-settings .settings-form > .btn,
+  #view-settings .settings-form .form-actions .btn,
+  #view-settings .data-settings-section > .btn,
+  #view-settings .webdav-actions .btn,
+  #view-settings .agent-token-actions .btn {
+    width: auto !important;
+    min-width: 104px !important;
+    min-height: 36px !important;
+    height: 36px !important;
+    padding: 0 16px !important;
+    border-radius: 9px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    justify-self: start !important;
+  }
+  #view-settings .webdav-actions {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+}
