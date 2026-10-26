@@ -158,6 +158,34 @@ Shared 数据不得进入 SQLite/Room、SecretStore、FTS、最近记录、草�
 - Owned `/api/mobile/v1/*` 的 `protocolVersion=1` 及 frozen SyncOperation/SyncChange 在迁移期保持兼容；不得在旧客户端无协商时强塞新信封。需要 Link owned-sync v2 时，通过 capabilities 显式协商并保留 v1 适配。
 - 目标 envelope 中 `protocolVersion:2` 指此**业务信封版本**，不与现有 ZSL/2 名称或 mobile v1 的 HTTP 协议版本混为一谈。
 
+以下字段为 v1 新互联协议的目标合同；Owned mobile v1 在迁移期保留其已冻结 schema，并按 **4.2.1 的确定性映射与协商规则**适配，禁止把两种形状同时塞进同一 body：
+
+#### 4.2.1 mobile v1 → v2 业务信封的确定映射
+
+现有 ZSL owned-sync 业务 body 以 `op` 区分操作，与 HTTP mobile v1 使用同一组 DTO：
+
+| 现有 op | 目标 operation | 既有字段的映射 |
+|---|---|---|
+| `bootstrap` | `sync.bootstrap` | `pageToken/pageSize → body`；`bootstrapId` 响应沿用，不伪造 |
+| `changes` | `sync.changes` | `sinceCursor/limit → body` |
+| `push` | `sync.push` | 去除 `op` 后，原 `protocolVersion/deviceId/batchId/baseCursor/registryHash/operations → body` |
+| `ack` | `sync.ack` | `deviceId/cursor/appliedOpIds → body` |
+| `status` | `sync.status` | 空 body；响应保持当前 SyncStatus 语义 |
+
+**确定规则：**
+
+1. v1→v2 适配发生在**进入新业务 dispatcher 前**，不把原 mobile v1 body 复制进 v2 `body` 后再重复携带一份冲突的外层参数字段。转换后 `body` 是业务请求对象，不是整个旧请求 envelope。
+2. `requestId` 新生成 UUID；`idempotencyKey` 在 v1 push 中使用 `push:<deviceId>:<batchId>`，并保留 operation 内既有 `opId` 作为操作幂等依据，不能用新 requestId 代替。**bootstrap/changes/status 是普通只读操作，不引入新的副作用幂等语义，按各自调用时点重新读取；ack 沿用原 `cursor/appliedOpIds` 的单调确认语义，不把多个不同 ack 错合并成一个。** v1 没有原始 requestId 可供关联结果查询时，不得伪造跨请求的查询历史。
+3. `deviceId` 取 v1 body 的 `deviceId` 或 ZSL session 已认证设备；`bindingGeneration` 取绑定记录，不接受客户端任意声明。若二者不一致返回 `device_proof_invalid`。
+4. `capability` 固定映射为 `sync.bootstrap/sync.changes/sync.push/sync.ack/sync.status`。`schemaVersion=1`、`sessionId/sessionEpoch=null`；普通同步不使用会话 epoch。
+5. `deadlineAt` 由接收方按当前限流策略生成，v1 无该字段，不得把不可信旧客户端时间戳当截止时间。
+6. **响应沿用原业务 schema，不套用 v2 request envelope**：`sync.bootstrap` 返回 BootstrapPage、`sync.changes` 返回 ChangePage、`sync.push` 返回 PushResponse、`sync.ack` 返回 `{ok:true}`、`sync.status` 返回 SyncStatus。错误按既有嵌套 error schema 返回，并附 `requestId`。不要求旧客户端凭空补齐新响应字段。
+7. 服务端解包 v2 时先检查 `kind` 与 operation 对应关系，再校验 envelope，再解析 body。`kind=SYNC_OP` 时只能接受上表 `sync.*`；其他 kind 使用其独立 schema。重复 `op/operation` 不一致、body 内外 `deviceId` 不一致、同时存在 v1 顶层 push 字段与 v2 body、未知 op 都返回 `invalid_request`，禁止猜测兼容。
+8. **格式识别不能只靠有没有 `operation` 或 `protocolVersion`**：由 capabilities 中 `linkBusinessEnvelopeVersions:[1]` 与绑定 session 协商出的 envelopeVersion 决定。v1 保持 `op` body；v2 使用本节 envelope。客户端未协商 v2 时，服务端不得下发 v2 body。
+9. 服务端在同一连接中不得让 v1/v2 写操作并发穿越；按接收顺序/单飞队列保证业务顺序，只有只读请求可在明确幂等语义下并行。迁移期间保留 v1 adapter，直至能力声明的旧版本支持期结束。
+
+#### 4.2.2 目标信封字段
+
 以下字段为 v1 新互联协议的目标合同；Owned mobile v1 在迁移期保留其已冻结 schema，但映射关系必须显式定义：
 
 ```json
@@ -318,7 +346,14 @@ schemaVersion / privacy-safe metadata
 
 - 使用随机 256-bit vault master key；独立密码经 Argon2id 派生 KEK 后包裹，不能直接用密码逐 op 加密。
 - AAD 绑定 vault/device/entity/epoch/schemaVersion；认证失败整包拒绝。
-- manifest 使用 ETag/If-Match CAS；弱 ETag、无 ETag、非原子 MOVE/PUT 或最终一致性服务须降级为整代快照 CAS，不得声称所有 WebDAV 都有同等事务能力。
+- 具备强 ETag 的 manifest 使用 ETag/If-Match CAS。**“换用整代快照”不能替代服务器端条件写**：在不支持强 ETag、If-Match、If-None-Match 或不可依赖的原子 MOVE/PUT 的 WebDAV 服务上，客户端之间不存在可靠的共享 manifest 互斥，禁止启用多写者 OpLog 或宣称可安全多写同步。
+- 提供端能力探测及分级：
+  - **B0（离线导出）**：可 PUT/GET 独立 vault，仅用于下载/手工导出；不可宣称自动备份。
+  - **B1（单写者备份）**：有原子 publish、稳定身份和读回校验，但缺强条件写/一致枚举时，仅允许一个持久 writerId；不提供多设备自动合并。更换写者必须人工“独占接管”，其他设备只读。
+  - **B2（多写者同步）**：同时具备强 ETag、条件写/原子 publish、列出后读回一致性确认及并发负例，才能开放 per-device OpLog 和共享 manifest 更新。
+- 弱 ETag 不能作为互斥证明；无 ETag/不支持条件写时只能 B0/B1。`MOVE Overwrite:F`、临时随机对象名、读回字节校验可减少误覆盖，但**不能证明跨 writer 的 read-modify-write 原子性**。
+- 服务端/实现若选择单写者加 lease 作为优化，必须接受 lease 过期后的时钟偏差与裂脑风险；lease 绝不能把 B1 伪装成 B2。需要真正多写者时，只能选 B2 存储或引入一个具有事务能力的协调者，不能靠客户端锁文件幻想 CAS。
+- manifest 的 `writerEpoch` 由 B2 条件写更新；同 epoch 多写者写不同 device oplog，可重读重放合并，再提交新 head。失败保留各设备原始 op，禁止删除未确认数据。
 - 若威胁模型包含恶意存储，需要设备签名 op/head、单调 generation 与带外设备验证，检测删除 op 和整库回滚。
 - 统一 registry、op、tombstone、冲突与 activity append 规则。
 - 支持首次导出、他端导入、离线完整恢复、损坏包隔离、代际保留和密钥轮换。
@@ -378,7 +413,25 @@ schemaVersion / privacy-safe metadata
 
 授权 UI 必须显示**实际生效结果**：`Agent 本机允许 ∩ 主端 ACL ∩ 系统授权 ∩ 当前会话`。不得只展示主端“已授权”，却在 Agent 本机策略已禁用时给出误导性成功状态。
 
-### 8.2 本机策略模型
+### 8.2 本机策略模型与确定求值顺序
+
+策略示例只展示结构，实际执行必须按下面的顺序求值；不能由不同工程师分别理解成“第一条 allow 即通过”“最后一条覆盖”或“主端再判一次即可”：
+
+1. **协议与策略校验**：schema、subject/channel/operation/share/target 格式、数值上限必须合法；未知操作默认 deny，不可默默忽略无效规则。
+2. **暂停/撤销/绑定状态**：`paused=true`、设备已解绑/撤销、Agent 离线且该操作要求在线、调用者或资源已撤销时直接 deny。
+3. **策略代际**：session/lease/ticket 的 `policyGeneration` 必须等于本机当前 generation；不等则 `agent_policy_generation_stale`，不得继续用旧规则求 allow。
+4. **收集匹配规则**：subject 必须包含调用者；channel、operation 匹配；share、目标网络、监听地址、Offload 子能力与过期时间匹配。未指定资源维度的规则不能自动获得该维度的任意权限：`shares=[]` 表示无目录权限，`networkTargets=[]` 表示无网络目标，`offloadCapabilities=[]` 表示无 Offload 权限。
+5. **deny 优先**：任一匹配且有效的 `effect=deny` 规则直接拒绝，不能被另一条 allow 覆盖。 deny 规则必须带审计原因，不因 generic allow 而失效。
+6. **allow 判定**：至少一条匹配且有效的 allow 才能继续；没有任何匹配 allow 时按 `defaultEffect=deny` 拒绝。allow 不给超出本规则 shares/targets/operations 的额外权限。
+7. **限制求交集**：对所有匹配 allow 的 `maxFileBytes/maxInflight/maxChunkBytes/maxDailyBytes/maxDirectoryDepth/maxRequestsPerMinute` 取**最小正值**；任一显式为 0 表示禁止该维度对应操作。不同字段不能互相补全为无限。
+8. **主端 ACL 与系统授权取交集**：主端 ACL 必须允许相同 channel/operation/share/target；系统目录、网络与通知等授权也必须有效。任一失败拒绝，主端不能覆盖。
+9. **高风险独立审批**：删除、revealSecret、非回环监听、远程 wipe、共享写入、高危 AI 工具调用，除普通 allow 外还需当前 `confirmationId`，且该确认绑定 `requestHash/policyGeneration/resource/operation/expiresAt`；缺失、过期或 hash 不符返回 `approval_required`，不可使用“以前同意过”。
+10. **原子复核与执行**：真正打开文件、监听 socket、调用工具前再次读取本机 generation 和系统授权；若已变化，拒绝。对写操作以 `agentId+requestId/idempotencyKey` 持久化回执，重试只返回原回执。
+11. **配额原子扣减**：并发计数、日流量、请求速率按本机事务或等效原子机制扣减；超限返回 `agent_quota_exceeded`，不得先执行后补扣。
+
+**多条规则语义总结：** `deny > allow > quota 最小值 > 主端 ACL ∩ 系统授权 > 独立审批 > 执行前复核`。没有默认“更具体规则优先”这种隐含覆盖，避免通过 broad deny 加一条 narrow allow 绕过；若未来引入 priority，必须另增版本化规则与完整测试，不在 v1 隐式添加。
+
+本机策略模型：
 
 ```json
 {

@@ -1,0 +1,73 @@
+[
+  {
+    "id": "SYNC-ENVELOPE-001",
+    "legacy": { "op": "bootstrap", "pageToken": "token-1", "pageSize": 100 },
+    "expected": {
+      "kind": 1,
+      "operation": "sync.bootstrap",
+      "body": { "pageToken": "token-1", "pageSize": 100 },
+      "responseShape": "BootstrapPage"
+    }
+  },
+  {
+    "id": "SYNC-ENVELOPE-002",
+    "legacy": { "op": "changes", "sinceCursor": 10, "limit": 200 },
+    "expected": {
+      "kind": 1,
+      "operation": "sync.changes",
+      "body": { "sinceCursor": 10, "limit": 200 },
+      "responseShape": "ChangePage"
+    }
+  },
+  {
+    "id": "SYNC-ENVELOPE-003",
+    "legacy": { "op": "push", "protocolVersion": 1, "deviceId": "dev-1", "batchId": "batch-1", "baseCursor": 10, "registryHash": "hash-1", "operations": [] },
+    "expected": {
+      "kind": 1,
+      "operation": "sync.push",
+      "body": { "protocolVersion": 1, "deviceId": "dev-1", "batchId": "batch-1", "baseCursor": 10, "registryHash": "hash-1", "operations": [] },
+      "idempotencyPrefix": "push:dev-1:batch-1",
+      "responseShape": "PushResponse"
+    }
+  },
+  {
+    "id": "SYNC-ENVELOPE-004",
+    "legacy": { "op": "ack", "deviceId": "dev-1", "cursor": 20, "appliedOpIds": ["op-1"] },
+    "expected": {
+      "kind": 1,
+      "operation": "sync.ack",
+      "body": { "deviceId": "dev-1", "cursor": 20, "appliedOpIds": ["op-1"] },
+      "responseShape": "AckResponse"
+    }
+  },
+  {
+    "id": "SYNC-ENVELOPE-005",
+    "legacy": { "op": "status" },
+    "expected": {
+      "kind": 1,
+      "operation": "sync.status",
+      "body": {},
+      "responseShape": "SyncStatus"
+    }
+  },
+  {
+    "id": "SYNC-ENVELOPE-BAD-001",
+    "legacy": { "op": "push", "operation": "sync.bootstrap" },
+    "expectedError": "invalid_request",
+    "reason": "op and operation mismatch"
+  },
+  {
+    "id": "SYNC-ENVELOPE-BAD-002",
+    "legacy": { "op": "push", "protocolVersion": 1, "deviceId": "dev-1", "batchId": "batch-1", "baseCursor": 10, "registryHash": "hash-1", "operations": [] },
+    "envelopeDeviceId": "dev-2",
+    "expectedError": "device_proof_invalid",
+    "reason": "authenticated and payload device identities differ"
+  },
+  {
+    "id": "SYNC-ENVELOPE-BAD-003",
+    "legacy": { "op": "push", "protocolVersion": 1, "deviceId": "dev-1", "batchId": "batch-1", "baseCursor": 10, "registryHash": "hash-1", "operations": [] },
+    "body": { "operations": [] },
+    "expectedError": "invalid_request",
+    "reason": "legacy top-level fields and v2 body must not be mixed"
+  }
+]

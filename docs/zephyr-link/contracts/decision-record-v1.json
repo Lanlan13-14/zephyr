@@ -1,6 +1,6 @@
 {
   "document": "ZEPHYR-LINK-ARCH-001",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "status": "approved-for-implementation",
   "approvedAt": "2026-10-26",
   "baseline": {
@@ -37,5 +37,10 @@
     "policyGenerationInvalidatesLeasesTicketsAndStreams": true,
     "perAgentIndependentConfiguration": true
   },
-  "completionRule": "Specification approval does not imply feature completion. Completion requires TESTING-AND-RELEASE-GATES evidence."
+  "completionRule": "Specification approval does not imply feature completion. Completion requires TESTING-AND-RELEASE-GATES evidence.",
+  "v1_0_1_clarifications": {
+    "mobileV1Compatibility": "explicit_sync_op_to_sync_operation_mapping_session_negotiated_envelope_original_response_schema",
+    "agentPolicyEvaluation": "valid_then_paused_revoked_then_generation_then_matching_deny_then_allow_then_min_quota_then_primary_system_then_approval_then_recheck",
+    "webdavWriters": "B0_export_B1_single_writer_backup_B2_multiwriter_requires_strong_conditional_write_and_concurrent_cas_proof"
+  }
 }

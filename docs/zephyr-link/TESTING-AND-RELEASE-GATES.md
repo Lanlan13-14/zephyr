@@ -197,8 +197,14 @@ change:
 - SAF/Security-Scoped Bookmark 被系统撤销、重装、设备重启后，不绕过系统权限、不把旧 URI 当新目录。
 - Agent 与 `agentd` 在相同 share/policy 输入下结果一致，禁止 GUI/headless 行为漂移。
 
-### 5.3 网络、剪贴板和 Offload
+### 5.3 规则求值、网络、剪贴板和 Offload
 
+- 明确 deny 优先于任意 allow；没有匹配 allow 默认拒绝；未知 operation 不得绕过。
+- 空 `shares/networkTargets/offloadCapabilities` 分别表示无对应资源权限，不得解释为任意资源。
+- 多条 allow 的配额取最小正值；任一显式 0 为禁止；超限必须在副作用前拒绝。
+- 删除/reveal/非回环监听/wipe/高危 AI 操作缺少有效 confirmationId、requestHash 不符或确认过期，均返回 `approval_required`。
+- 执行前 generation 或系统授权改变时，即使此前允许也必须停止。
+- 多 Agent 的同一输入不得互相继承策略；GUI Agent 与 `agentd` 在相同 share/policy 输入下结果一致，禁止 GUI/headless 行为漂移。
 - -L/-R/-D 的允许/拒绝矩阵、目标网段/端口限制、端口占用、回环默认。
 - `0.0.0.0`/局域网监听必须显式审批，并验证真实监听地址，不可仅看 UI。
 - 会话结束、断线、策略收窄、撤销后 listener/forwardIn/连接全部回收，无僵尸端口。
@@ -241,10 +247,22 @@ change:
 - 独立密码在新设备上可完整恢复连接、密钥、笔记、配置及声明覆盖的实体。
 - 错误密码、错 vault、篡改密文、旧 KDF 参数、损坏 manifest 均失败关闭。
 - 两台设备同时 manifest 更新触发 CAS 冲突并安全重试，不静默覆盖。
-- 弱/无 ETag、MOVE 不支持、PUT 非原子、超时后结果不确定均按兼容策略处理。
+- **B2 并发负例必须真实证明条件写有效**：两个 writer 基于相同 ETag 提交不同 head，最多一个成功；失败者重读重放且不丢 op。若该测试不成立，禁止多写者功能发布。
+- 弱/无 ETag、缺 If-Match/If-None-Match、MOVE 不支持、PUT 非原子、超时后结果不确定均按兼容策略处理；**缺强条件写时只能 B0/B1，不得靠“整代快照”或客户端锁文件开放多写者**。
+- B1 只有一个持久 writerId；其他设备只读。独占接管需人工操作并生成新 writerEpoch，不能让两个设备周期任务自动交替抢锁。
+- B0 只能下载/手工导出，不得自动周期写或宣称备份/同步成功。
 - 备份到一半 kill、恢复一半 kill、磁盘满、远端限流、DNS rebinding/SSRF 均有安全结果。
 - 恶意删除 op/整库回滚能被签名 head/generation 检出；不会静默覆盖新数据。
 - 主端不可用时仍可凭 vault 地址和独立密码恢复，证明不依赖主端环境密钥。
+
+### 6.5 mobile v1 与新业务信封兼容
+
+- v1 `op=bootstrap/changes/push/ack/status` 与 v2 `operation=sync.*` 按 4.2.1 映射，响应仍是原业务 schema，不强塞新 envelope 字段。
+- 未协商 v2 的旧 client 只收到 v1 body；v1→v2 适配不得把旧 body 再完整嵌套进新 body 造成双重 envelope。
+- `op` 与 `operation` 不一致、body 内外 `deviceId` 不一致、v1 顶层 push 字段与 v2 body 同时出现、未知 op、错误 KIND/operation 组合均拒绝。
+- 纯 `has(operation)` 不能作为格式识别依据；必须由 session envelopeVersion/capabilities 协商决定。
+- v1 push 的 opId/batchId 幂等语义在转换后不丢；新 requestId 不替换 operation 幂等。bootstrap/changes/status 保持普通只读语义；ack 保持 cursor/appliedOpIds 单调确认，不把不同 ack 错合并。
+- 同连接写操作不得并发穿越 v1/v2；相邻 owned-sync、AI、file-bridge lane 不被兼容层错误污染。
 
 ---
 

@@ -109,11 +109,29 @@ assert.equal(validatePolicy({ ...validPolicy, rules: [{ ...validPolicy.rules[0],
 
 function evaluateAgentAuthority(input) {
   const { request, agentLocal, primaryAcl, systemGrant, session } = input;
-  if (request.operation === 'delete' && session.confirmed !== true) return 'delete_requires_confirmation';
+  if (session.paused === true) return 'agent_paused';
   if (session.policyGeneration !== agentLocal.policyGeneration) return 'agent_policy_generation_stale';
-  if (agentLocal.effect !== 'allow'
-    || !agentLocal.operations.includes(request.operation)
-    || (request.share && !agentLocal.shares.includes(request.share))) return 'agent_local_policy_denied';
+  const rules = Array.isArray(agentLocal.rules) ? agentLocal.rules : [agentLocal];
+  const matches = rules.filter((rule) => {
+    if (rule.expiresAt != null && session.nowMs >= rule.expiresAt) return false;
+    const subjectMatch = !rule.subjects || rule.subjects.includes(request.subject);
+    const channelMatch = !rule.channels || rule.channels.includes(request.channel);
+    const operationMatch = rule.operations.includes(request.operation);
+    const shareMatch = !request.share || (rule.shares || []).includes(request.share);
+    const targetMatch = !request.networkTarget || (rule.networkTargets || []).includes(request.networkTarget);
+    const offloadMatch = !request.offloadCapability || (rule.offloadCapabilities || []).includes(request.offloadCapability);
+    return subjectMatch && channelMatch && operationMatch && shareMatch && targetMatch && offloadMatch;
+  });
+  if (matches.some((rule) => rule.effect === 'deny')) return 'agent_local_policy_denied';
+  const allows = matches.filter((rule) => rule.effect === 'allow');
+  if (!allows.length) return 'agent_local_policy_denied';
+  for (const [limitName, requested] of Object.entries(request.usage || {})) {
+    const ceilings = allows.map((rule) => rule.limits?.[limitName]).filter((value) => value !== undefined);
+    if (ceilings.some((value) => value === 0)) return 'agent_quota_exceeded';
+    if (ceilings.length && requested > Math.min(...ceilings)) return 'agent_quota_exceeded';
+  }
+  if (['delete', 'revealSecret', 'remoteWipe'].includes(request.operation) && session.confirmed !== true) return 'delete_requires_confirmation';
+  if (request.listenHost && request.listenHost !== '127.0.0.1' && request.listenHost !== '::1' && session.confirmed !== true) return 'approval_required';
   if (primaryAcl.effect !== 'allow' || !primaryAcl.operations.includes(request.operation)) return 'primary_acl_denied';
   if (systemGrant.effect !== 'allow' || !systemGrant.operations.includes(request.operation)) return 'system_grant_denied';
   return null;
@@ -122,6 +140,48 @@ const authorityCases = readJson('contracts/agent-authorization-v1.cases.json');
 assert.deepEqual(authorityCases.map((test) => test.id), [
   'AGENT-ACL-001', 'AGENT-ACL-002', 'AGENT-ACL-003', 'AGENT-ACL-005', 'AGENT-ACL-ALLOW-001',
 ]);
+const authorityBase = {
+  request: { channel: 'file-bridge', operation: 'read', share: 'projects', subject: 'user:alice' },
+  agentLocal: { effect: 'allow', operations: ['read'], shares: ['projects'], policyGeneration: 5 },
+  primaryAcl: { effect: 'allow', operations: ['read'] },
+  systemGrant: { effect: 'allow', operations: ['read'] },
+  session: { policyGeneration: 5, nowMs: 100 },
+};
+assert.equal(evaluateAgentAuthority({
+  ...authorityBase,
+  agentLocal: {
+    policyGeneration: 5,
+    rules: [
+      { effect: 'allow', operations: ['read'], shares: ['projects'] },
+      { effect: 'deny', operations: ['read'], shares: ['projects'] },
+    ],
+  },
+}), 'agent_local_policy_denied', 'deny must override allow');
+assert.equal(evaluateAgentAuthority({
+  ...authorityBase,
+  request: { ...authorityBase.request, channel: 'agent-tunnel', operation: 'tunnel.local', networkTarget: '10.0.0.8:22' },
+  agentLocal: { effect: 'allow', operations: ['tunnel.local'], shares: [], networkTargets: [], policyGeneration: 5 },
+  primaryAcl: { effect: 'allow', operations: ['tunnel.local'] },
+  systemGrant: { effect: 'allow', operations: ['tunnel.local'] },
+}), 'agent_local_policy_denied', 'empty networkTargets must not mean arbitrary network access');
+assert.equal(evaluateAgentAuthority({
+  ...authorityBase,
+  request: { ...authorityBase.request, usage: { maxFileBytes: 100 } },
+  agentLocal: {
+    policyGeneration: 5,
+    rules: [
+      { effect: 'allow', operations: ['read'], shares: ['projects'], limits: { maxFileBytes: 1000 } },
+      { effect: 'allow', operations: ['read'], shares: ['projects'], limits: { maxFileBytes: 50 } },
+    ],
+  },
+}), 'agent_quota_exceeded', 'quota must use the smallest allow ceiling');
+assert.equal(evaluateAgentAuthority({
+  ...authorityBase,
+  request: { ...authorityBase.request, operation: 'tunnel.local', listenHost: '0.0.0.0' },
+  agentLocal: { effect: 'allow', operations: ['tunnel.local'], shares: ['projects'], policyGeneration: 5 },
+  primaryAcl: { effect: 'allow', operations: ['tunnel.local'] },
+  systemGrant: { effect: 'allow', operations: ['tunnel.local'] },
+}), 'approval_required', 'non-loopback listen requires independent approval');
 for (const test of authorityCases) {
   const rejection = evaluateAgentAuthority(test);
   assert.equal(rejection ?? 'allow', test.expected.effect === 'allow' ? 'allow' : test.expected.effect === 'deny' ? test.expected.code : 'unexpected', test.id);
@@ -133,6 +193,41 @@ assert.equal(evaluateAgentAuthority({
   systemGrant: { effect: 'allow', operations: ['delete'] },
   session: { policyGeneration: 5, confirmed: false },
 }) ?? 'delete_requires_confirmation', 'delete_requires_confirmation', 'high-level delete confirmation must be explicit');
+
+const syncEnvelopeCases = readJson('contracts/mobile-sync-envelope-v1.cases.json');
+const syncOperationMap = new Map([
+  ['bootstrap', 'sync.bootstrap'], ['changes', 'sync.changes'], ['push', 'sync.push'],
+  ['ack', 'sync.ack'], ['status', 'sync.status'],
+]);
+for (const test of syncEnvelopeCases) {
+  if (test.expectedError) {
+    assert.ok(['invalid_request', 'device_proof_invalid'].includes(test.expectedError), test.id);
+    assert.ok(test.reason, `${test.id} must document why it is rejected`);
+    continue;
+  }
+  assert.equal(test.expected.kind, 1, `${test.id} must use SYNC_OP`);
+  assert.equal(syncOperationMap.get(test.legacy.op), test.expected.operation, test.id);
+  const { op: legacyDiscriminator, ...body } = test.legacy;
+  assert.deepEqual(body, test.expected.body, `${test.id} must remove only the op discriminator`);
+  assert.ok(!Object.hasOwn(test.expected.body, 'op'), `${test.id} must not produce a double envelope`);
+  assert.ok(test.expected.responseShape, `${test.id} must preserve the legacy response schema`);
+  if (test.legacy.op === 'push') assert.equal(test.expected.idempotencyPrefix, `push:${test.legacy.deviceId}:${test.legacy.batchId}`);
+}
+
+function webdavWriteMode({ strongEtag, conditionalWrite, atomicPublish, consistentReadback, writerCount }) {
+  if (!strongEtag || !conditionalWrite) return writerCount > 0 ? 'B1' : 'B0';
+  if (!atomicPublish || !consistentReadback) return 'B1';
+  if (writerCount > 1) return 'B2';
+  return 'B1';
+}
+assert.equal(webdavWriteMode({ strongEtag: false, conditionalWrite: false, atomicPublish: true, consistentReadback: true, writerCount: 2 }), 'B1');
+assert.equal(webdavWriteMode({ strongEtag: true, conditionalWrite: false, atomicPublish: true, consistentReadback: true, writerCount: 2 }), 'B1');
+assert.equal(webdavWriteMode({ strongEtag: true, conditionalWrite: true, atomicPublish: true, consistentReadback: true, writerCount: 2 }), 'B2');
+assert.equal(webdavWriteMode({ strongEtag: false, conditionalWrite: false, atomicPublish: false, consistentReadback: false, writerCount: 0 }), 'B0');
+assert.throws(() => {
+  const first = webdavWriteMode({ strongEtag: true, conditionalWrite: true, atomicPublish: false, consistentReadback: true, writerCount: 2 });
+  if (first !== 'B2') throw new Error('multiwriter_forbidden_without_atomic_publish');
+}, /multiwriter_forbidden_without_atomic_publish/);
 
 const validateImpact = validators['change-impact-v1.example.json'];
 const validImpact = {
@@ -161,8 +256,10 @@ console.log(JSON.stringify({
   frozenKinds: expectedKinds.length,
   schemas: 3,
   documentationLinks: markdownLinks.length,
+  syncEnvelopeCases: syncEnvelopeCases.length,
+  webdavCapabilityChecks: ['missing-strong-etag-is-B1', 'missing-conditional-write-is-B1', 'full-cas-two-writers-is-B2', 'no-writer-is-B0', 'non-atomic-multiwriter-rejected'],
   mandatoryRegressionAnchors: 7,
-  intentionalFailureCases: ['node-kind-drift', 'go-kind-drift', 'empty-schema-document', 'invalid-frame', 'invalid-policy', 'invalid-impact', 'agent-authority-intersection', 'delete-without-confirmation'],
+  intentionalFailureCases: ['node-kind-drift', 'go-kind-drift', 'empty-schema-document', 'invalid-frame', 'invalid-policy', 'invalid-impact', 'agent-authority-intersection', 'delete-without-confirmation', 'deny-overrides-allow', 'empty-network-targets', 'minimum-quota', 'non-loopback-approval'],
   agentAuthorityCases: authorityCases.length,
   agentAuthority: decisions.agentAuthority.rule,
 }, null, 2));

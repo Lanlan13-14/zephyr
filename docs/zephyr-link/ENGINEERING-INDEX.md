@@ -10,6 +10,7 @@
 | 测试分层、影响声明、故障目录、发布报告 | `docs/zephyr-link/TESTING-AND-RELEASE-GATES.md` |
 | Agent 本机策略 JSON 示例 | `docs/zephyr-link/contracts/agent-policy-v1.example.json` |
 | Agent 权限交集正反向量 | `docs/zephyr-link/contracts/agent-authorization-v1.cases.json` |
+| mobile v1 与新 `sync.*` 信封映射 | `docs/zephyr-link/contracts/mobile-sync-envelope-v1.cases.json` |
 | 新 Link 业务 body 信封 | `docs/zephyr-link/contracts/link-frame-envelope-v1.example.json` |
 | Link PR 影响声明 | `docs/zephyr-link/contracts/change-impact-v1.example.json` |
 | 已批准决策机器记录 | `docs/zephyr-link/contracts/decision-record-v1.json` |

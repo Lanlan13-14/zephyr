@@ -13,6 +13,7 @@
 | `contracts/link-frame-envelope-v1.example.json` | 新互联业务的版本化帧信封参考合同 |
 | `contracts/agent-policy-v1.example.json` | 每台 Agent 独立配置的本机策略参考合同 |
 | `contracts/agent-authorization-v1.cases.json` | Agent 本机/主端/系统/策略代际的权限交集正反例 |
+| `contracts/mobile-sync-envelope-v1.cases.json` | mobile v1 `op` 到新 `sync.*` 信封的映射及拒绝混用向量 |
 | `contracts/change-impact-v1.example.json` | Link PR 必须填写的影响声明参考合同 |
 
 ## 不可变原则
@@ -31,7 +32,7 @@
 node docs/zephyr-link/verify-docs.mjs
 ```
 
-该验证器检查决策完整性、D15 本机授权原则、Node/Go KIND 对齐、JSON Schema 可编译、示例/负例和文档链接。它只验证规范的一致性，**不替代任何真实同步、互联或原生平台测试**。
+该验证器检查决策完整性、D15 本机授权原则、Node/Go KIND 对齐、JSON Schema 可编译、示例/负例和文档链接，并覆盖 mobile v1→v2 映射、deny 优先、空资源列表、最小配额和 WebDAV B0/B1/B2 分级。它只验证规范的一致性，**不替代任何真实同步、互联或原生平台测试**。
 
 ## 当前基线与现状
 
