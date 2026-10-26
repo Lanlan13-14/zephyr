@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
 
-test('the product window drops the OS frame except on macOS', () => {
+test('both the launch window and the product window drop the OS frame except on macOS and preserve window state across entry', () => {
     const main = read('zephyr_one/electron/main.mjs');
     const start = main.indexOf('function createProductWindow()');
     const end = main.indexOf('async function startRuntime()');
@@ -12,14 +12,21 @@ test('the product window drops the OS frame except on macOS', () => {
     assert.match(body, /frame: mac/);
     assert.match(body, /titleBarStyle: mac \? 'hiddenInset'/);
     assert.match(body, /trafficLightPosition: mac \? \{ x: 14, y: 14 \}/);
-    // The launch window keeps its frame; only the product window changes.
+    assert.match(body, /wireWindowChrome\(window\)/);
+
     const launch = main.slice(main.indexOf('function createMainWindow()'), start);
-    assert.doesNotMatch(launch, /frame:/);
+    assert.match(launch, /frame: mac/);
+    assert.match(launch, /titleBarStyle: mac \? 'hiddenInset'/);
+    assert.match(launch, /trafficLightPosition: mac \? \{ x: 14, y: 14 \}/);
+    assert.match(launch, /wireWindowChrome\(window\)/);
+
+    assert.match(main, /function transferWindowStateAndPresent\(sourceWindow, targetWindow\)/);
+    assert.match(main, /transferWindowStateAndPresent\(stateSourceWindow, productWindow\)/);
 });
 
 test('window control IPC is scoped to the requesting window', () => {
     const main = read('zephyr_one/electron/main.mjs');
-    for (const channel of ['window_minimize', 'window_toggle_maximize', 'window_close']) {
+    for (const channel of ['window_get_state', 'window_minimize', 'window_toggle_maximize', 'window_close']) {
         assert.match(main, new RegExp(`ipcMain.handle\\('${channel}'`));
     }
     assert.match(main, /BrowserWindow\.fromWebContents\(event\.sender\)/);
@@ -68,4 +75,37 @@ test('the chrome script never shows buttons without an overlay shell', () => {
     assert.match(script, /if \(!bridge \|\| typeof bridge\.invoke !== 'function'\) return;/);
     // macOS gets the inset marker but never the drawn buttons.
     assert.match(script, /mode === 'overlay'/);
+    assert.match(script, /bridge\.invoke\('window_get_state'\)/);
+    assert.match(script, /applyWindowState/);
+});
+
+test('launch overlay and embedded product window controls match floating panel 3-button geometry, icons, and maximize-to-restore swap', () => {
+    const launchHtml = read('zephyr_one/index.html');
+    const launchCss = read('zephyr_one/src/styles/launch-overlay.css');
+    const launchJs = read('zephyr_one/src/main.js');
+    const embedSurface = read('zephyr-one-embed-surface.js');
+    const embedCss = read('zephyr-one-embed.css');
+
+    // Launch topbar seamlessly integrates at top (56px, transparent, draggable)
+    assert.match(launchHtml, /<header class="launch-topbar" id="launchTopbar"/);
+    assert.match(launchHtml, /id="launchWindowControls"/);
+    assert.match(launchCss, /\.launch-topbar \{[\s\S]*?height: 56px;[\s\S]*?padding: 0 20px;[\s\S]*?background: transparent;[\s\S]*?-webkit-app-region: drag;/);
+    assert.match(launchJs, /function wireLaunchWindowChrome\(\)/);
+    assert.match(launchJs, /bridge\.invoke\('window_get_state'\)/);
+
+    // Both launch and embedded surface use 28x28 buttons, 4px gap, 13x13 SVGs, and dual max/restore icons
+    for (const markup of [launchHtml, embedSurface]) {
+        assert.match(markup, /class="one-win-ico-max"/);
+        assert.match(markup, /class="one-win-ico-restore"/);
+        assert.match(markup, /<rect x="4" y="4" width="16" height="16" rx="2"\/>/);
+        assert.match(markup, /<rect x="4" y="8" width="12" height="12" rx="1\.5"\/>/);
+    }
+    for (const css of [launchCss, embedCss]) {
+        assert.match(css, /\.one-window-controls \{[\s\S]*?gap: 4px;/);
+        assert.match(css, /\.one-window-btn \{[\s\S]*?width: 28px;[\s\S]*?height: 28px;[\s\S]*?border-radius: 7px;/);
+        assert.match(css, /\.one-window-controls\.is-maximized \[data-one-window="maximize"\] \.one-win-ico-max[\s\S]*?display: none;/);
+        assert.match(css, /\.one-window-controls\.is-maximized \[data-one-window="maximize"\] \.one-win-ico-restore[\s\S]*?display: block;/);
+        assert.match(css, /background: rgba\(255, 59, 48, 0\.14\);[\s\S]*?color: #FF3B30;/);
+        assert.doesNotMatch(css, /transform:\s*scale\(0\.82\)/);
+    }
 });

@@ -6,13 +6,52 @@
     var controls = document.querySelector('.one-window-controls');
     if (!controls) return;
 
+    function resolveLabel(key) {
+        var state = window.__zephyrI18nState;
+        if (state && state.messages && typeof state.messages[key] === 'string' && state.messages[key]) {
+            return state.messages[key];
+        }
+        return key;
+    }
+
+    function applyWindowState(state) {
+        var isMax = !!(state && (state.maximized || state.fullScreen));
+        controls.classList.toggle('is-maximized', isMax);
+        var maxBtn = controls.querySelector('[data-one-window="maximize"]');
+        if (maxBtn) {
+            maxBtn.classList.toggle('active', isMax);
+            maxBtn.setAttribute('aria-pressed', isMax ? 'true' : 'false');
+            var key = isMax ? '还原窗口' : '最大化';
+            var label = resolveLabel(key);
+            maxBtn.setAttribute('title', label);
+            maxBtn.setAttribute('aria-label', label);
+            maxBtn.setAttribute('data-i18n-title', key);
+            maxBtn.setAttribute('data-i18n-aria-label', key);
+        }
+    }
+
+    function bindPressMotion() {
+        if (controls.dataset.pressBound === '1') return;
+        if (window.Motion && typeof window.Motion.press === 'function') {
+            controls.dataset.pressBound = '1';
+            window.Motion.press(controls.querySelectorAll('.one-window-btn'), { scale: 0.92 });
+        }
+    }
+
     bridge.invoke('get_platform').then(function (platform) {
         var mode = platform && platform.windowControls;
         if (mode !== 'overlay' && mode !== 'native') return;
         document.documentElement.dataset.zephyrWindowControls = mode;
-        if (mode === 'overlay') controls.hidden = false;
+        if (mode === 'overlay') {
+            controls.hidden = false;
+            bindPressMotion();
+            bridge.invoke('window_get_state').then(applyWindowState).catch(function () {});
+        }
         if (mode === 'native') placeTrafficLights();
     }).catch(function () {});
+
+    window.addEventListener('DOMContentLoaded', bindPressMotion);
+    window.addEventListener('load', bindPressMotion);
 
     /* The three traffic lights are about 54px wide and must sit immediately
      * left of the product controls, which move whenever the window resizes.
@@ -40,14 +79,14 @@
         if (action === 'minimize') bridge.invoke('window_minimize');
         else if (action === 'maximize') {
             bridge.invoke('window_toggle_maximize').then(function (state) {
-                controls.classList.toggle('is-maximized', !!(state && state.maximized));
+                applyWindowState(state);
             });
         } else if (action === 'close') bridge.invoke('window_close');
     });
 
     if (typeof bridge.onWindowState === 'function') {
         bridge.onWindowState(function (state) {
-            controls.classList.toggle('is-maximized', !!(state && state.maximized));
+            applyWindowState(state);
         });
     }
 

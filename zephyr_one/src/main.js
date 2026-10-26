@@ -415,8 +415,60 @@ function listenWindowShown() {
   });
 }
 
+function wireLaunchWindowChrome() {
+  const controls = $('#launchWindowControls') || $('.one-window-controls');
+  if (!controls || !state.isElectron) return;
+  const bridge = window.zephyrOne;
+  if (!bridge || typeof bridge.invoke !== 'function') return;
+
+  function applyWindowState(winState) {
+    const isMax = Boolean(winState && (winState.maximized || winState.fullScreen));
+    controls.classList.toggle('is-maximized', isMax);
+    const maxBtn = controls.querySelector('[data-one-window="maximize"]');
+    if (maxBtn) {
+      maxBtn.classList.toggle('active', isMax);
+      maxBtn.setAttribute('aria-pressed', isMax ? 'true' : 'false');
+      const label = isMax ? '还原窗口' : '最大化';
+      maxBtn.setAttribute('title', label);
+      maxBtn.setAttribute('aria-label', label);
+    }
+  }
+
+  bridge.invoke('get_platform').then((platform) => {
+    const mode = platform && platform.windowControls;
+    if (mode !== 'overlay' && mode !== 'native') return;
+    document.documentElement.dataset.zephyrWindowControls = mode;
+    if (mode === 'overlay') {
+      controls.hidden = false;
+      bridge.invoke('window_get_state').then(applyWindowState).catch(() => {});
+    }
+  }).catch(() => {});
+
+  controls.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-one-window]');
+    if (!button) return;
+    const action = button.getAttribute('data-one-window');
+    if (action === 'minimize') {
+      bridge.invoke('window_minimize');
+    } else if (action === 'maximize') {
+      bridge.invoke('window_toggle_maximize').then((winState) => {
+        applyWindowState(winState);
+      }).catch(() => {});
+    } else if (action === 'close') {
+      bridge.invoke('window_close');
+    }
+  });
+
+  if (typeof bridge.onWindowState === 'function') {
+    bridge.onWindowState((winState) => {
+      applyWindowState(winState);
+    });
+  }
+}
+
 async function boot() {
   loadLocal();
+  wireLaunchWindowChrome();
   listenRuntimeProgress();
   listenWindowShown();
   launch.startSequence();

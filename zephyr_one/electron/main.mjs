@@ -64,6 +64,7 @@ function preloadPath() {
 }
 
 function createMainWindow() {
+  const mac = process.platform === 'darwin';
   const window = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -74,6 +75,9 @@ function createMainWindow() {
     autoHideMenuBar: true,
     backgroundColor: '#090b0e',
     icon: path.join(oneRoot, 'src-tauri', 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+    frame: mac,
+    titleBarStyle: mac ? 'hiddenInset' : 'default',
+    trafficLightPosition: mac ? { x: 14, y: 14 } : undefined,
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,
@@ -81,6 +85,7 @@ function createMainWindow() {
       sandbox: true,
     },
   });
+  wireWindowChrome(window);
   /* The overlay's CSS animation starts when the document loads. A hidden
    * window still loads, so waiting for ready-to-show lets the blossom finish
    * before the user ever sees the window. Show as soon as the DOM exists,
@@ -226,24 +231,136 @@ async function openProductWindow() {
       instanceId: body.instanceId || '',
     });
   } catch { /* smoke harness only */ }
+  const stateSourceWindow = (!productWindow._zephyrPresentedOnce && mainWindow && !mainWindow.isDestroyed())
+    ? mainWindow
+    : productWindow;
   await productWindow.loadURL(target);
-  productWindow.show();
-  productWindow.focus();
+  transferWindowStateAndPresent(stateSourceWindow, productWindow);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
   return info;
+}
+
+function currentWindowState(window) {
+  if (!window || window.isDestroyed()) {
+    return { maximized: false, fullScreen: false, minimized: false };
+  }
+  const fullScreen = Boolean(window.isFullScreen?.() || window._zephyrWasFullScreen);
+  const maximized = Boolean(window.isMaximized?.() || fullScreen || window._zephyrWasMaximized);
+  const minimized = Boolean(window.isMinimized?.() || window._zephyrIsMinimized);
+  return { maximized, fullScreen, minimized };
+}
+
+function recordNormalBounds(window) {
+  if (!window || window.isDestroyed()) return;
+  try {
+    if (!window.isMaximized() && !window.isMinimized() && !window.isFullScreen()) {
+      const b = window.getBounds();
+      if (b && b.width > 0 && b.height > 0) {
+        window._zephyrLastNormalBounds = { ...b };
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+function transferWindowStateAndPresent(sourceWindow, targetWindow) {
+  if (!targetWindow || targetWindow.isDestroyed()) return;
+  const src = sourceWindow && !sourceWindow.isDestroyed() ? sourceWindow : targetWindow;
+  const st = currentWindowState(src);
+  let normalBounds = src._zephyrLastNormalBounds || null;
+  if (!normalBounds) {
+    try {
+      normalBounds = typeof src.getNormalBounds === 'function' ? src.getNormalBounds() : src.getBounds();
+    } catch { normalBounds = null; }
+  }
+  if (normalBounds && normalBounds.width > 0 && normalBounds.height > 0 && src !== targetWindow) {
+    try {
+      targetWindow.setBounds(normalBounds);
+      targetWindow._zephyrLastNormalBounds = { ...normalBounds };
+    } catch { /* ignore */ }
+  }
+  targetWindow._zephyrWasMaximized = st.maximized && !st.fullScreen;
+  targetWindow._zephyrWasFullScreen = st.fullScreen;
+  targetWindow._zephyrIsMinimized = st.minimized;
+  targetWindow._zephyrPresentedOnce = true;
+
+  if (st.minimized) {
+    if (st.fullScreen || st.maximized) {
+      targetWindow.once('restore', () => {
+        if (targetWindow.isDestroyed()) return;
+        if (st.fullScreen && !targetWindow.isFullScreen()) targetWindow.setFullScreen(true);
+        else if (st.maximized && !targetWindow.isMaximized()) targetWindow.maximize();
+        try {
+          targetWindow.webContents.send('zephyr-one:window-state', currentWindowState(targetWindow));
+        } catch { /* ignore */ }
+      });
+    }
+    if (!targetWindow.isMinimized()) {
+      try { targetWindow.showInactive(); } catch { /* ignore */ }
+      targetWindow.minimize();
+    }
+  } else {
+    if (st.fullScreen) {
+      if (!targetWindow.isFullScreen()) targetWindow.setFullScreen(true);
+      targetWindow.show();
+      targetWindow.focus();
+    } else if (st.maximized) {
+      if (!targetWindow.isMaximized()) targetWindow.maximize();
+      targetWindow.show();
+      if (!targetWindow.isMaximized()) targetWindow.maximize();
+      targetWindow.focus();
+    } else {
+      targetWindow.show();
+      targetWindow.focus();
+    }
+  }
+  try {
+    targetWindow.webContents.send('zephyr-one:window-state', currentWindowState(targetWindow));
+  } catch { /* ignore */ }
 }
 
 // Page-drawn window buttons (Windows/Linux). The renderer asks; the main
 // process owns the window, so the buttons can never act on the wrong one.
 function wireWindowChrome(window) {
+  recordNormalBounds(window);
   const send = () => {
-    if (window.isDestroyed()) return;
-    window.webContents.send('zephyr-one:window-state', { maximized: window.isMaximized() });
+    if (!window || window.isDestroyed()) return;
+    try {
+      window.webContents.send('zephyr-one:window-state', currentWindowState(window));
+    } catch { /* ignore */ }
   };
-  window.on('maximize', send);
-  window.on('unmaximize', send);
-  window.on('enter-full-screen', send);
-  window.on('leave-full-screen', send);
+  window.on('move', () => recordNormalBounds(window));
+  window.on('resize', () => recordNormalBounds(window));
+  window.on('maximize', () => {
+    window._zephyrWasMaximized = true;
+    send();
+  });
+  window.on('unmaximize', () => {
+    if (!window.isMinimized()) window._zephyrWasMaximized = false;
+    recordNormalBounds(window);
+    send();
+  });
+  window.on('enter-full-screen', () => {
+    window._zephyrWasFullScreen = true;
+    send();
+  });
+  window.on('leave-full-screen', () => {
+    window._zephyrWasFullScreen = false;
+    recordNormalBounds(window);
+    send();
+  });
+  window.on('minimize', () => {
+    window._zephyrIsMinimized = true;
+    send();
+  });
+  window.on('restore', () => {
+    window._zephyrIsMinimized = false;
+    send();
+  });
+  window.on('show', () => {
+    if (!window.isMinimized()) window._zephyrIsMinimized = false;
+    send();
+  });
+  window.webContents.on('did-finish-load', send);
 }
 
 function wireIpc() {
@@ -266,15 +383,31 @@ function wireIpc() {
       return window;
     } catch { return null; }
   }
+  ipcMain.handle('window_get_state', (event) => {
+    const window = senderWindow(event);
+    return currentWindowState(window);
+  });
   ipcMain.handle('window_minimize', (event) => {
+    const win = senderWindow(event);
+    if (win) win._zephyrIsMinimized = true;
     senderWindow(event)?.minimize();
+    return currentWindowState(win);
   });
   ipcMain.handle('window_toggle_maximize', (event) => {
     const window = senderWindow(event);
-    if (!window) return { maximized: false };
-    if (window.isMaximized()) window.unmaximize();
-    else window.maximize();
-    return { maximized: window.isMaximized() };
+    if (!window) return { maximized: false, fullScreen: false, minimized: false };
+    if (window.isFullScreen()) {
+      window._zephyrWasFullScreen = false;
+      window.setFullScreen(false);
+    } else if (window.isMaximized()) {
+      window._zephyrWasMaximized = false;
+      window.unmaximize();
+    } else {
+      recordNormalBounds(window);
+      window._zephyrWasMaximized = true;
+      window.maximize();
+    }
+    return currentWindowState(window);
   });
   ipcMain.handle('window_close', (event) => {
     senderWindow(event)?.close();

@@ -236,14 +236,15 @@ function dropAgentPanel(html) {
  * traffic lights, and never in a plain browser). */
 const WINDOW_CONTROLS = ''
     + '<div class="one-window-controls" hidden>'
-    + '<button type="button" class="one-window-btn" data-one-window="minimize" aria-label="最小化" title="最小化">'
-    + '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>'
+    + '<button type="button" class="one-window-btn" data-one-window="minimize" aria-label="最小化" title="最小化" data-i18n-title="最小化" data-i18n-aria-label="最小化">'
+    + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
     + '</button>'
-    + '<button type="button" class="one-window-btn" data-one-window="maximize" aria-label="最大化" title="最大化">'
-    + '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.25" y="2.25" width="7.5" height="7.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>'
+    + '<button type="button" class="one-window-btn" data-one-window="maximize" aria-label="最大化" title="最大化" data-i18n-title="最大化" data-i18n-aria-label="最大化" aria-pressed="false">'
+    + '<svg class="one-win-ico-max" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>'
+    + '<svg class="one-win-ico-restore" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16"/></svg>'
     + '</button>'
-    + '<button type="button" class="one-window-btn one-window-btn-close" data-one-window="close" aria-label="关闭" title="关闭">'
-    + '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3L3 9" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>'
+    + '<button type="button" class="one-window-btn one-window-btn-close" data-one-window="close" aria-label="关闭" title="关闭" data-i18n-title="关闭" data-i18n-aria-label="关闭">'
+    + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
     + '</button>'
     + '</div>';
 
