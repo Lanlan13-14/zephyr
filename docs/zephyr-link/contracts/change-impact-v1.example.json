@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/zephyr-link/change-impact-v1.example.json",
+  "title": "Required Link Change Impact Declaration Example",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["channels", "platforms", "dataDomains", "states", "protocolImpact", "dataImpact", "requiredEvidence", "failureInjections", "compatibility", "rollback", "evidenceLinks"],
+  "properties": {
+    "channels": { "$ref": "#/$defs/channelArray" },
+    "platforms": { "$ref": "#/$defs/platformArray" },
+    "dataDomains": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["local", "owned", "shared-to-me"] }
+    },
+    "states": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["unbound", "bound", "offline", "conflicted", "revoked", "migrating"] }
+    },
+    "protocolImpact": { "$ref": "#/$defs/protocolImpactArray" },
+    "dataImpact": { "$ref": "#/$defs/dataImpactArray" },
+    "requiredEvidence": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"] }
+    },
+    "failureInjections": { "type": "array", "uniqueItems": true, "items": { "type": "string", "maxLength": 128 } },
+    "compatibility": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "maxLength": 64 } },
+    "rollback": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1, "maxLength": 512 } },
+    "evidenceLinks": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 1024 } }
+  },
+  "$defs": {
+    "channelArray": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["control", "owned-sync", "secret", "blob", "file-bridge", "shared-terminal", "shared-remote", "shared-note", "shared-file", "ai", "agent-tunnel"] }
+    },
+    "platformArray": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["server", "desktop", "android", "ios", "agent", "agentd", "webdav"] }
+    },
+    "protocolImpactArray": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["none", "additive", "breaking", "registry-only"] }
+    },
+    "dataImpactArray": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["cursor", "revision", "tombstone", "secrets", "schema", "binary", "none"] }
+    }
+  }
+}

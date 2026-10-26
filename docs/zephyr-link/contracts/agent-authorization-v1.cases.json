@@ -1,0 +1,52 @@
+[
+  {
+    "id": "AGENT-ACL-001",
+    "description": "Primary grants write but the Agent local policy permits read only",
+    "request": { "channel": "file-bridge", "operation": "write", "share": "projects" },
+    "agentLocal": { "effect": "allow", "operations": ["list", "stat", "read"], "shares": ["projects"], "policyGeneration": 4 },
+    "primaryAcl": { "effect": "allow", "operations": ["read", "write"] },
+    "systemGrant": { "effect": "allow", "operations": ["read", "write"] },
+    "session": { "policyGeneration": 4 },
+    "expected": { "effect": "deny", "code": "agent_local_policy_denied" }
+  },
+  {
+    "id": "AGENT-ACL-002",
+    "description": "Agent permits but primary ACL rejects",
+    "request": { "channel": "file-bridge", "operation": "write", "share": "projects" },
+    "agentLocal": { "effect": "allow", "operations": ["read", "write"], "shares": ["projects"], "policyGeneration": 4 },
+    "primaryAcl": { "effect": "deny", "operations": [] },
+    "systemGrant": { "effect": "allow", "operations": ["read", "write"] },
+    "session": { "policyGeneration": 4 },
+    "expected": { "effect": "deny", "code": "primary_acl_denied" }
+  },
+  {
+    "id": "AGENT-ACL-003",
+    "description": "Both allow but the operating-system directory grant is revoked",
+    "request": { "channel": "file-bridge", "operation": "write", "share": "projects" },
+    "agentLocal": { "effect": "allow", "operations": ["read", "write"], "shares": ["projects"], "policyGeneration": 4 },
+    "primaryAcl": { "effect": "allow", "operations": ["read", "write"] },
+    "systemGrant": { "effect": "deny", "operations": [] },
+    "session": { "policyGeneration": 4 },
+    "expected": { "effect": "deny", "code": "system_grant_denied" }
+  },
+  {
+    "id": "AGENT-ACL-005",
+    "description": "The lease was minted under an older local policy generation",
+    "request": { "channel": "file-bridge", "operation": "read", "share": "projects" },
+    "agentLocal": { "effect": "allow", "operations": ["read"], "shares": ["projects"], "policyGeneration": 5 },
+    "primaryAcl": { "effect": "allow", "operations": ["read", "write"] },
+    "systemGrant": { "effect": "allow", "operations": ["read", "write"] },
+    "session": { "policyGeneration": 4 },
+    "expected": { "effect": "deny", "code": "agent_policy_generation_stale" }
+  },
+  {
+    "id": "AGENT-ACL-ALLOW-001",
+    "description": "All authorities and the current generation permit a read",
+    "request": { "channel": "file-bridge", "operation": "read", "share": "projects" },
+    "agentLocal": { "effect": "allow", "operations": ["read"], "shares": ["projects"], "policyGeneration": 5 },
+    "primaryAcl": { "effect": "allow", "operations": ["read", "write"] },
+    "systemGrant": { "effect": "allow", "operations": ["read", "write"] },
+    "session": { "policyGeneration": 5 },
+    "expected": { "effect": "allow" }
+  }
+]

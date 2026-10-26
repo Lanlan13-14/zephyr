@@ -1,0 +1,41 @@
+{
+  "document": "ZEPHYR-LINK-ARCH-001",
+  "version": "1.0.0",
+  "status": "approved-for-implementation",
+  "approvedAt": "2026-10-26",
+  "baseline": {
+    "branch": "zephyr-newui",
+    "commit": "3796df32dbe8fe28376e45ff1e7ccf2080cc87c1"
+  },
+  "decisions": {
+    "D1": "first_bind_explicit_import_preview_no_auto_upload",
+    "D2": "cas_disjoint_merge_conflict_diff3_no_client_wall_clock_lww",
+    "D3": "platform_local_stores_go_protocol_crypto_webdav",
+    "D4": "webdav_backup_restore_before_multiwriter_oplog",
+    "D5": "revoke_now_wipe_linked_only_on_next_online",
+    "D6": "zsl2_for_bound_realtime_https_discovery_explicit_fallback",
+    "D7": "go_1_26_10_xcrypto_at_least_0_56_0_rebuild_all_artifacts",
+    "D8": "zero_knowledge_vault_trusted_primary_for_hosted_lanes",
+    "D9": "versioned_link_frame_contracts",
+    "D10": "single_libzephyr_runtime_platform_repositories",
+    "D11": "sticky_primary_recoverable_reconnect_before_ha_migration",
+    "D12": "instant_own_device_handoff_high_risk_explicit_approval",
+    "D13": "idempotent_commands_epoch_seq_file_checkpoints_backpressure",
+    "D14": "strict_shared_zero_residency_one_time_pop_ticket",
+    "D15": "user_defined_per_agent_policy_final_authority_on_agent_device"
+  },
+  "agentAuthority": {
+    "rule": "intersection_not_union",
+    "inputs": [
+      "agent_local_user_policy",
+      "primary_caller_acl",
+      "current_session_resource_operation",
+      "operating_system_grant"
+    ],
+    "finalDecision": "agent_device",
+    "primaryMayNotEscalateBeyondAgentLocalPolicy": true,
+    "policyGenerationInvalidatesLeasesTicketsAndStreams": true,
+    "perAgentIndependentConfiguration": true
+  },
+  "completionRule": "Specification approval does not imply feature completion. Completion requires TESTING-AND-RELEASE-GATES evidence."
+}

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zephyr.local/contracts/zephyr-link/agent-policy-v1.example.json",
+  "title": "Agent Local Independent Authorization Policy Example",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "agentId", "policyGeneration", "defaultEffect", "rules"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "agentId": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "policyGeneration": { "type": "integer", "minimum": 1 },
+    "defaultEffect": { "const": "deny" },
+    "rules": { "type": "array", "maxItems": 512, "items": { "$ref": "#/$defs/rule" } }
+  },
+  "$defs": {
+    "effect": { "enum": ["allow", "deny"] },
+    "channel": {
+      "enum": [
+        "control", "owned-sync", "secret", "blob", "file-bridge",
+        "shared-terminal", "shared-remote", "shared-note", "shared-file",
+        "ai", "agent-tunnel"
+      ]
+    },
+    "operation": {
+      "enum": [
+        "list", "stat", "read", "write", "mkdir", "delete", "rename", "truncate",
+        "clipboard.read", "clipboard.write", "clipboard.fileManifest", "clipboard.fileRead",
+        "tunnel.local", "tunnel.remote", "tunnel.dynamic", "drive.map", "desktop.control",
+        "ai.read", "ai.write", "ai.execute", "offload.invoke"
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxFileBytes": { "type": "integer", "minimum": 0, "maximum": 1099511627776 },
+        "maxInflight": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "maxChunkBytes": { "type": "integer", "minimum": 65536, "maximum": 262144 },
+        "maxDailyBytes": { "type": "integer", "minimum": 0 },
+        "maxDirectoryDepth": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "maxRequestsPerMinute": { "type": "integer", "minimum": 1, "maximum": 100000 }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ruleId", "subjects", "channels", "operations", "effect", "limits"],
+      "properties": {
+        "ruleId": { "type": "string", "pattern": "^rule_[A-Za-z0-9_-]{4,96}$" },
+        "subjects": {
+          "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^(user|device|group):[A-Za-z0-9_.:-]{1,160}$" }
+        },
+        "channels": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/channel" }
+        },
+        "operations": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/operation" }
+        },
+        "shares": {
+          "type": "array", "maxItems": 128, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" }
+        },
+        "networkTargets": {
+          "type": "array", "maxItems": 256, "uniqueItems": true,
+          "items": { "type": "string", "maxLength": 256 }
+        },
+        "listenHosts": {
+          "type": "array", "maxItems": 16, "uniqueItems": true,
+          "items": { "type": "string", "maxLength": 255 }
+        },
+        "offloadCapabilities": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$" }
+        },
+        "effect": { "$ref": "#/$defs/effect" },
+        "limits": { "$ref": "#/$defs/limits" },
+        "expiresAt": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    }
+  }
+}
