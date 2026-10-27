@@ -253,6 +253,25 @@ delete process.env.ZEPHYR_ONE_STARTUP_CHALLENGE;
 let oneSecurity = null;
 let oneLinkSync = null;
 let oneLinkInitiator = null;
+
+/**
+ * Desktop owned writes must land in the Link outbox in the same turn as the
+ * canonical row. Looked up at call time because oneLinkSync is constructed
+ * after ResourceService/NotesService, and again after database reopen.
+ * Hosted main has no client outbox. Pull-applied remoteMerge must not re-enqueue.
+ */
+function notifyOwnedLinkMutation(event) {
+    if (!ZEPHYR_ONE_EMBEDDED) return;
+    const sync = oneLinkSync;
+    if (!sync || typeof sync.recordLocalMutation !== 'function') return;
+    if (!sync.binding) return;
+    if (event && event.remoteMerge === true) return;
+    try {
+        sync.recordLocalMutation(event);
+    } catch (err) {
+        console.warn('[one-link] local mutation enqueue failed', err && err.message);
+    }
+}
 const EMBEDDED_LISTEN_HOST = ZEPHYR_ONE_EMBEDDED
     ? '127.0.0.1'
     : String(process.env.ZEPHYR_BIND_HOST || '');
@@ -1119,7 +1138,10 @@ const resolveAgentBastion = (user, agentId) => {
     }
     return null;
 };
-const resourceService = new ResourceService(storage, authz, { agentBastionResolver: resolveAgentBastion });
+const resourceService = new ResourceService(storage, authz, {
+    agentBastionResolver: resolveAgentBastion,
+    onOwnedMutation: notifyOwnedLinkMutation,
+});
 const sharingService = new SharingService(authz, storage, resourceService);
 let resourceAclMetadataService = new ResourceAclMetadataService({
     db: storage.rawDb(),
@@ -1138,7 +1160,9 @@ const workspaceService = new WorkspaceService(storage.rawDb(), { resources: reso
 const userSettingsService = new UserSettingsService(storage.rawDb(), storage, {
     mobileChangeBridge: getMobileV1ChangeBridge(storage.rawDb()),
 });
-const notesService = new NotesService(storage.rawDb(), authz);
+const notesService = new NotesService(storage.rawDb(), authz, () => Date.now(), {
+    onOwnedMutation: notifyOwnedLinkMutation,
+});
 const appChangeWakeBridge = getMobileV1ChangeBridge(storage.rawDb());
 const appChangeWakeHub = new AppChangeWakeHub({
     allowedEntityTypes: appChangeWakeBridge.registry.entities.map((entity) => entity.type),
@@ -1342,7 +1366,10 @@ function rebuildAuthServices() {
     aiHistoryRuntime.reset();
     resourceAclMetadataService?.uninstall();
     Object.assign(authz, new Authz(storage.rawDb(), { getUserById: (id) => storage.getUserBrief(id) }));
-    Object.assign(resourceService, new ResourceService(storage, authz, { agentBastionResolver: resolveAgentBastion }));
+    Object.assign(resourceService, new ResourceService(storage, authz, {
+        agentBastionResolver: resolveAgentBastion,
+        onOwnedMutation: notifyOwnedLinkMutation,
+    }));
     Object.assign(sharingService, new SharingService(authz, storage, resourceService));
     resourceAclMetadataService = new ResourceAclMetadataService({
         db: storage.rawDb(),
@@ -1361,7 +1388,9 @@ function rebuildAuthServices() {
     Object.assign(userSettingsService, new UserSettingsService(storage.rawDb(), storage, {
         mobileChangeBridge: getMobileV1ChangeBridge(storage.rawDb()),
     }));
-    Object.assign(notesService, new NotesService(storage.rawDb(), authz));
+    Object.assign(notesService, new NotesService(storage.rawDb(), authz, () => Date.now(), {
+        onOwnedMutation: notifyOwnedLinkMutation,
+    }));
     Object.assign(oneClientManager, new OneClientManager({
         db: storage.rawDb(),
         fileAgentManager,
@@ -1905,6 +1934,8 @@ async function createMobileV1Runtime({ injectFaults = false } = {}) {
         dispatcher = new MobileV1OutboxDispatcher({
             changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
             wake: api.wake,
+            db: storage.rawDb(),
+            instanceId: INSTANCE_ID,
             log: (...args) => console.warn(...args),
         });
         if (!dispatcher.start()) throw new Error('mobile outbox dispatcher leader is still active');
@@ -9520,6 +9551,8 @@ try {
     mobileV1OutboxDispatcher = new MobileV1OutboxDispatcher({
         changeBridge: getMobileV1ChangeBridge(storage.rawDb()),
         wake: mobileV1Api.wake,
+        db: storage.rawDb(),
+        instanceId: INSTANCE_ID,
         log: (...args) => console.warn(...args),
     });
     mobileV1OutboxDispatcher.start();

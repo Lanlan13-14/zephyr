@@ -93,6 +93,17 @@ function canonicalJson(value) {
     return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonicalJson(value[k])).join(',') + '}';
 }
 
+/**
+ * Parent/child field-path overlap used by both the field ledger shortcut and
+ * the full conflict walk. `config` overlaps `config.x`; `items` overlaps
+ * `items.0.name`; `setting` does not overlap `settings.theme`.
+ */
+function fieldPathsOverlap(left, right) {
+    const a = String(left);
+    const b = String(right);
+    return a === b || a.startsWith(b + '.') || b.startsWith(a + '.');
+}
+
 class MobileStoreError extends Error {
     constructor(code, message, status = 400, extra = {}) {
         super(message);
@@ -433,6 +444,41 @@ class MobileV1Store {
             );
             CREATE INDEX IF NOT EXISTS idx_mobile_user_cleanup_jobs_state
                 ON mobile_user_cleanup_jobs(state, updated_at);
+
+            /* Consistent bootstrap generation: id set captured once, later
+             * pages never re-list the live table. row_json is public payload
+             * plus secret field names — never plaintext secrets. */
+            CREATE TABLE IF NOT EXISTS mobile_bootstrap_snapshot_meta (
+                bootstrap_id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                snapshot_cursor INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_mobile_bootstrap_snapshot_meta_expiry
+                ON mobile_bootstrap_snapshot_meta(expires_at);
+            CREATE TABLE IF NOT EXISTS mobile_bootstrap_snapshots (
+                bootstrap_id TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                type_index INTEGER NOT NULL,
+                revision INTEGER NOT NULL,
+                row_json TEXT NOT NULL,
+                PRIMARY KEY(bootstrap_id, type_index, entity_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mobile_bootstrap_snapshots_page
+                ON mobile_bootstrap_snapshots(bootstrap_id, type_index, entity_id);
+
+            /* Cross-process wake leader. Process-local activeLeader is only a
+             * fallback when no db is injected. */
+            CREATE TABLE IF NOT EXISTS mobile_wake_leader (
+                lock_id TEXT PRIMARY KEY,
+                owner_instance TEXT NOT NULL,
+                fencing_token INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
         `);
         this._ensureBlobSchemaColumns();
     }
@@ -1376,20 +1422,46 @@ class MobileV1Store {
     }
 
     /**
-     * Field-level overlap test from SYNC_STATE_MACHINE.md section 7.
+     * Field-level overlap test from SYNC_STATE_MACHINE.md section 7 and
+     * ZEPHYR-LINK-INTERCONNECTION-SPEC §5.5.
      *
      * An incoming edit conflicts when any field it names has moved *after* the
-     * revision the client based its edit on. Comparing whole-entity revisions
-     * instead would reject every concurrent edit to a different field, which is
-     * precisely the false conflict field revisions exist to avoid.
+     * revision the client based its edit on, including parent/child paths
+     * (`config` vs `config.x`, `items` vs `items.0.name`). Comparing whole
+     * entity revisions instead would reject every concurrent edit to a
+     * different field, which is precisely the false conflict field revisions
+     * exist to avoid.
+     *
+     * An empty field ledger is *not* "no conflict". Historical databases that
+     * never back-filled per-field rows still have an entity revision; treating
+     * the missing ledger as disjoint would silently merge over unseen server
+     * writes. Fail closed unless the entity has never existed here.
      */
     hasOverlap(ownerUserId, entityType, entityId, baseRevision, fieldMask) {
         const revisions = this.fieldRevisions(ownerUserId, entityType, entityId);
         const base = Number(baseRevision) || 0;
-        for (const field of fieldMask || []) {
-            if ((revisions.get(String(field)) || 0) > base) return true;
+        const incoming = [...new Set((fieldMask || []).map(String).filter(Boolean))];
+        let sawLedger = false;
+        for (const [serverField, revision] of revisions) {
+            sawLedger = true;
+            if (Number(revision) <= base) continue;
+            if (!incoming.length) return true;
+            if (incoming.some((field) => fieldPathsOverlap(field, serverField))) return true;
         }
-        return false;
+        if (sawLedger) return false;
+
+        const version = this.getEntityVersion(ownerUserId, entityType, entityId);
+        if (version && Number(version.revision) > base) return true;
+        const unseen = this.db.prepare(`SELECT 1 AS hit FROM mobile_sync_changes
+            WHERE owner_user_id = ? AND entity_type = ? AND entity_id = ?
+              AND revision > ?
+            LIMIT 1`).get(
+            String(ownerUserId),
+            String(entityType),
+            String(entityId),
+            base,
+        );
+        return !!unseen;
     }
 
     /** True when this owner had an unseen change that retention removed. */
@@ -2282,7 +2354,12 @@ class MobileV1Store {
         ownerUserId,
         deviceId,
         generation,
+        expiresAt = null,
     }) {
+        const ttlMs = BOOTSTRAP_TOKEN_TTL_MINUTES * 60000;
+        const expiry = Number.isSafeInteger(Number(expiresAt)) && Number(expiresAt) > 0
+            ? Number(expiresAt)
+            : nowMs() + ttlMs;
         return this._normalizeBootstrapState({
             version: BOOTSTRAP_TOKEN_VERSION,
             bootstrapId,
@@ -2295,8 +2372,271 @@ class MobileV1Store {
             deviceId,
             generation,
             registryHash: this.registryHash,
-            expiresAt: nowMs() + BOOTSTRAP_TOKEN_TTL_MINUTES * 60000,
+            expiresAt: expiry,
         }, { requireIdentity: false });
+    }
+
+    /**
+     * Materialises one consistent bootstrap generation.
+     *
+     * `collect(typeIndex)` is invoked for every bootstrap type *inside* a
+     * single SQLite transaction together with the latestCursor read, so a
+     * concurrent insert cannot appear on a later page of the same bootstrapId.
+     * `row_json` stores the already-projected public payload plus secret field
+     * names — never secret plaintext.
+     */
+    captureBootstrapSnapshot({
+        bootstrapId,
+        ownerUserId,
+        deviceId,
+        typeOrder,
+        collect,
+    }) {
+        const id = String(bootstrapId || '');
+        const owner = String(ownerUserId || '');
+        const device = String(deviceId || '');
+        const types = Array.isArray(typeOrder) ? typeOrder.map(String) : [];
+        if (!id || !owner || !device || !types.length) {
+            throw this._bootstrapExpired();
+        }
+        if (typeof collect !== 'function') {
+            throw new TypeError('captureBootstrapSnapshot requires collect(typeIndex)');
+        }
+        this.gcBootstrapSnapshots();
+        const expiresAt = nowMs() + BOOTSTRAP_TOKEN_TTL_MINUTES * 60000;
+        const tx = this.db.transaction(() => {
+            const snapshotCursor = this.latestCursor(owner);
+            const insertMeta = this.db.prepare(`INSERT INTO mobile_bootstrap_snapshot_meta
+                (bootstrap_id, owner_user_id, device_id, snapshot_cursor, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)`);
+            const insertRow = this.db.prepare(`INSERT INTO mobile_bootstrap_snapshots
+                (bootstrap_id, owner_user_id, entity_type, entity_id, type_index, revision, row_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`);
+            insertMeta.run(id, owner, device, snapshotCursor, expiresAt, nowMs());
+            const upperBounds = [];
+            for (let typeIndex = 0; typeIndex < types.length; typeIndex += 1) {
+                const entityType = types[typeIndex];
+                const listed = collect(typeIndex, entityType);
+                if (listed != null && !Array.isArray(listed)) {
+                    throw new Error('bootstrap adapter list must return an array');
+                }
+                const seen = new Set();
+                const rows = [];
+                for (const entry of listed || []) {
+                    const entityId = String(entry && entry.entityId || '');
+                    if (!entityId || entityId.length > 2048) {
+                        throw new Error('bootstrap adapter returned an invalid stable id');
+                    }
+                    if (seen.has(entityId)) {
+                        throw new Error('bootstrap adapter returned a duplicate stable id');
+                    }
+                    seen.add(entityId);
+                    const revision = Number(entry && entry.revision) || 1;
+                    const payload = entry && entry.payload && typeof entry.payload === 'object'
+                        ? entry.payload
+                        : {};
+                    const secretFields = Array.isArray(entry && entry.secretFields)
+                        ? entry.secretFields.map(String).filter(Boolean)
+                        : [];
+                    const changedAt = Math.max(1, Number(entry && entry.changedAt) || 1);
+                    const fieldMask = Array.isArray(entry && entry.fieldMask)
+                        ? entry.fieldMask.map(String)
+                        : [];
+                    insertRow.run(
+                        id,
+                        owner,
+                        entityType,
+                        entityId,
+                        typeIndex,
+                        revision,
+                        JSON.stringify({
+                            payload,
+                            secretFields,
+                            changedAt,
+                            fieldMask,
+                        }),
+                    );
+                    rows.push({ entityId });
+                }
+                rows.sort((left, right) => (left.entityId < right.entityId
+                    ? -1
+                    : left.entityId > right.entityId ? 1 : 0));
+                upperBounds.push(rows.length ? rows[rows.length - 1].entityId : null);
+            }
+            return { snapshotCursor, upperBounds, expiresAt };
+        });
+        return tx();
+    }
+
+    bootstrapSnapshotPage({
+        bootstrapId,
+        typeIndex,
+        afterEntityId = null,
+        upperBound = null,
+        limit = 200,
+    }) {
+        this.gcBootstrapSnapshots();
+        const id = String(bootstrapId || '');
+        const meta = this.db.prepare(`SELECT * FROM mobile_bootstrap_snapshot_meta
+            WHERE bootstrap_id = ?`).get(id);
+        if (!meta) throw this._bootstrapExpired();
+        if (Number(meta.expires_at) <= nowMs()) {
+            this.deleteBootstrapSnapshot(id);
+            throw this._bootstrapExpired('\u5206\u9875\u4ee4\u724c\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u5f00\u59cb bootstrap');
+        }
+        const size = Math.max(1, Math.min(1000, Number(limit) || 200));
+        const index = Number(typeIndex);
+        const after = afterEntityId == null ? null : String(afterEntityId);
+        const bound = upperBound == null ? null : String(upperBound);
+        const rows = this.db.prepare(`SELECT entity_type, entity_id, type_index, revision, row_json
+            FROM mobile_bootstrap_snapshots
+            WHERE bootstrap_id = ?
+              AND type_index = ?
+              AND (? IS NULL OR entity_id > ?)
+              AND (? IS NULL OR entity_id <= ?)
+            ORDER BY entity_id ASC
+            LIMIT ?`).all(id, index, after, after, bound, bound, size);
+        return rows.map((row) => {
+            let decoded = {};
+            try { decoded = JSON.parse(row.row_json) || {}; } catch { decoded = {}; }
+            return {
+                entityType: String(row.entity_type),
+                entityId: String(row.entity_id),
+                typeIndex: Number(row.type_index),
+                revision: Number(row.revision) || 1,
+                payload: decoded.payload && typeof decoded.payload === 'object' ? decoded.payload : {},
+                secretFields: Array.isArray(decoded.secretFields) ? decoded.secretFields.map(String) : [],
+                changedAt: Math.max(1, Number(decoded.changedAt) || 1),
+                fieldMask: Array.isArray(decoded.fieldMask) ? decoded.fieldMask.map(String) : [],
+            };
+        });
+    }
+
+    deleteBootstrapSnapshot(bootstrapId) {
+        const id = String(bootstrapId || '');
+        if (!id) return 0;
+        const tx = this.db.transaction(() => {
+            const dropped = this.db.prepare(
+                'DELETE FROM mobile_bootstrap_snapshots WHERE bootstrap_id = ?',
+            ).run(id);
+            this.db.prepare(
+                'DELETE FROM mobile_bootstrap_snapshot_meta WHERE bootstrap_id = ?',
+            ).run(id);
+            return Number(dropped.changes || 0);
+        });
+        return tx();
+    }
+
+    gcBootstrapSnapshots(referenceTime = nowMs()) {
+        const now = Number(referenceTime) || nowMs();
+        const expired = this.db.prepare(
+            'SELECT bootstrap_id FROM mobile_bootstrap_snapshot_meta WHERE expires_at <= ?',
+        ).all(now);
+        let dropped = 0;
+        for (const row of expired) dropped += this.deleteBootstrapSnapshot(row.bootstrap_id);
+        return dropped;
+    }
+
+    /**
+     * Cross-process wake leader lease. `lockId` is a well-known singleton
+     * (`mobile-v1-outbox`) so every replica contends on the same row.
+     */
+    tryAcquireWakeLeader({ lockId, instanceId, ttlMs, now = nowMs() } = {}) {
+        const id = String(lockId || 'mobile-v1-outbox');
+        const owner = String(instanceId || '');
+        const ttl = Math.max(1000, Number(ttlMs) || 15000);
+        const ts = Number(now) || nowMs();
+        if (!owner) return null;
+        const tx = this.db.transaction(() => {
+            const row = this.db.prepare(
+                'SELECT * FROM mobile_wake_leader WHERE lock_id = ?',
+            ).get(id);
+            if (row && String(row.owner_instance) === owner && Number(row.expires_at) > ts) {
+                const nextExpiry = ts + ttl;
+                this.db.prepare(`UPDATE mobile_wake_leader
+                    SET expires_at = ? WHERE lock_id = ? AND owner_instance = ?`)
+                    .run(nextExpiry, id, owner);
+                return {
+                    lockId: id,
+                    ownerInstance: owner,
+                    fencingToken: Number(row.fencing_token),
+                    expiresAt: nextExpiry,
+                };
+            }
+            if (row && Number(row.expires_at) > ts && String(row.owner_instance) !== owner) {
+                return null;
+            }
+            const nextToken = row ? Number(row.fencing_token) + 1 : 1;
+            const expiresAt = ts + ttl;
+            this.db.prepare(`INSERT INTO mobile_wake_leader
+                (lock_id, owner_instance, fencing_token, expires_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(lock_id) DO UPDATE SET
+                    owner_instance = excluded.owner_instance,
+                    fencing_token = excluded.fencing_token,
+                    expires_at = excluded.expires_at`).run(id, owner, nextToken, expiresAt);
+            return {
+                lockId: id,
+                ownerInstance: owner,
+                fencingToken: nextToken,
+                expiresAt,
+            };
+        });
+        return tx();
+    }
+
+    renewWakeLeader({ lockId, instanceId, fencingToken, ttlMs, now = nowMs() } = {}) {
+        const id = String(lockId || 'mobile-v1-outbox');
+        const owner = String(instanceId || '');
+        const token = Number(fencingToken);
+        const ttl = Math.max(1000, Number(ttlMs) || 15000);
+        const ts = Number(now) || nowMs();
+        if (!owner || !Number.isSafeInteger(token) || token < 1) return null;
+        const expiresAt = ts + ttl;
+        const info = this.db.prepare(`UPDATE mobile_wake_leader
+            SET expires_at = ?
+            WHERE lock_id = ? AND owner_instance = ? AND fencing_token = ? AND expires_at > ?`)
+            .run(expiresAt, id, owner, token, ts);
+        if (!Number(info.changes || 0)) return null;
+        return { lockId: id, ownerInstance: owner, fencingToken: token, expiresAt };
+    }
+
+    hasWakeLeader({ lockId, instanceId, fencingToken, now = nowMs() } = {}) {
+        const id = String(lockId || 'mobile-v1-outbox');
+        const owner = String(instanceId || '');
+        const token = Number(fencingToken);
+        const ts = Number(now) || nowMs();
+        if (!owner || !Number.isSafeInteger(token) || token < 1) return false;
+        const row = this.db.prepare(
+            'SELECT owner_instance, fencing_token, expires_at FROM mobile_wake_leader WHERE lock_id = ?',
+        ).get(id);
+        return !!row
+            && String(row.owner_instance) === owner
+            && Number(row.fencing_token) === token
+            && Number(row.expires_at) > ts;
+    }
+
+    releaseWakeLeader({ lockId, instanceId, fencingToken } = {}) {
+        const id = String(lockId || 'mobile-v1-outbox');
+        const owner = String(instanceId || '');
+        const token = Number(fencingToken);
+        if (!owner || !Number.isSafeInteger(token) || token < 1) return 0;
+        const info = this.db.prepare(`DELETE FROM mobile_wake_leader
+            WHERE lock_id = ? AND owner_instance = ? AND fencing_token = ?`)
+            .run(id, owner, token);
+        return Number(info.changes || 0);
+    }
+
+    listBootstrapSnapshotPage(args) {
+        return this.bootstrapSnapshotPage(args);
+    }
+
+    dropBootstrapSnapshot(bootstrapId) {
+        return this.deleteBootstrapSnapshot(bootstrapId);
+    }
+
+    acquireWakeLeader(args) {
+        return this.tryAcquireWakeLeader(args);
     }
 
     sealBootstrapToken(state) {
@@ -2333,6 +2673,7 @@ class MobileV1Store {
         }
         state = this._normalizeBootstrapState(state);
         if (state.expiresAt <= nowMs()) {
+            this.deleteBootstrapSnapshot(state.bootstrapId);
             throw this._bootstrapExpired('\u5206\u9875\u4ee4\u724c\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u5f00\u59cb bootstrap');
         }
 
@@ -2575,6 +2916,7 @@ module.exports = {
     MobileV1Store,
     MobileStoreError,
     canonicalJson,
+    fieldPathsOverlap,
     APPLIED_OP_RETENTION_DAYS,
     BOOTSTRAP_TOKEN_TTL_MINUTES,
     ACCESS_TTL_SEC,

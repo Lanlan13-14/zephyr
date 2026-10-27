@@ -45,6 +45,18 @@ const FORBIDDEN_PAYLOAD_KEYS = [
     'serverDataKey', 'ownerSid', 'refreshCredential',
 ];
 
+/* Extra credential names scanned by the unified export gate. Kept off the
+ * frozen FORBIDDEN_PAYLOAD_KEYS vector so the contract list stays byte-identical
+ * to shared-use-v1.json, while refresh/list/get still fail closed on them. */
+const EXTRA_FORBIDDEN_EXPORT_KEYS = [
+    'password', 'privateKey', 'passphrase', 'secret',
+];
+const FORBIDDEN_EXPORT_KEY_SET = new Set([
+    ...FORBIDDEN_PAYLOAD_KEYS,
+    ...EXTRA_FORBIDDEN_EXPORT_KEYS,
+]);
+const MAX_SHARED_EXPORT_DEPTH = 32;
+
 /** A session grant outlives one relay attach so a dropped socket can be re-established. */
 const SESSION_TTL_MS = 10 * 60 * 1000;
 
@@ -477,7 +489,7 @@ class SharedResourceApi {
          * set for one account is small and is recomputed per request, and a
          * stable cursor would be a cache of authorisation state - exactly what
          * SHARED_RESOURCE_RESIDENCY.md 2.2 forbids. */
-        return { items, nextPageToken: null };
+        return this.serializeShared({ items, nextPageToken: null });
     }
 
     activeOwner(raw) {
@@ -591,8 +603,7 @@ class SharedResourceApi {
              * a revoke between listing and opening is honoured. */
             detail.hasContent = true;
         }
-        this.assertNoForbiddenKeys(detail);
-        return detail;
+        return this.serializeShared(detail);
     }
 
     notFound() {
@@ -745,7 +756,7 @@ class SharedResourceApi {
             protocol: purpose,
             credential: this.mintRelayCredential(this.sessions.get(sessionId)),
         };
-        return response;
+        return this.serializeShared(response);
     }
 
     /** A channel is only granted when the ACL actually backs it. */
@@ -843,7 +854,7 @@ class SharedResourceApi {
                 { retryable: true },
             );
         }
-        return response;
+        return this.serializeShared(response);
     }
 
     /** Explicit teardown. Idempotent: closing twice is not an error. */
@@ -866,7 +877,7 @@ class SharedResourceApi {
         /* Idempotent by design: closing an already-closed session is a success,
          * because the client calls this on teardown paths that may race a
          * server-side revoke. The frozen schema is { ok: true }. */
-        return { ok: true };
+        return this.serializeShared({ ok: true });
     }
 
     // ------------------------------------------------------------- invoke ---
@@ -890,7 +901,7 @@ class SharedResourceApi {
             'unsupported_scope',
             '\u8be5\u5171\u4eab\u8d44\u6e90\u7c7b\u578b\u6682\u4e0d\u652f\u6301 invoke',
             400,
-            { details: { resourceType, operation } },
+            { details: this.serializeShared({ resourceType, operation }) },
         );
     }
 
@@ -917,10 +928,10 @@ class SharedResourceApi {
                 throw this.notFound();
             }
             if (String(note.ownerUserId || '') === user.userId || !this.activeOwner(note)) throw this.notFound();
-            return {
+            return this.serializeShared({
                 ok: true,
                 revision: Math.max(1, Number(note.revision) || 1),
-                result: this.assertNoForbiddenKeys({
+                result: {
                     noteId: String(note.noteId || note.id || noteId),
                     title: String(note.title || ''),
                     content: String(note.content || ''),
@@ -928,8 +939,8 @@ class SharedResourceApi {
                      * may touch the note at all. */
                     allowAiRead: !!note.allowAiRead,
                     allowAiWrite: !!note.allowAiWrite,
-                }),
-            };
+                },
+            });
         }
 
         if (operation === 'update') {
@@ -955,18 +966,18 @@ class SharedResourceApi {
                 }
                 throw this.notFound();
             }
-            return {
+            return this.serializeShared({
                 ok: true,
                 revision: Math.max(1, Number(saved.revision) || 1),
                 result: { noteId: String(noteId), saved: true },
-            };
+            });
         }
 
         throw new MobileStoreError(
             'unsupported_scope',
             '\u672a\u77e5\u7b14\u8bb0\u64cd\u4f5c',
             400,
-            { details: { operation } },
+            { details: this.serializeShared({ operation }) },
         );
     }
     /** Nothing leaving this module may carry a control-plane secret. */
@@ -1021,7 +1032,12 @@ class SharedResourceApi {
             'unsupported_scope',
             '\u672c\u673a\u5171\u4eab\u6587\u4ef6\u6865\u63a5\u9700\u8981\u8bbe\u5907\u7aef ZFT2 provider\uff0c\u5f53\u524d\u6784\u5efa\u672a\u5b9e\u73b0',
             501,
-            { details: { profiles: ids.length, readOnly: request && request.readOnly !== false } },
+            {
+                details: this.serializeShared({
+                    profiles: ids.length,
+                    readOnly: request && request.readOnly !== false,
+                }),
+            },
         );
     }
 
@@ -1239,11 +1255,54 @@ class SharedResourceApi {
         return { session, user: live.user, resolved, attachId: reserved.attachId };
     }
 
+    /**
+     * Unified Shared JSON export gate.
+     *
+     * Every public method that returns JSON to a sharee must pass through here
+     * so refresh/list/get/invoke/open/close/lease cannot grow a second leak
+     * path. Depth is scanned past 6; objects deeper than MAX_SHARED_EXPORT_DEPTH
+     * fail closed rather than skipping a nested credential.
+     */
+    serializeShared(payload) {
+        const clone = this._cloneSharedJson(payload, 0);
+        this.assertNoForbiddenKeys(clone);
+        return clone;
+    }
+
+    _cloneSharedJson(value, depth) {
+        if (value == null || typeof value !== 'object') return value;
+        if (depth > MAX_SHARED_EXPORT_DEPTH) {
+            throw new MobileStoreError(
+                'shared_content_export_forbidden',
+                '\u5171\u4eab\u8d1f\u8f7d\u5d4c\u5957\u8fc7\u6df1',
+                403,
+                { details: { field: 'depth' } },
+            );
+        }
+        if (Array.isArray(value)) {
+            return value.map((item) => this._cloneSharedJson(item, depth + 1));
+        }
+        const copy = {};
+        for (const key of Object.keys(value)) {
+            copy[key] = this._cloneSharedJson(value[key], depth + 1);
+        }
+        return copy;
+    }
+
     assertNoForbiddenKeys(payload) {
         const walk = (node, depth) => {
-            if (!node || typeof node !== 'object' || depth > 6) return;
-            for (const key of Object.keys(node)) {
-                if (FORBIDDEN_PAYLOAD_KEYS.includes(key)) {
+            if (!node || typeof node !== 'object') return;
+            if (depth > MAX_SHARED_EXPORT_DEPTH) {
+                throw new MobileStoreError(
+                    'shared_content_export_forbidden',
+                    '\u5171\u4eab\u8d1f\u8f7d\u5d4c\u5957\u8fc7\u6df1',
+                    403,
+                    { details: { field: 'depth' } },
+                );
+            }
+            const keys = Array.isArray(node) ? node.map((_, index) => String(index)) : Object.keys(node);
+            for (const key of Array.isArray(node) ? [] : keys) {
+                if (FORBIDDEN_EXPORT_KEY_SET.has(key)) {
                     throw new MobileStoreError(
                         'shared_content_export_forbidden',
                         '\u5171\u4eab\u8d1f\u8f7d\u5305\u542b\u7981\u6b62\u5b57\u6bb5',
@@ -1251,8 +1310,12 @@ class SharedResourceApi {
                         { details: { field: key } },
                     );
                 }
-                walk(node[key], depth + 1);
             }
+            if (Array.isArray(node)) {
+                for (const item of node) walk(item, depth + 1);
+                return;
+            }
+            for (const key of Object.keys(node)) walk(node[key], depth + 1);
         };
         walk(payload, 0);
         return payload;

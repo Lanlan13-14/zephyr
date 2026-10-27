@@ -69,7 +69,7 @@ jobs:
       - run: npm run build
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.10'
           cache-dependency-path: zephyr-link/go.sum
       - name: Stage Zephyr core and the desktop Node runtime
         run: |
@@ -101,7 +101,7 @@ jobs:
         run: npm install
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.10'
           cache-dependency-path: zephyr-link/go.sum
       - name: Stage Zephyr core
         shell: bash
@@ -160,7 +160,7 @@ jobs:
       - run: npm install
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.10'
           cache-dependency-path: zephyr-link/go.sum
       - run: sh scripts/stage-zephyr-core.sh
       - run: node scripts/stage-desktop-runtime.mjs
@@ -202,7 +202,7 @@ jobs:
           sudo apt-get install -y rpm fakeroot xvfb
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.10'
           cache-dependency-path: zephyr-link/go.sum
       - run: npm install
       - run: npm run stage:core

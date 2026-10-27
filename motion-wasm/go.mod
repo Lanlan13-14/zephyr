@@ -1,3 +1,3 @@
 module github.com/Lanlan13-14/zephyr-ssh/motion-wasm
 
-go 1.24
+go 1.26.10

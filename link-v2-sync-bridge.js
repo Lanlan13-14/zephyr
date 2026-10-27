@@ -27,6 +27,48 @@
 
 const { KIND } = require('./link-v2-codec');
 const { MobileStoreError } = require('./mobile-v1-store');
+const { mapSyncOperation } = require('./link-v2-sync-envelope');
+
+const V2_OPERATIONS = Object.freeze({
+    'sync.bootstrap': 'bootstrap',
+    'sync.changes': 'changes',
+    'sync.push': 'push',
+    'sync.ack': 'ack',
+    'sync.status': 'status',
+});
+
+function isObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isV2Envelope(body) {
+    return !!(body
+        && body.protocol === 'zephyr-link'
+        && body.protocolVersion === 2
+        && typeof body.operation === 'string');
+}
+
+function negotiatedEnvelopeVersion(auth) {
+    const session = auth && auth.session;
+    if (!session) return 1;
+    if (session.envelopeVersion === 1 || session.envelopeVersion === 2) return session.envelopeVersion;
+    const versions = session.linkBusinessEnvelopeVersions;
+    if (Array.isArray(versions) && versions.includes(2)) return 2;
+    return 1;
+}
+
+function sessionContextFromAuth(auth, extra) {
+    const session = (auth && auth.session) || {};
+    return {
+        envelopeVersion: negotiatedEnvelopeVersion(auth),
+        authenticatedDeviceId: (auth && auth.device && (auth.device.device_id || auth.device.deviceId))
+            || (auth && auth.deviceId)
+            || null,
+        bindingGeneration: session.bindingGeneration || null,
+        currentRevision: extra && extra.currentRevision !== undefined ? extra.currentRevision : (session.currentRevision || null),
+        serverRegistryHash: session.serverRegistryHash || null,
+    };
+}
 
 /**
  * @param {object} opts
@@ -77,13 +119,61 @@ function createLinkSyncBridge({ api, storage, adminToken }) {
      * frame body carries an `op` discriminator because one wire kind (SYNC_OP)
      * covers every sync verb; each verb runs the SAME transport-independent core
      * method the HTTP route uses, so semantics never diverge across clients. */
+    function dispatchError(code, message, status) {
+        const err = new Error(message);
+        err.status = status || 400;
+        err.code = code;
+        err.retryable = false;
+        err.expose = true;
+        return err;
+    }
+
+    function executeMapped(auth, mapped) {
+        const request = mapped.body || {};
+        switch (mapped.operation) {
+            case 'sync.bootstrap':
+                return { kind: KIND.SYNC_ACK, body: api.executeBootstrapForDevice(auth, request) };
+            case 'sync.push':
+                return { kind: KIND.SYNC_ACK, body: api.executePushForDevice(auth, request) };
+            case 'sync.changes':
+                return { kind: KIND.SYNC_ACK, body: api.executeChangesForDevice(auth, request) };
+            case 'sync.ack':
+                return { kind: KIND.SYNC_ACK, body: api.executeAckForDevice(auth, request.cursor) };
+            case 'sync.status':
+                return { kind: KIND.SYNC_ACK, body: api.executeSyncStatusForDevice(auth) };
+            default:
+                throw dispatchError('unsupported_op', '缺少或不支持的同步操作: ' + String(mapped.operation));
+        }
+    }
+
     function dispatch(auth, kind, body) {
         if (kind !== KIND.SYNC_OP) {
-            const err = new Error('不支持的同步帧类型 ' + kind);
-            err.status = 400; err.code = 'unsupported_kind'; err.retryable = false; err.expose = true;
-            throw err;
+            throw dispatchError('unsupported_kind', '不支持的同步帧类型 ' + kind);
         }
         const b = body || {};
+        const envelopeVersion = negotiatedEnvelopeVersion(auth);
+
+        if (isV2Envelope(b)) {
+            if (envelopeVersion !== 2) {
+                throw dispatchError(
+                    'unsupported_protocol_version',
+                    '未协商 v2 业务信封，拒绝伪造的 zephyr-link protocolVersion=2 报文',
+                );
+            }
+            const op = V2_OPERATIONS[b.operation];
+            if (!op) {
+                throw dispatchError('unsupported_op', '缺少或不支持的同步操作: ' + String(b.operation));
+            }
+            const inner = isObject(b.body) ? b.body : {};
+            const legacy = { op, ...inner };
+            if (b.deviceId && !legacy.deviceId) legacy.deviceId = b.deviceId;
+            const mapped = mapSyncOperation(legacy, sessionContextFromAuth(auth));
+            if (mapped.error) {
+                throw dispatchError(mapped.error, '同步信封被拒绝: ' + mapped.error);
+            }
+            return executeMapped(auth, mapped);
+        }
+
         switch (b.op) {
             case 'bootstrap':
                 return { kind: KIND.SYNC_ACK, body: api.executeBootstrapForDevice(auth, b) };
@@ -98,9 +188,7 @@ function createLinkSyncBridge({ api, storage, adminToken }) {
             case 'status':
                 return { kind: KIND.SYNC_ACK, body: api.executeSyncStatusForDevice(auth) };
             default: {
-                const err = new Error('缺少或不支持的同步操作: ' + String(b.op));
-                err.status = 400; err.code = 'unsupported_op'; err.retryable = false; err.expose = true;
-                throw err;
+                throw dispatchError('unsupported_op', '缺少或不支持的同步操作: ' + String(b.op));
             }
         }
     }
@@ -135,7 +223,7 @@ function createLinkSyncBridge({ api, storage, adminToken }) {
         }
     }
 
-    return { handle, resolveAuth };
+    return { handle, resolveAuth, dispatch };
 }
 
 module.exports = { createLinkSyncBridge };

@@ -43,6 +43,9 @@ class NotesService {
         this.mobileChangeBridge = options.mobileChangeBridge === false
             ? null
             : (options.mobileChangeBridge || getMobileV1ChangeBridge(db));
+        this.onOwnedMutation = typeof options.onOwnedMutation === 'function'
+            ? options.onOwnedMutation
+            : null;
         this.stmtInsert = db.prepare(`INSERT INTO notes
             (note_id, owner_user_id, title, content, group_path, tags_json, linked_connection_ids_json, sort_order, revision, created_at, updated_at, deleted_at, visibility, share_with_users, share_with_admins, allow_ai, allow_ai_read, allow_ai_write)
             VALUES (@noteId, @ownerUserId, @title, @content, @groupPath, @tagsJson, @linkedJson, @sortOrder, 1, @createdAt, @updatedAt, NULL, @visibility, @shareWithUsers, @shareWithAdmins, @allowAi, @allowAiRead, @allowAiWrite)`);
@@ -72,7 +75,29 @@ class NotesService {
     }
 
     _runMobileMutation(meta, write) {
-        return this.mobileChangeBridge ? this.mobileChangeBridge.runMutation(meta, write) : write();
+        const result = this.mobileChangeBridge ? this.mobileChangeBridge.runMutation(meta, write) : write();
+        this._emitOwnedMutation(meta, result);
+        return result;
+    }
+
+    _emitOwnedMutation(meta, result) {
+        if (typeof this.onOwnedMutation !== 'function' || !meta) return;
+        const entityId = String(meta.entityId || result?.noteId || result?.id || '');
+        if (!entityId) return;
+        try {
+            this.onOwnedMutation({
+                entityType: meta.entityType || 'note',
+                entityId,
+                action: meta.action,
+                user: meta.user,
+                actorDeviceId: meta.actorDeviceId || null,
+                fieldMask: Array.isArray(meta.fieldMask) ? meta.fieldMask : undefined,
+                remoteMerge: meta.remoteMerge === true,
+                baseRevision: meta.baseRevision,
+            });
+        } catch {
+            /* Hook must not roll back a committed canonical write. */
+        }
     }
 
     _isActiveUserId(userId) {
@@ -213,6 +238,8 @@ class NotesService {
             entityType: 'note', entityId: data.id, action: 'upsert', user, before: null,
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._create(user, data));
     }
 
@@ -281,6 +308,8 @@ class NotesService {
             entityType: 'note', entityId: noteId, action: 'upsert', user, before,
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._update(user, noteId, patch));
     }
 
@@ -344,6 +373,8 @@ class NotesService {
             entityType: 'note', entityId: noteId, action: 'delete', user, before,
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._delete(user, noteId));
     }
 
@@ -458,6 +489,8 @@ class NotesService {
             entityType: 'note', entityId: noteId, action: 'upsert', user, before,
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._restore(user, noteId));
     }
 

@@ -4,14 +4,27 @@
  * The outbox remains the source of truth. A wake only tells a connected device
  * which durable cursor to pull, so an acknowledged publish with no subscribers
  * is still correct: a later reconnect catches up from SQLite.
+ *
+ * Leader election:
+ *  - When a store/db is injected, leadership is a SQLite lease with a fencing
+ *    token (`mobile_wake_leader`). Two processes sharing that database cannot
+ *    both drain. capabilities.multiProcessSafe === true.
+ *  - When no db is injected, a process-local `activeLeader` mutex is the
+ *    fallback. It is NOT a global lock and MUST NOT be treated as multi-replica
+ *    safety. capabilities.multiProcessSafe === false.
  */
 'use strict';
+
+const { MobileV1Store } = require('./mobile-v1-store');
 
 const DEFAULT_POLL_MS = 1000;
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_RETRY_BASE_MS = 250;
 const DEFAULT_RETRY_MAX_MS = 30000;
+const DEFAULT_LEASE_TTL_MS = 15000;
+const WAKE_LOCK_ID = 'mobile-v1-outbox';
 
+/* In-process mutex only. Never a substitute for the SQLite lease. */
 let activeLeader = null;
 
 function integerOption(value, fallback, minimum) {
@@ -24,6 +37,20 @@ function wakePublisher(wake) {
         throw new TypeError('MobileV1OutboxDispatcher requires wake.publish');
     }
     return wake.publish.bind(wake);
+}
+
+function resolveLeaderStore(options) {
+    if (options.store && typeof options.store.tryAcquireWakeLeader === 'function') {
+        return options.store;
+    }
+    if (options.db) {
+        return new MobileV1Store({
+            db: options.db,
+            entityRegistry: options.entityRegistry || { entities: [] },
+            log: options.log,
+        });
+    }
+    return null;
 }
 
 class MobileV1OutboxDispatcher {
@@ -39,6 +66,7 @@ class MobileV1OutboxDispatcher {
         this.pageSize = integerOption(options.pageSize, DEFAULT_PAGE_SIZE, 1);
         this.retryBaseMs = integerOption(options.retryBaseMs, DEFAULT_RETRY_BASE_MS, 1);
         this.retryMaxMs = integerOption(options.retryMaxMs, DEFAULT_RETRY_MAX_MS, this.retryBaseMs);
+        this.leaseTtlMs = integerOption(options.leaseTtlMs, DEFAULT_LEASE_TTL_MS, 1000);
         this.log = typeof options.log === 'function' ? options.log : (() => {});
         this.random = typeof options.random === 'function' ? options.random : Math.random;
         this.setTimeout = options.setTimeout || setTimeout;
@@ -49,14 +77,37 @@ class MobileV1OutboxDispatcher {
         this.draining = null;
         this.retryAttempt = 0;
         this.blockedOwners = new Set();
+        this.leaderStore = resolveLeaderStore(options);
+        this.instanceId = String(options.instanceId || '');
+        this.fencingToken = null;
+        this.multiProcessSafe = !!this.leaderStore;
+        /* capabilities documents the lock that this instance actually uses. */
+        this.capabilities = {
+            multiProcessSafe: this.multiProcessSafe,
+            lock: this.multiProcessSafe ? 'sqlite-lease' : 'in-process-activeLeader',
+        };
+        if (this.multiProcessSafe && !this.instanceId) {
+            this.instanceId = 'wake-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        }
     }
 
     /** Starts one local leader and immediately recovers unfinished outbox rows. */
     start() {
         if (this.closed) throw new Error('MobileV1OutboxDispatcher is closed');
         if (this.started) return true;
-        if (activeLeader && activeLeader !== this) return false;
-        activeLeader = this;
+        if (this.multiProcessSafe) {
+            const lease = this.leaderStore.tryAcquireWakeLeader({
+                lockId: WAKE_LOCK_ID,
+                instanceId: this.instanceId,
+                ttlMs: this.leaseTtlMs,
+            });
+            if (!lease) return false;
+            this.fencingToken = Number(lease.fencingToken);
+        } else {
+            /* Fallback: process-local mutex. multiProcessSafe is false. */
+            if (activeLeader && activeLeader !== this) return false;
+            activeLeader = this;
+        }
         this.started = true;
         this._schedule(0);
         return true;
@@ -64,7 +115,7 @@ class MobileV1OutboxDispatcher {
 
     /** Useful for host integration tests and explicit best-effort drains. */
     async flush() {
-        if (this.closed || !this.started || activeLeader !== this) return false;
+        if (this.closed || !this.started || !this._isLeader()) return false;
         this._clearTimer();
         await this._drain();
         return true;
@@ -75,7 +126,18 @@ class MobileV1OutboxDispatcher {
         this.closed = true;
         this.started = false;
         this._clearTimer();
-        if (activeLeader === this) activeLeader = null;
+        if (this.multiProcessSafe && this.fencingToken != null) {
+            try {
+                this.leaderStore.releaseWakeLeader({
+                    lockId: WAKE_LOCK_ID,
+                    instanceId: this.instanceId,
+                    fencingToken: this.fencingToken,
+                });
+            } catch {}
+            this.fencingToken = null;
+        } else if (activeLeader === this) {
+            activeLeader = null;
+        }
     }
 
     async deleteUserState(ownerUserId) {
@@ -93,8 +155,19 @@ class MobileV1OutboxDispatcher {
         if (this.started && !this.closed) this._schedule(0);
     }
 
+    _isLeader() {
+        if (this.closed || !this.started) return false;
+        if (!this.multiProcessSafe) return activeLeader === this;
+        if (this.fencingToken == null) return false;
+        return this.leaderStore.hasWakeLeader({
+            lockId: WAKE_LOCK_ID,
+            instanceId: this.instanceId,
+            fencingToken: this.fencingToken,
+        });
+    }
+
     _schedule(delayMs) {
-        if (this.closed || !this.started || activeLeader !== this || this.timer !== null) return;
+        if (this.closed || !this.started || !this._isLeader() || this.timer !== null) return;
         this.timer = this.setTimeout(() => {
             this.timer = null;
             void this._drain();
@@ -144,7 +217,10 @@ class MobileV1OutboxDispatcher {
     }
 
     async _drainOnce() {
-        if (this.closed || !this.started || activeLeader !== this) return;
+        if (!this._isLeader()) {
+            this.started = false;
+            return;
+        }
         let events;
         try {
             events = await Promise.resolve(this.changeBridge.pendingWakeEvents(this.pageSize));
@@ -155,14 +231,17 @@ class MobileV1OutboxDispatcher {
 
         if (!Array.isArray(events) || !events.length) {
             this.retryAttempt = 0;
-            this._schedule(this.pollMs);
+            if (this._renewLease()) this._schedule(this.pollMs);
             return;
         }
 
         const acknowledged = [];
         let failed = false;
         for (const [ownerUserId, group] of this._groupEvents(events)) {
-            if (this.closed || activeLeader !== this) return;
+            if (!this._isLeader()) {
+                this.started = false;
+                return;
+            }
             if (this.blockedOwners.has(ownerUserId)) continue;
             try {
                 await Promise.resolve(this.publish(ownerUserId, group.throughCursor, 'change'));
@@ -174,7 +253,10 @@ class MobileV1OutboxDispatcher {
             }
         }
 
-        if (this.closed || activeLeader !== this) return;
+        if (!this._isLeader()) {
+            this.started = false;
+            return;
+        }
         if (acknowledged.length) {
             try {
                 await Promise.resolve(this.changeBridge.acknowledgeWakeEvents(acknowledged));
@@ -189,11 +271,29 @@ class MobileV1OutboxDispatcher {
             return;
         }
         this.retryAttempt = 0;
+        if (!this._renewLease()) {
+            this.started = false;
+            return;
+        }
         this._schedule(events.length >= this.pageSize ? 0 : this.pollMs);
     }
 
+    _renewLease() {
+        if (!this.multiProcessSafe) return this._isLeader();
+        const renewed = this.leaderStore.renewWakeLeader({
+            lockId: WAKE_LOCK_ID,
+            instanceId: this.instanceId,
+            fencingToken: this.fencingToken,
+            ttlMs: this.leaseTtlMs,
+        });
+        return !!renewed;
+    }
+
     _retry() {
-        if (this.closed || !this.started || activeLeader !== this) return;
+        if (!this._isLeader()) {
+            this.started = false;
+            return;
+        }
         const delay = this._retryDelay();
         this.retryAttempt += 1;
         this._schedule(delay);
@@ -206,4 +306,6 @@ module.exports = {
     DEFAULT_PAGE_SIZE,
     DEFAULT_RETRY_BASE_MS,
     DEFAULT_RETRY_MAX_MS,
+    DEFAULT_LEASE_TTL_MS,
+    WAKE_LOCK_ID,
 };

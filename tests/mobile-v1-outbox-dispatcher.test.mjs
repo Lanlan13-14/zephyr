@@ -128,6 +128,83 @@ test('an acknowledgement retry is duplicate-safe and never drops an event', asyn
   assert.deepEqual(bridge.pending, []);
 });
 
+test('without a db the in-process mutex is fallback and is marked multiProcessSafe false', () => {
+  const first = new MobileV1OutboxDispatcher({
+    changeBridge: createBridge([]), wake: { publish() {} },
+  });
+  assert.equal(first.capabilities.multiProcessSafe, false);
+  assert.equal(first.multiProcessSafe, false);
+  first.close();
+});
+
+test('two dispatchers sharing sqlite cannot both be leader', () => {
+  const { createDatabase } = require(path.join(repoRoot, 'sqlite-driver.js'));
+  const { MobileV1Store } = require(path.join(repoRoot, 'mobile-v1-store.js'));
+  const db = createDatabase(':memory:', { forceBuiltin: true });
+  const store = new MobileV1Store({ db, entityRegistry: { entities: [] } });
+  const first = new MobileV1OutboxDispatcher({
+    changeBridge: createBridge([]), wake: { publish() {} },
+    store, instanceId: 'instance-a', pollMs: 60_000,
+  });
+  const second = new MobileV1OutboxDispatcher({
+    changeBridge: createBridge([]), wake: { publish() {} },
+    store, instanceId: 'instance-b', pollMs: 60_000,
+  });
+  assert.equal(first.capabilities.multiProcessSafe, true);
+  assert.equal(first.start(), true);
+  assert.equal(second.start(), false, 'a live sqlite lease must fence the second replica out');
+  first.close();
+  assert.equal(second.start(), true);
+  second.close();
+  db.close();
+});
+
+test('an expired sqlite lease can be stolen by another instance', () => {
+  const { createDatabase } = require(path.join(repoRoot, 'sqlite-driver.js'));
+  const { MobileV1Store } = require(path.join(repoRoot, 'mobile-v1-store.js'));
+  const db = createDatabase(':memory:', { forceBuiltin: true });
+  const store = new MobileV1Store({ db, entityRegistry: { entities: [] } });
+  const first = new MobileV1OutboxDispatcher({
+    changeBridge: createBridge([]), wake: { publish() {} },
+    store, instanceId: 'instance-a', pollMs: 60_000, leaseTtlMs: 15_000,
+  });
+  const second = new MobileV1OutboxDispatcher({
+    changeBridge: createBridge([]), wake: { publish() {} },
+    store, instanceId: 'instance-b', pollMs: 60_000, leaseTtlMs: 15_000,
+  });
+  assert.equal(first.start(), true);
+  db.prepare("UPDATE mobile_wake_leader SET expires_at = 1 WHERE lock_id = 'mobile-v1-outbox'").run();
+  assert.equal(second.start(), true, 'an expired lease is stealable');
+  first.close();
+  second.close();
+  db.close();
+});
+
+test('a fencing-token mismatch must not acknowledge outbox rows', async () => {
+  const { createDatabase } = require(path.join(repoRoot, 'sqlite-driver.js'));
+  const { MobileV1Store } = require(path.join(repoRoot, 'mobile-v1-store.js'));
+  const db = createDatabase(':memory:', { forceBuiltin: true });
+  const store = new MobileV1Store({ db, entityRegistry: { entities: [] } });
+  const bridge = createBridge([event(1, 'account-a', 7)]);
+  const published = [];
+  const originalPending = bridge.pendingWakeEvents.bind(bridge);
+  bridge.pendingWakeEvents = (limit) => {
+    db.prepare("UPDATE mobile_wake_leader SET fencing_token = fencing_token + 99 WHERE lock_id = 'mobile-v1-outbox'").run();
+    return originalPending(limit);
+  };
+  const worker = new MobileV1OutboxDispatcher({
+    changeBridge: bridge, wake: { publish: (...args) => published.push(args) },
+    store, instanceId: 'instance-a', pollMs: 60_000,
+  });
+  assert.equal(worker.start(), true);
+  await worker.flush();
+  worker.close();
+  assert.deepEqual(published, [], 'stale fencing token must not publish');
+  assert.equal(bridge.acknowledgements, 0, 'stale fencing token must not ack');
+  assert.equal(bridge.pending.length, 1);
+  db.close();
+});
+
 test('only one in-process leader runs and close clears its scheduled recovery timer', () => {
   const scheduled = [];
   const cleared = [];

@@ -1,8 +1,8 @@
 module github.com/nakagami/grdp/example
 
-go 1.26.3
+go 1.26.10
 
-toolchain go1.26.3
+toolchain go1.26.10
 
 require (
 	github.com/ebitengine/oto/v3 v3.4.0
@@ -22,11 +22,12 @@ require (
 	github.com/lunixbochs/struc v0.0.0-20200707160740-784aaebc1d40 // indirect
 	github.com/shirou/w32 v0.0.0-20160930032740-bb4de0191aa4 // indirect
 	github.com/tomatome/win v0.3.1 // indirect
-	golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/exp/shiny v0.0.0-20250606033433-dcc06ee1d476 // indirect
 	golang.org/x/image v0.28.0 // indirect
 	golang.org/x/mobile v0.0.0-20250606033058-a2a15c67f36f // indirect
-	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/term v0.45.0 // indirect
 	honnef.co/go/js/dom v0.0.0-20250304181735-b5e52f05e89d // indirect
 )
 

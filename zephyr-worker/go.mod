@@ -1,9 +1,9 @@
 module github.com/Lanlan13-14/zephyr-ssh/zephyr-worker
 
-go 1.26
+go 1.26.10
 
 require (
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.56.0
 	nhooyr.io/websocket v1.8.17
 )
 

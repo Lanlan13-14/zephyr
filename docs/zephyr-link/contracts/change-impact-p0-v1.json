@@ -1,0 +1,36 @@
+{
+  "channels": ["owned-sync", "secret", "control", "shared-terminal", "shared-remote", "shared-note", "shared-file", "file-bridge"],
+  "platforms": ["server", "desktop", "webdav", "agent"],
+  "dataDomains": ["local", "owned", "shared-to-me"],
+  "states": ["unbound", "bound", "offline", "conflicted", "revoked", "migrating"],
+  "protocolImpact": ["additive"],
+  "dataImpact": ["cursor", "revision", "tombstone", "secrets", "schema"],
+  "requiredEvidence": ["L0", "L1", "L2", "L3", "L4"],
+  "failureInjections": [
+    "duplicate-push",
+    "lost-push-response",
+    "bad-secret-envelope",
+    "offline-edit-then-pull",
+    "delete-while-pending-upsert",
+    "rebind-account-isolation",
+    "empty-field-ledger",
+    "nested-field-overlap",
+    "bootstrap-insert-mid-pages",
+    "refresh-forbidden-keys",
+    "wake-leader-split-brain",
+    "unnegotiated-v2-envelope",
+    "agent-deny-over-allow",
+    "webdav-weak-etag-as-cas"
+  ],
+  "compatibility": ["old-server", "old-client", "new-server", "new-client"],
+  "rollback": [
+    "git revert the P0 commit on zephyr-link-foundation-v1",
+    "restore SQLite from pre-change backup; bootstrap snapshot table is additive",
+    "desktop one-link-sync-state.json is additive; unbind+rebind rebuilds cursors",
+    "Go toolchain pin rollback is independent of sync data"
+  ],
+  "evidenceLinks": [
+    "docs/zephyr-link/TESTING-AND-RELEASE-GATES.md",
+    "docs/zephyr-link/conformance/PRODUCTION-ADAPTER-CONTRACT.md"
+  ]
+}

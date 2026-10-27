@@ -46,7 +46,7 @@ RUN npm prune --omit=dev
 # ============================================================
 # Stage 2: rdp-wasm-builder — 编译 grdp Go WASM (RDP 协议栈)
 # ============================================================
-FROM golang:1.26-alpine AS rdp-wasm-builder
+FROM golang:1.26.10-alpine AS rdp-wasm-builder
 
 WORKDIR /build
 
@@ -67,7 +67,7 @@ RUN node /build/build-go-wasm-esm.mjs wasm_exec.js wasm_exec.mjs
 # ============================================================
 # Stage 2b: zephyr-ai-builder — Go AI runtime (SSE agent loop)
 # ============================================================
-FROM golang:1.26-alpine AS zephyr-ai-builder
+FROM golang:1.26.10-alpine AS zephyr-ai-builder
 WORKDIR /build
 COPY zephyr-ai/ ./
 RUN go mod tidy && CGO_ENABLED=0 go build -o /zephyr-ai ./cmd/zephyr-ai
@@ -75,7 +75,7 @@ RUN go mod tidy && CGO_ENABLED=0 go build -o /zephyr-ai ./cmd/zephyr-ai
 # ============================================================
 # Stage 2c: zephyr-link-builder — Go Link transport (ZSL/2 protocol core)
 # ============================================================
-FROM golang:1.26-alpine AS zephyr-link-builder
+FROM golang:1.26.10-alpine AS zephyr-link-builder
 WORKDIR /build
 COPY zephyr-link/ ./
 RUN go mod tidy && CGO_ENABLED=0 go build -o /zephyr-link-server ./cmd/zephyr-link-server

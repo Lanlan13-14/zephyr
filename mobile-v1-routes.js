@@ -36,6 +36,7 @@ const Ajv2020 = require('ajv/dist/2020');
 const {
     MobileV1Store,
     MobileStoreError,
+    fieldPathsOverlap,
     PROOF_CHALLENGE_TTL_SEC,
     PROOF_MAX_ACTIVE_PER_DEVICE,
     PROOF_MAX_ISSUES_PER_MINUTE,
@@ -289,12 +290,6 @@ function cloneJsonForPatch(value) {
     const copy = Object.create(null);
     for (const [key, child] of Object.entries(value)) copy[key] = cloneJsonForPatch(child);
     return copy;
-}
-
-function fieldPathsOverlap(left, right) {
-    const a = String(left);
-    const b = String(right);
-    return a === b || a.startsWith(b + '.') || b.startsWith(a + '.');
 }
 
 /**
@@ -1531,74 +1526,132 @@ class MobileV1Api {
     /* Transport-independent bootstrap page. Link and HTTP must share this exact
      * snapshot/token implementation or a device can observe two incompatible
      * generations depending on the transport used for a page. */
+    /**
+     * Projects one bootstrap type into snapshot rows. Called from inside the
+     * store's capture transaction so later pages never re-list the live table.
+     */
+    _collectBootstrapSnapshotType(auth, typeIndex, entityType) {
+        const spec = this.entityByType.get(entityType);
+        const adapter = this.adapters.get(entityType);
+        const listed = adapter.list(auth.user);
+        if (listed != null && !Array.isArray(listed)) {
+            throw new Error('bootstrap adapter list must return an array');
+        }
+        const seen = new Set();
+        const collected = [];
+        for (const row of listed || []) {
+            const rawId = adapter.idOf(row);
+            if (rawId == null || String(rawId).length === 0 || String(rawId).length > 2048) {
+                throw new Error('bootstrap adapter returned an invalid stable id');
+            }
+            const id = String(rawId);
+            if (seen.has(id)) throw new Error('bootstrap adapter returned a duplicate stable id');
+            seen.add(id);
+
+            const ownerField = String(spec.ownerField || 'ownerUserId');
+            const rowOwnerUserId = row && (row[ownerField] ?? row.ownerUserId ?? row.owner_user_id);
+            const expectedOwner = ownerField === 'serverId'
+                ? this.store.serverId()
+                : auth.user.userId;
+            if (String(rowOwnerUserId || '') !== String(expectedOwner)) {
+                throw new MobileStoreError(
+                    'shared_residency_violation',
+                    '\u5171\u4eab\u8d44\u6e90\u4e0d\u80fd\u8fdb\u5165\u79bb\u7ebf\u955c\u50cf',
+                    409,
+                );
+            }
+            collected.push({
+                entityId: id,
+                revision: adapter.revisionOf(row),
+                payload: projectPayload(spec, row),
+                secretFields: Object.keys(extractSecrets(spec, row)),
+                changedAt: Math.max(
+                    1,
+                    Number(row.updatedAt) || 0,
+                    Number(row.createdAt) || 0,
+                    Number(row.time) || 0,
+                    Number(row.occurredAt) || 0,
+                    Number(row.finishedAt) || 0,
+                    Number(row.startedAt) || 0,
+                ),
+                fieldMask: this.serverFieldMask(
+                    entityType,
+                    adapter.fieldMaskOf
+                        ? adapter.fieldMaskOf(row)
+                        : (spec.editableFields || []).slice(),
+                ),
+            });
+        }
+        collected.sort((left, right) => (left.entityId < right.entityId
+            ? -1
+            : left.entityId > right.entityId ? 1 : 0));
+        return collected;
+    }
+
+    _bootstrapLiveRow(adapter, user, entityId) {
+        if (!adapter) return null;
+        try {
+            if (typeof adapter.read === 'function') return adapter.read(user, entityId) || null;
+            if (typeof adapter.get === 'function') return adapter.get(user, entityId) || null;
+        } catch {
+            return null;
+        }
+        return null;
+    }
+
+    /* Transport-independent bootstrap page. Link and HTTP must share this exact
+     * snapshot/token implementation or a device can observe two incompatible
+     * generations depending on the transport used for a page.
+     *
+     * The entity id set and order come from a SQLite snapshot captured on the
+     * first page. Subsequent pages never call adapter.list() against the live
+     * table, so an insert after page 1 cannot appear on page 2. */
     executeBootstrapForDevice(auth, { pageToken = null, pageSize = null } = {}) {
         pageSize = clampPageSize(pageSize);
-            const binding = {
-                ownerUserId: auth.user.userId,
-                deviceId: auth.device.device_id,
-                generation: Number(auth.device.refresh_generation || 1),
-                registryHash: this.store.registryHash,
-                typeOrder: this.bootstrapTypes,
-            };
-            const firstPageRows = new Map();
-            const readRows = (typeIndex) => {
-                if (firstPageRows.has(typeIndex)) return firstPageRows.get(typeIndex);
-                const entityType = this.bootstrapTypes[typeIndex];
-                const spec = this.entityByType.get(entityType);
-                const adapter = this.adapters.get(entityType);
-                const listed = adapter.list(auth.user);
-                if (listed != null && !Array.isArray(listed)) {
-                    throw new Error('bootstrap adapter list must return an array');
-                }
-                const seen = new Set();
-                const rows = (listed || []).map((row) => {
-                    const rawId = adapter.idOf(row);
-                    if (rawId == null || String(rawId).length === 0 || String(rawId).length > 2048) {
-                        throw new Error('bootstrap adapter returned an invalid stable id');
-                    }
-                    const id = String(rawId);
-                    if (seen.has(id)) throw new Error('bootstrap adapter returned a duplicate stable id');
-                    seen.add(id);
+        const binding = {
+            ownerUserId: auth.user.userId,
+            deviceId: auth.device.device_id,
+            generation: Number(auth.device.refresh_generation || 1),
+            registryHash: this.store.registryHash,
+            typeOrder: this.bootstrapTypes,
+        };
 
-                    const ownerField = String(spec.ownerField || 'ownerUserId');
-                    const rowOwnerUserId = row && (row[ownerField] ?? row.ownerUserId ?? row.owner_user_id);
-                    const expectedOwner = ownerField === 'serverId'
-                        ? this.store.serverId()
-                        : auth.user.userId;
-                    if (String(rowOwnerUserId || '') !== String(expectedOwner)) {
-                        throw new MobileStoreError(
-                            'shared_residency_violation',
-                            '\u5171\u4eab\u8d44\u6e90\u4e0d\u80fd\u8fdb\u5165\u79bb\u7ebf\u955c\u50cf',
-                            409,
-                        );
-                    }
-                    return { id, row };
-                });
-                rows.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
-                return rows;
-            };
-
-            let cursorState;
-            if (pageToken) {
-                cursorState = this.store.openBootstrapToken(String(pageToken), binding);
-            } else {
-                const snapshotCursor = this.store.latestCursor(auth.user.userId);
-                const upperBounds = this.bootstrapTypes.map((_, typeIndex) => {
-                    const rows = readRows(typeIndex);
-                    firstPageRows.set(typeIndex, rows);
-                    return rows.length ? rows[rows.length - 1].id : null;
-                });
-                cursorState = this.store.beginBootstrapSnapshot({
-                    bootstrapId: 'bs-' + crypto.randomUUID(),
-                    snapshotCursor,
+        let cursorState;
+        let createdSnapshotId = null;
+        if (pageToken) {
+            cursorState = this.store.openBootstrapToken(String(pageToken), binding);
+        } else {
+            const bootstrapId = 'bs-' + crypto.randomUUID();
+            try {
+                const captured = this.store.captureBootstrapSnapshot({
+                    bootstrapId,
+                    ownerUserId: binding.ownerUserId,
+                    deviceId: binding.deviceId,
                     typeOrder: this.bootstrapTypes,
-                    upperBounds,
+                    collect: (typeIndex, entityType) => this._collectBootstrapSnapshotType(
+                        auth,
+                        typeIndex,
+                        entityType,
+                    ),
+                });
+                createdSnapshotId = bootstrapId;
+                cursorState = this.store.beginBootstrapSnapshot({
+                    bootstrapId,
+                    snapshotCursor: captured.snapshotCursor,
+                    typeOrder: this.bootstrapTypes,
+                    upperBounds: captured.upperBounds,
                     ownerUserId: binding.ownerUserId,
                     deviceId: binding.deviceId,
                     generation: binding.generation,
+                    expiresAt: captured.expiresAt,
                 });
+            } catch (err) {
+                if (createdSnapshotId) this.store.deleteBootstrapSnapshot(createdSnapshotId);
+                throw err;
             }
+        }
 
+        try {
             const entities = [];
             let typeIndex = cursorState.typeIndex;
             let afterEntityId = cursorState.afterEntityId;
@@ -1614,65 +1667,61 @@ class MobileV1Api {
                     continue;
                 }
 
-                const rows = readRows(typeIndex).filter(({ id }) => (
-                    (afterEntityId == null || id > afterEntityId) && id <= upperBound
-                ));
-                let consumedType = true;
-                for (const { id: rowId, row } of rows) {
-                    if (entities.length >= pageSize) {
-                        consumedType = false;
-                        break;
-                    }
-                    entities.push({
-                        changeSeq: cursorState.snapshotCursor,
-                        entityType,
-                        entityId: rowId,
-                        action: 'upsert',
-                        revision: adapter.revisionOf(row),
-                        actorDeviceId: null,
-                        /* Every SyncChange requires a positive timestamp. Canonical services use
-                         * different event names, and old/config rows may predate updatedAt. Pick the
-                         * best durable source at the wire boundary; 1 is the explicit legacy epoch,
-                         * never wall-clock "now", so repeated bootstrap pages remain deterministic. */
-                        changedAt: Math.max(
-                            1,
-                            Number(row.updatedAt) || 0,
-                            Number(row.createdAt) || 0,
-                            Number(row.time) || 0,
-                            Number(row.occurredAt) || 0,
-                            Number(row.finishedAt) || 0,
-                            Number(row.startedAt) || 0,
-                        ),
-                        /* Bootstrap carries a complete canonical projection. The normal mask is
-                         * the full editable set; if an adapter also names opaque/unknown fields,
-                         * serverFieldMask returns [] to request a safe full replacement instead. */
-                        fieldMask: this.serverFieldMask(
-                            entityType,
-                            adapter.fieldMaskOf
-                                ? adapter.fieldMaskOf(row)
-                                : (spec.editableFields || []).slice(),
-                        ),
-                        payload: projectPayload(spec, row),
-                        ...this.ownedSecretEnvelopeFields({
+                const remaining = pageSize - entities.length;
+                const page = this.store.bootstrapSnapshotPage({
+                    bootstrapId: cursorState.bootstrapId,
+                    typeIndex,
+                    afterEntityId,
+                    upperBound,
+                    limit: remaining + 1,
+                });
+                const hasMoreInType = page.length > remaining;
+                const take = hasMoreInType ? page.slice(0, remaining) : page;
+                if (!take.length) {
+                    typeIndex += 1;
+                    afterEntityId = null;
+                    continue;
+                }
+
+                for (const snap of take) {
+                    const live = snap.secretFields.length
+                        ? this._bootstrapLiveRow(adapter, auth.user, snap.entityId)
+                        : null;
+                    const secretExtras = live
+                        ? this.ownedSecretEnvelopeFields({
                             spec,
-                            row,
+                            row: live,
                             user: auth.user,
                             device: auth.device,
                             entityType,
-                            entityId: rowId,
-                            entityRevision: adapter.revisionOf(row),
-                        }),
+                            entityId: snap.entityId,
+                            entityRevision: snap.revision,
+                            fields: snap.secretFields,
+                        })
+                        : {};
+                    entities.push({
+                        changeSeq: cursorState.snapshotCursor,
+                        entityType,
+                        entityId: snap.entityId,
+                        action: 'upsert',
+                        revision: snap.revision,
+                        actorDeviceId: null,
+                        changedAt: snap.changedAt,
+                        fieldMask: Array.isArray(snap.fieldMask) ? snap.fieldMask.slice() : [],
+                        payload: snap.payload,
+                        ...secretExtras,
                     });
-                    afterEntityId = rowId;
+                    afterEntityId = snap.entityId;
                 }
 
-                if (consumedType) {
+                if (!hasMoreInType) {
                     typeIndex += 1;
                     afterEntityId = null;
                 }
             }
 
             const complete = typeIndex >= this.bootstrapTypes.length;
+            if (complete) this.store.deleteBootstrapSnapshot(cursorState.bootstrapId);
             return {
                 ok: true,
                 bootstrapId: cursorState.bootstrapId,
@@ -1685,6 +1734,10 @@ class MobileV1Api {
                 complete,
                 entities,
             };
+        } catch (err) {
+            if (createdSnapshotId) this.store.deleteBootstrapSnapshot(createdSnapshotId);
+            throw err;
+        }
     }
 
     handleChanges(req, res) {
@@ -2288,16 +2341,16 @@ class MobileV1Api {
     }
 
     hasFieldOverlap(ownerUserId, entityType, entityId, baseRevision, incomingFields) {
-        if (typeof this.store.hasOverlap === 'function'
-            && this.store.hasOverlap(ownerUserId, entityType, entityId, baseRevision, incomingFields)) return true;
-        if (typeof this.store.fieldRevisions !== 'function') return false;
-        const base = Number(baseRevision) || 0;
-        const incoming = incomingFields.map(String);
-        for (const [serverField, revision] of this.store.fieldRevisions(ownerUserId, entityType, entityId)) {
-            if (Number(revision) <= base) continue;
-            if (incoming.some((field) => fieldPathsOverlap(field, serverField))) return true;
-        }
-        return false;
+        /* Store owns parent/child path overlap and the empty-ledger fail-closed
+         * rule. A second walk here would reintroduce the exact-name shortcut. */
+        if (typeof this.store.hasOverlap !== 'function') return false;
+        return this.store.hasOverlap(
+            ownerUserId,
+            entityType,
+            entityId,
+            baseRevision,
+            incomingFields,
+        );
     }
 
     /** Positive `clientModifiedAt` from the frozen SyncOperation schema; 0 means unknown. */

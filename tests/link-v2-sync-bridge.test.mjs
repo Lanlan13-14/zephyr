@@ -16,10 +16,11 @@ function mockRes() {
 }
 
 function makeBridge({ deviceRow = null, user = null, pushResult = null } = {}) {
-    const calls = { push: 0 };
+    const calls = { push: 0, lastPush: null };
     const api = {
         store: { getDeviceRow: (id) => (id === 'dev-1' ? deviceRow : null) },
-        executePushForDevice: (auth, body) => { calls.push += 1; return pushResult; },
+        executeBootstrapForDevice: (auth, body) => ({ ok: true, page: body }),
+        executePushForDevice: (auth, body) => { calls.push += 1; calls.lastPush = body; return pushResult; },
         executeChangesForDevice: (auth, q) => ({ ok: true, nextCursor: 9, changes: [] }),
         executeAckForDevice: (auth, cursor) => ({ ok: true }),
         executeSyncStatusForDevice: (auth) => ({ ok: true, state: 'IDLE', cursor: 3 }),
@@ -27,6 +28,13 @@ function makeBridge({ deviceRow = null, user = null, pushResult = null } = {}) {
     const storage = { getUserBrief: (id) => user };
     const bridge = createLinkSyncBridge({ api, storage, adminToken: 'tok-abcdef0123456789' });
     return { bridge, calls };
+}
+
+function enrolled() {
+    return {
+        deviceRow: { device_id: 'dev-1', owner_user_id: 'u1', enabled: 1, revoked_at: null },
+        user: { userId: 'u1' },
+    };
 }
 
 test('rejects a wrong admin token', () => {
@@ -111,4 +119,52 @@ test('a missing op discriminator is rejected', () => {
     bridge.handle({ get: () => 'tok-abcdef0123456789', body: { deviceId: 'dev-1', kind: KIND.SYNC_OP, body: { operations: [] } } }, res);
     assert.equal(res.statusCode, 400);
     assert.equal(res.body.error.code, 'unsupported_op');
+});
+
+test('v1 op path still reaches executePushForDevice', () => {
+    const { bridge, calls } = makeBridge({ ...enrolled(), pushResult: { ok: true } });
+    const auth = { user: { userId: 'u1' }, device: { device_id: 'dev-1' } };
+    const out = bridge.dispatch(auth, KIND.SYNC_OP, { op: 'push', operations: [{ x: 1 }] });
+    assert.equal(calls.push, 1);
+    assert.deepEqual(calls.lastPush, { operations: [{ x: 1 }] });
+    assert.equal(out.body.ok, true);
+});
+
+test('forged v2 envelope is rejected when the session has not negotiated v2', () => {
+    const { bridge, calls } = makeBridge({ ...enrolled(), pushResult: { ok: true } });
+    const auth = { user: { userId: 'u1' }, device: { device_id: 'dev-1' } };
+    assert.throws(
+        () => bridge.dispatch(auth, KIND.SYNC_OP, {
+            protocol: 'zephyr-link',
+            protocolVersion: 2,
+            operation: 'sync.push',
+            body: { protocolVersion: 1, deviceId: 'dev-1', batchId: 'b1', operations: [] },
+        }),
+        (err) => err && err.code === 'unsupported_protocol_version',
+    );
+    assert.equal(calls.push, 0);
+});
+
+test('negotiated v2 sync.push is mapped onto executePushForDevice', () => {
+    const { bridge, calls } = makeBridge({ ...enrolled(), pushResult: { ok: true, batchId: 'b1' } });
+    const auth = {
+        user: { userId: 'u1' },
+        device: { device_id: 'dev-1' },
+        session: { envelopeVersion: 2, serverRegistryHash: 'hash' },
+    };
+    const out = bridge.dispatch(auth, KIND.SYNC_OP, {
+        protocol: 'zephyr-link',
+        protocolVersion: 2,
+        operation: 'sync.push',
+        body: {
+            protocolVersion: 1,
+            deviceId: 'dev-1',
+            batchId: 'b1',
+            operations: [],
+        },
+    });
+    assert.equal(calls.push, 1);
+    assert.equal(out.body.batchId, 'b1');
+    assert.equal(calls.lastPush.batchId, 'b1');
+    assert.equal(Object.hasOwn(calls.lastPush, 'op'), false);
 });

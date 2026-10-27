@@ -26,7 +26,19 @@ const { ml_kem768 } = require('@noble/post-quantum/ml-kem.js');
 const mobileCrypto = require('./mobile-v1-crypto');
 const mobileProof = require('./mobile-v1-proof');
 const { proofPayload: enrollmentProofPayload } = require('./link-v2-enrollment');
-const { extractSecrets } = require('./mobile-v1-entities');
+const { extractSecrets, presenceFlag } = require('./mobile-v1-entities');
+function normalizeFieldMask(fieldMask) {
+    if (!Array.isArray(fieldMask)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const field of fieldMask) {
+        const name = String(field || '').trim();
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        out.push(name);
+    }
+    return out;
+}
 
 const BINDING_FILE = 'one-link-binding.json';
 const KEYS_FILE = 'one-link-device-keys.json';
@@ -74,6 +86,11 @@ function headerValue(headers, name) {
 
 function pushedKey(entityType, entityId) {
     return `${entityType}:${entityId}`;
+}
+
+function accountKeyOf(binding) {
+    if (!binding) return '';
+    return [binding.serverId || '', binding.userId || '', binding.deviceId || ''].join(':');
 }
 
 function atomicWriteJson(filePath, value) {
@@ -312,6 +329,12 @@ class ZephyrOneLinkSync {
             lastPushedRevisions: (saved.lastPushedRevisions && typeof saved.lastPushedRevisions === 'object')
                 ? saved.lastPushedRevisions
                 : {},
+            confirmedBaseRevisions: (saved.confirmedBaseRevisions && typeof saved.confirmedBaseRevisions === 'object')
+                ? saved.confirmedBaseRevisions
+                : {},
+            outbox: Array.isArray(saved.outbox) ? saved.outbox : [],
+            conflicts: Array.isArray(saved.conflicts) ? saved.conflicts : [],
+            accountKey: saved.accountKey || '',
         };
     }
 
@@ -540,7 +563,7 @@ class ZephyrOneLinkSync {
             if (consumed.data?.error?.code === 'enrollment_not_approved') return;
             throw httpError(consumed, '完成绑定失败');
         }
-        this.binding = {
+        const nextBinding = {
             serverUrl: pending.serverUrl,
             allowInsecureTls: pending.allowInsecureTls,
             serverId: pending.serverId || consumed.data.serverId || '',
@@ -557,6 +580,12 @@ class ZephyrOneLinkSync {
             bindingToken: consumed.data.bindingToken,
             boundAt: nowMs(),
         };
+        const previousKey = accountKeyOf(this.binding);
+        const nextKey = accountKeyOf(nextBinding);
+        if (previousKey && previousKey !== nextKey) {
+            this._archiveAccountDomain();
+        }
+        this.binding = nextBinding;
         this.state.registryHash = consumed.data.registryHash || '';
         this.state.bootstrapComplete = false;
         this.state.appliedCursor = 0;
@@ -567,6 +596,12 @@ class ZephyrOneLinkSync {
         this.state.bootstrapPagesFetched = 0;
         this.state.bootstrapTokenExpiresAt = 0;
         this.state.lastPushedRevisions = {};
+        this.state.confirmedBaseRevisions = {};
+        this.state.outbox = [];
+        this.state.conflicts = [];
+        this.state.pendingCount = 0;
+        this.state.conflictCount = 0;
+        this.state.accountKey = accountKeyOf(this.binding);
         this.state.lastError = null;
         this.state.lastErrorCode = null;
         this._saveBinding();
@@ -584,6 +619,7 @@ class ZephyrOneLinkSync {
 
     unbind() {
         this.stop();
+        this._archiveAccountDomain();
         this.binding = null;
         this._pendingEnrollment = null;
         this.state.bootstrapComplete = false;
@@ -595,12 +631,63 @@ class ZephyrOneLinkSync {
         this.state.bootstrapPagesFetched = 0;
         this.state.bootstrapTokenExpiresAt = 0;
         this.state.lastPushedRevisions = {};
+        this.state.confirmedBaseRevisions = {};
+        this.state.outbox = [];
+        this.state.conflicts = [];
+        this.state.pendingCount = 0;
+        this.state.conflictCount = 0;
+        this.state.accountKey = '';
         this.state.lastError = null;
         this.state.lastErrorCode = null;
         this._saveBinding();
         this._saveState();
         this._emit();
         return this.publicState();
+    }
+
+    /**
+     * Rebind/unbind must not let the next account inherit this account's
+     * cursors, outbox or mirrored rows. The previous domain is archived
+     * verbatim and the live mirror rows are removed; Local data that is not
+     * part of the Link mirror is left untouched.
+     */
+    _archiveAccountDomain() {
+        const userId = this.binding?.userId;
+        const deviceId = this.binding?.deviceId;
+        const serverId = this.binding?.serverId;
+        if (!userId || !deviceId) return;
+        const archiveDir = path.join(
+            this.dataDir,
+            'accounts',
+            String(serverId || '_'),
+            String(userId),
+            String(deviceId),
+        );
+        fs.mkdirSync(archiveDir, { recursive: true });
+        atomicWriteJson(path.join(archiveDir, 'one-link-sync-state.json'), this.state);
+        if (this.binding) {
+            atomicWriteJson(path.join(archiveDir, 'one-link-binding.json'), this.binding);
+        }
+        const snapshot = {};
+        const api = this.mobileV1Api;
+        const user = this._localUser();
+        if (api && user) {
+            for (const type of MIRROR_TYPES) {
+                const adapter = api.adapters.get(type);
+                if (!adapter || typeof adapter.list !== 'function') continue;
+                let rows = [];
+                try { rows = adapter.list(user) || []; } catch { rows = []; }
+                snapshot[type] = rows;
+                if (typeof adapter.remove === 'function') {
+                    for (const row of rows) {
+                        const id = String(typeof adapter.idOf === 'function' ? adapter.idOf(row) : (row.id || row.noteId || ''));
+                        if (!id) continue;
+                        try { adapter.remove(user, id, { actorDeviceId: deviceId }); } catch { /* already gone */ }
+                    }
+                }
+            }
+        }
+        atomicWriteJson(path.join(archiveDir, 'mirror-snapshot.json'), snapshot);
     }
 
     async _waitOutRateLimit() {
@@ -938,51 +1025,284 @@ class ZephyrOneLinkSync {
         });
     }
 
+    _confirmedBase(entityType, entityId, row) {
+        const key = pushedKey(entityType, entityId);
+        if (row && Object.prototype.hasOwnProperty.call(row, 'confirmedBaseRevision')) {
+            const explicit = Number(row.confirmedBaseRevision);
+            if (Number.isFinite(explicit) && explicit >= 0) return explicit;
+        }
+        if (this.state.confirmedBaseRevisions && Object.prototype.hasOwnProperty.call(this.state.confirmedBaseRevisions, key)) {
+            return Number(this.state.confirmedBaseRevisions[key]) || 0;
+        }
+        /* A live row the server has never confirmed was created here. Its
+         * local revision is a display counter, not a canonical base. */
+        return 0;
+    }
+
+    _rememberConfirmed(entityType, entityId, revision) {
+        if (!this.state.confirmedBaseRevisions) this.state.confirmedBaseRevisions = {};
+        this.state.confirmedBaseRevisions[pushedKey(entityType, entityId)] = Number(revision) || 0;
+    }
+
+    _forgetConfirmed(entityType, entityId) {
+        if (this.state.confirmedBaseRevisions) {
+            delete this.state.confirmedBaseRevisions[pushedKey(entityType, entityId)];
+        }
+        if (this.state.lastPushedRevisions) {
+            delete this.state.lastPushedRevisions[pushedKey(entityType, entityId)];
+        }
+    }
+
+    _refreshPendingCount() {
+        this.state.pendingCount = (this.state.outbox || []).filter((row) => row.status === 'pending').length;
+        this.state.conflictCount = Array.isArray(this.state.conflicts)
+            ? this.state.conflicts.length
+            : (this.state.outbox || []).filter((row) => row.status === 'conflict').length;
+    }
+
+    /**
+     * Public entry for canonical service writes. server.js wires
+     * ResourceService/NotesService `onOwnedMutation` here so a local create,
+     * update or delete lands in the outbox in the same turn as the row.
+     * Remote-applied merges must not re-enqueue (caller filters remoteMerge).
+     */
+    recordLocalMutation({
+        entityType,
+        entityId,
+        action,
+        fieldMask,
+        baseRevision,
+        remoteMerge,
+    } = {}) {
+        if (remoteMerge === true) return null;
+        const type = String(entityType || '');
+        const id = String(entityId || '');
+        if (!MIRROR_TYPES.has(type) || !id) return null;
+        if (!this.binding) return null;
+        const resolvedAction = action === 'delete' ? 'delete' : 'upsert';
+        const confirmed = Number.isFinite(Number(baseRevision))
+            ? Number(baseRevision)
+            : this._confirmedBase(type, id, null);
+        if (resolvedAction === 'delete') {
+            return this._enqueueDelete(type, id, confirmed);
+        }
+        return this._enqueueUpsert(type, id, fieldMask, confirmed);
+    }
+
+    _enqueueUpsert(entityType, entityId, fieldMask, baseRevision) {
+        return this._enqueue({
+            entityType,
+            entityId,
+            action: 'upsert',
+            fieldMask,
+            baseRevision: Number.isFinite(Number(baseRevision))
+                ? Number(baseRevision)
+                : this._confirmedBase(entityType, entityId, null),
+        });
+    }
+
+    _enqueueDelete(entityType, entityId, baseRevision) {
+        return this._enqueue({
+            entityType,
+            entityId,
+            action: 'delete',
+            baseRevision: Number.isFinite(Number(baseRevision))
+                ? Number(baseRevision)
+                : this._confirmedBase(entityType, entityId, null),
+        });
+    }
+
+    _enqueue({ entityType, entityId, action, baseRevision, fieldMask }) {
+        if (!MIRROR_TYPES.has(entityType)) return null;
+        if (!Array.isArray(this.state.outbox)) this.state.outbox = [];
+        const id = String(entityId);
+        const nextAction = action === 'delete' ? 'delete' : 'upsert';
+        const mask = nextAction === 'delete' ? [] : normalizeFieldMask(fieldMask);
+        const existing = this.state.outbox.find((op) => (
+            op.entityType === entityType && op.entityId === id && op.status === 'pending'
+        ));
+        if (existing) {
+            if (existing.action === nextAction) {
+                if (nextAction === 'upsert' && mask.length) {
+                    const merged = new Set(normalizeFieldMask(existing.fieldMask));
+                    for (const field of mask) merged.add(field);
+                    existing.fieldMask = [...merged];
+                }
+                if (Number.isFinite(Number(baseRevision))) {
+                    existing.baseRevision = Number(baseRevision);
+                }
+                this._refreshPendingCount();
+                this._saveState();
+                return existing;
+            }
+            /* Switching upsert ↔ delete must not leave both pending (a later
+             * upsert would resurrect a local delete). Close the previous op
+             * and mint a new opId so an in-flight retry cannot change the
+             * meaning of a server-idempotent id. */
+            existing.status = 'superseded';
+        }
+        const op = {
+            opId: `local-${entityType}-${id}-${nextAction}-${crypto.randomUUID()}`,
+            entityType,
+            entityId: id,
+            action: nextAction,
+            baseRevision: Number(baseRevision) || 0,
+            fieldMask: mask,
+            status: 'pending',
+            enqueuedAt: nowMs(),
+        };
+        this.state.outbox.push(op);
+        this._refreshPendingCount();
+        this._saveState();
+        return op;
+    }
+
+    _captureDirtyRows(user) {
+        const api = this.mobileV1Api;
+        if (!api || !user) return;
+        for (const type of MIRROR_TYPES) {
+            const adapter = api.adapters.get(type);
+            if (!adapter || typeof adapter.list !== 'function') continue;
+            const rows = adapter.list(user) || [];
+            const liveIds = new Set();
+            for (const row of rows) {
+                const id = String(adapter.idOf(row));
+                liveIds.add(id);
+                const revision = Number(adapter.revisionOf(row)) || 0;
+                const confirmed = this._confirmedBase(type, id, row);
+                const pushed = Number((this.state.lastPushedRevisions || {})[pushedKey(type, id)] || 0);
+                const blocked = (this.state.outbox || []).find((op) => (
+                    op.entityType === type && op.entityId === id && op.status === 'conflict'
+                ));
+                if (blocked) continue;
+                /* lastPushedRevisions is a local display watermark. CAS still
+                 * uses confirmedBase; comparing against confirmed here would
+                 * hide a local edit whose display revision is below the server
+                 * baseline (SYNC-CAS-002). */
+                if (revision > pushed) {
+                    const mask = Array.isArray(row.localFieldMask) && row.localFieldMask.length
+                        ? row.localFieldMask
+                        : [...(api.entityByType.get(type)?.editableFields || [])];
+                    this._enqueueUpsert(type, id, mask, confirmed);
+                }
+            }
+            /* A confirmed entity that vanished from the live list is a local
+             * delete that never reached the outbox (SYNC-OUT-004). Enqueue it
+             * so push does not depend on the row still being listable. */
+            for (const key of Object.keys(this.state.confirmedBaseRevisions || {})) {
+                const prefix = `${type}:`;
+                if (!key.startsWith(prefix)) continue;
+                const id = key.slice(prefix.length);
+                if (!id || liveIds.has(id)) continue;
+                const pending = (this.state.outbox || []).find((op) => (
+                    op.entityType === type && op.entityId === id && op.status === 'pending'
+                ));
+                if (pending && pending.action === 'delete') continue;
+                this._enqueueDelete(type, id, Number(this.state.confirmedBaseRevisions[key]) || 0);
+            }
+        }
+    }
+
     async _pushPending() {
         const api = this.mobileV1Api;
         if (!api || !this.binding) return;
         const user = this._localUser();
         if (!user) return;
-        const capabilities = await this._fetchCapabilities();
-        const serverKey = capabilities.serverEncryption;
-        if (!serverKey?.publicKey) return;
-        const registryHash = capabilities.registryHash || this.binding.registryHash;
-        const lastPushed = this.state.lastPushedRevisions || {};
-        const operations = [];
-        for (const type of MIRROR_TYPES) {
-            const adapter = api.adapters.get(type);
-            const spec = api.entityByType.get(type);
-            if (!adapter || !spec) continue;
-            const rows = adapter.list(user) || [];
-            for (const row of rows) {
-                const id = String(adapter.idOf(row));
-                const revision = Number(adapter.revisionOf(row)) || 0;
-                const key = pushedKey(type, id);
-                if (Number(lastPushed[key] || 0) >= revision) continue;
-                const payload = this._pushPayload(spec, row);
-                const envelopes = this._sealSecrets({
-                    spec,
-                    row,
-                    entityType: type,
-                    entityId: id,
-                    entityRevision: revision + 1,
-                    serverId: capabilities.serverId,
-                    serverKey,
-                });
-                operations.push({
-                    opId: `local-${type}-${id}-${revision}`,
-                    entityType: type,
-                    entityId: id,
-                    action: 'upsert',
-                    baseRevision: revision,
-                    fieldMask: [...(spec.editableFields || [])],
-                    payload,
-                    secretEnvelopes: Object.keys(envelopes).length ? envelopes : undefined,
-                });
-            }
+        this._captureDirtyRows(user);
+        const pending = (this.state.outbox || []).filter((op) => op.status === 'pending');
+        if (!pending.length) {
+            this._refreshPendingCount();
+            this._saveState();
+            return;
         }
+        const capabilities = await this._fetchCapabilities();
+        const serverKey = capabilities?.serverEncryption || null;
+        const registryHash = (capabilities && capabilities.registryHash) || this.binding.registryHash;
+        const operations = [];
+        for (const op of pending) {
+            const adapter = api.adapters.get(op.entityType);
+            const spec = api.entityByType.get(op.entityType);
+            if (!adapter || !spec) continue;
+            if (op.action === 'delete') {
+                operations.push({
+                    opId: op.opId,
+                    entityType: op.entityType,
+                    entityId: op.entityId,
+                    action: 'delete',
+                    baseRevision: Number(op.baseRevision) || this._confirmedBase(op.entityType, op.entityId, null),
+                    fieldMask: [],
+                    payload: {},
+                });
+                continue;
+            }
+            const row = typeof adapter.read === 'function' ? adapter.read(user, op.entityId) : null;
+            if (!row) {
+                /* Do not silently drop a pending upsert. A confirmed entity
+                 * that disappeared locally is a delete; an unconfirmed local
+                 * create that vanished never reached the server. */
+                const confirmed = this._confirmedBase(op.entityType, op.entityId, null);
+                if (confirmed > 0) {
+                    op.action = 'delete';
+                    op.fieldMask = [];
+                    op.baseRevision = confirmed;
+                    operations.push({
+                        opId: op.opId,
+                        entityType: op.entityType,
+                        entityId: op.entityId,
+                        action: 'delete',
+                        baseRevision: confirmed,
+                        fieldMask: [],
+                        payload: {},
+                    });
+                } else {
+                    op.status = 'cancelled';
+                }
+                continue;
+            }
+            const baseRevision = this._confirmedBase(op.entityType, op.entityId, row);
+            op.baseRevision = baseRevision;
+            const secrets = extractSecrets(spec, row);
+            if (Object.keys(secrets).length && !serverKey?.publicKey) {
+                /* SYNC-SEC-005: defer rather than upload envelope-less secrets. */
+                continue;
+            }
+            let envelopes = {};
+            if (Object.keys(secrets).length) {
+                try {
+                    envelopes = this._sealSecrets({
+                        spec,
+                        row,
+                        entityType: op.entityType,
+                        entityId: op.entityId,
+                        entityRevision: baseRevision + 1,
+                        serverId: capabilities.serverId || this.binding.serverId,
+                        serverKey,
+                    });
+                } catch (cause) {
+                    const err = new Error(`secret envelope seal failed: ${cause && cause.message ? cause.message : 'seal failed'}`);
+                    err.code = 'secret_envelope_invalid';
+                    err.cause = cause;
+                    throw err;
+                }
+            }
+            const mask = normalizeFieldMask(op.fieldMask).length
+                ? normalizeFieldMask(op.fieldMask)
+                : [...(spec.editableFields || [])];
+            operations.push({
+                opId: op.opId,
+                entityType: op.entityType,
+                entityId: op.entityId,
+                action: 'upsert',
+                baseRevision,
+                fieldMask: mask,
+                payload: this._pushPayload(spec, row, mask),
+                secretEnvelopes: Object.keys(envelopes).length ? envelopes : undefined,
+            });
+        }
+        this.state.outbox = (this.state.outbox || []).filter((op) => op.status !== 'cancelled' && op.status !== 'superseded' && op.status !== 'done');
+        this._refreshPendingCount();
         if (!operations.length) {
-            this.state.pendingCount = 0;
+            this._saveState();
             return;
         }
         this.state.pendingCount = operations.length;
@@ -998,27 +1318,53 @@ class ZephyrOneLinkSync {
                 operations,
             },
         });
-        const accepted = (result.results || []).filter((item) => item.status === 'accepted' || item.status === 'duplicate');
-        const conflicts = (result.results || []).filter((item) => item.status === 'conflict').length;
-        for (const item of accepted) {
-            const op = operations.find((row) => row.opId === item.opId);
-            if (!op) continue;
-            lastPushed[pushedKey(op.entityType, op.entityId)] = Number(item.revision) || (op.baseRevision + 1);
+        const byId = new Map(operations.map((op) => [op.opId, op]));
+        if (!Array.isArray(this.state.conflicts)) this.state.conflicts = [];
+        for (const item of result.results || []) {
+            const op = byId.get(item.opId);
+            const queued = (this.state.outbox || []).find((row) => row.opId === item.opId);
+            if (!op || !queued) continue;
+            if (item.status === 'accepted' || item.status === 'duplicate') {
+                queued.status = 'done';
+                const revision = Number(item.revision) || (op.action === 'delete' ? op.baseRevision : op.baseRevision + 1);
+                if (op.action === 'delete') {
+                    this._forgetConfirmed(op.entityType, op.entityId);
+                } else {
+                    this.state.lastPushedRevisions[pushedKey(op.entityType, op.entityId)] = revision;
+                    this._rememberConfirmed(op.entityType, op.entityId, revision);
+                }
+            } else if (item.status === 'conflict') {
+                queued.status = 'conflict';
+                this.state.conflicts.push({
+                    opId: op.opId,
+                    entityType: op.entityType,
+                    entityId: op.entityId,
+                    at: nowMs(),
+                    reason: item.reason || item.error || 'conflict',
+                });
+            } else if (item.status === 'rejected') {
+                queued.status = 'pending';
+                queued.lastError = item.reason || item.error || 'rejected';
+            }
+            /* unknown / retryable statuses leave the op pending with the same opId */
         }
-        this.state.lastPushedRevisions = lastPushed;
-        this.state.pendingCount = Math.max(0, operations.length - accepted.length);
-        this.state.conflictCount = conflicts;
-        if (Number(result.serverCursor) > 0) this.state.appliedCursor = Number(result.serverCursor);
+        this.state.outbox = (this.state.outbox || []).filter((op) => op.status === 'pending' || op.status === 'conflict');
+        this._refreshPendingCount();
+        /* serverCursor is the server's feed head, not proof that this device
+         * applied everything up to it. Pull owns appliedCursor. */
+        this._saveState();
     }
 
-    _pushPayload(spec, row) {
+    _pushPayload(spec, row, fieldMask) {
         const drop = new Set([
             ...(spec.secretFields || []),
             ...(spec.serverAuthorityFields || []),
             ...(spec.deviceLocalFields || []),
         ]);
+        const wanted = normalizeFieldMask(fieldMask);
+        const fields = wanted.length ? wanted : [...(spec.editableFields || [])];
         const payload = {};
-        for (const field of spec.editableFields || []) {
+        for (const field of fields) {
             if (drop.has(field)) continue;
             if (Object.prototype.hasOwnProperty.call(row, field)) payload[field] = row[field];
         }
@@ -1057,6 +1403,36 @@ class ZephyrOneLinkSync {
         return envelopes;
     }
 
+    _stripPresenceFlags(spec, payload) {
+        const out = { ...(payload || {}) };
+        for (const field of spec.secretFields || []) {
+            delete out[presenceFlag(field)];
+        }
+        return out;
+    }
+
+    _assertRemoteSecrets(spec, change, opened) {
+        const payload = change.payload || {};
+        const envelopes = change.secretEnvelopes || {};
+        const openedFields = opened && opened.fields ? opened.fields : {};
+        for (const field of spec.secretFields || []) {
+            const flag = presenceFlag(field);
+            const claimed = payload[flag] === true;
+            const envelope = envelopes[field];
+            const openedValue = Object.prototype.hasOwnProperty.call(openedFields, field);
+            if (claimed && !envelope) {
+                const err = new Error(`secret envelope missing for ${field} while ${flag}=true`);
+                err.code = 'secret_envelope_invalid';
+                throw err;
+            }
+            if (envelope && !openedValue) {
+                const err = new Error(`secret envelope rejected for ${field}: not opened`);
+                err.code = 'secret_envelope_invalid';
+                throw err;
+            }
+        }
+    }
+
     async _applyRemoteChange(change) {
         const api = this.mobileV1Api;
         const user = this._localUser();
@@ -1067,17 +1443,36 @@ class ZephyrOneLinkSync {
         const spec = api.entityByType.get(entityType);
         if (!adapter || !spec) return;
         const entityId = String(change.entityId || '');
+        const pending = (this.state.outbox || []).find((op) => (
+            op.entityType === entityType && op.entityId === entityId && (op.status === 'pending' || op.status === 'conflict')
+        ));
         if (change.action === 'delete') {
-            try { adapter.remove(user, entityId, { actorDeviceId: this.binding.deviceId }); } catch { /* already gone */ }
-            delete this.state.lastPushedRevisions[pushedKey(entityType, entityId)];
+            if (pending && pending.action !== 'delete') {
+                this._retainConflict(entityType, entityId, change, adapter.read(user, entityId));
+                return;
+            }
+            try {
+                adapter.remove(user, entityId, { actorDeviceId: this.binding.deviceId, remoteMerge: true });
+            } catch { /* already gone */ }
+            this._forgetConfirmed(entityType, entityId);
             return;
         }
-        const payload = { ...(change.payload || {}) };
+        /* Open and validate secrets BEFORE any adapter write. A bad envelope
+         * aborts the entity: no row, no hasPassword=true presence flag. */
         const opened = this._openSecrets(spec, change);
-        Object.assign(payload, opened);
+        this._assertRemoteSecrets(spec, change, opened);
+        const payload = this._stripPresenceFlags(spec, { ...(change.payload || {}), ...opened.fields });
         const existing = adapter.read(user, entityId);
+        if (existing && pending && pending.action === 'upsert') {
+            const patch = this._mergeRemoteUnderPending(spec, existing, payload, change, opened.fields);
+            if (Object.keys(patch).length) {
+                adapter.update(user, entityId, patch, { actorDeviceId: this.binding.deviceId, remoteMerge: true });
+            }
+            this._rememberConfirmed(entityType, entityId, Number(change.revision) || 0);
+            return;
+        }
         if (!existing) {
-            adapter.create(user, entityId, payload, { actorDeviceId: this.binding.deviceId });
+            adapter.create(user, entityId, payload, { actorDeviceId: this.binding.deviceId, remoteMerge: true });
         } else {
             const patch = {};
             const mask = Array.isArray(change.fieldMask) && change.fieldMask.length
@@ -1094,28 +1489,40 @@ class ZephyrOneLinkSync {
                 if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
             }
             for (const field of spec.secretFields || []) {
-                if (Object.prototype.hasOwnProperty.call(opened, field)) patch[field] = opened[field];
+                if (Object.prototype.hasOwnProperty.call(opened.fields, field)) patch[field] = opened.fields[field];
             }
-            adapter.update(user, entityId, patch, { actorDeviceId: this.binding.deviceId });
+            adapter.update(user, entityId, patch, { actorDeviceId: this.binding.deviceId, remoteMerge: true });
         }
+        /* lastPushedRevisions is a local display watermark so the dirty scan
+         * does not echo a just-applied remote write. confirmedBaseRevisions is
+         * the server CAS baseline and must not be replaced by that watermark. */
         const applied = adapter.read(user, entityId);
         const appliedRevision = applied && typeof adapter.revisionOf === 'function'
-            ? Number(adapter.revisionOf(applied)) || Number(change.revision) || 0
-            : Number(change.revision) || 0;
+            ? Number(adapter.revisionOf(applied)) || 0
+            : 0;
         if (appliedRevision > 0) {
             this.state.lastPushedRevisions[pushedKey(entityType, entityId)] = appliedRevision;
+        }
+        const remoteRevision = Number(change.revision) || 0;
+        if (remoteRevision > 0) {
+            this._rememberConfirmed(entityType, entityId, remoteRevision);
         }
     }
 
     _openSecrets(spec, change) {
         const envelopes = change.secretEnvelopes || {};
-        const out = {};
-        if (!this.keys?.encryption?.privateKey) return out;
+        const declared = (spec.secretFields || []).filter((field) => envelopes[field]);
+        if (!declared.length) return { fields: {} };
+        if (!this.keys?.encryption?.privateKey) {
+            const err = new Error('secret envelope present but this device has no encryption key');
+            err.code = 'secret_envelope_invalid';
+            throw err;
+        }
         const privateKey = Buffer.from(this.keys.encryption.privateKey, 'base64');
+        const out = {};
         try {
-            for (const fieldName of spec.secretFields || []) {
+            for (const fieldName of declared) {
                 const envelope = envelopes[fieldName];
-                if (!envelope) continue;
                 const aad = mobileCrypto.secretAadBytes({
                     serverId: this.binding.serverId,
                     userId: this.binding.userId,
@@ -1126,22 +1533,81 @@ class ZephyrOneLinkSync {
                     entityRevision: Number(envelope.entityRevision) || Number(change.revision) || 1,
                     keyVersion: Number(envelope.keyVersion) || 1,
                 });
+                let plaintext;
                 try {
-                    const plaintext = mobileCrypto.openEnvelope({
-                        envelope,
-                        privateKey,
-                        expectedAad: aad,
-                    });
-                    out[fieldName] = plaintext.toString('utf8');
-                    plaintext.fill(0);
-                } catch (err) {
-                    this.log('[one-link] secret envelope open failed', fieldName, err && err.message);
+                    plaintext = mobileCrypto.openEnvelope({ envelope, privateKey, expectedAad: aad });
+                } catch (cause) {
+                    const err = new Error(`secret envelope rejected for ${fieldName}: ${cause && cause.message ? cause.message : 'open failed'}`);
+                    err.code = 'secret_envelope_invalid';
+                    err.cause = cause;
+                    throw err;
                 }
+                out[fieldName] = plaintext.toString('utf8');
+                plaintext.fill(0);
             }
         } finally {
             privateKey.fill(0);
         }
-        return out;
+        return { fields: out };
+    }
+
+    /**
+     * A pending local edit keeps every field it changed. Remote fields that
+     * the pending edit does not touch are applied, so two devices editing
+     * different fields converge instead of one silently winning.
+     */
+    _locallyChangedFields(entityType, entityId, existing) {
+        const changed = new Set();
+        const spec = this.mobileV1Api?.entityByType?.get(entityType);
+        for (const op of this.state.outbox || []) {
+            if (op.entityType !== entityType || op.entityId !== entityId) continue;
+            if (op.action !== 'upsert' || (op.status !== 'pending' && op.status !== 'conflict')) continue;
+            const mask = normalizeFieldMask(op.fieldMask);
+            if (mask.length) {
+                for (const field of mask) changed.add(field);
+            } else {
+                for (const field of spec?.editableFields || []) changed.add(field);
+                for (const field of spec?.secretFields || []) changed.add(field);
+            }
+        }
+        if (!changed.size && existing && existing.localFieldMask) {
+            for (const field of existing.localFieldMask) changed.add(field);
+        }
+        return changed;
+    }
+
+    _mergeRemoteUnderPending(spec, existing, payload, change, openedFields) {
+        const protectedFields = this._locallyChangedFields(change.entityType, String(change.entityId), existing);
+        const patch = {};
+        const mask = Array.isArray(change.fieldMask) && change.fieldMask.length
+            ? change.fieldMask
+            : Object.keys(payload);
+        for (const field of mask) {
+            if (protectedFields.has(field)) continue;
+            if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
+        }
+        for (const field of spec.serverAuthorityFields || []) {
+            if (Object.prototype.hasOwnProperty.call(payload, field)) patch[field] = payload[field];
+        }
+        for (const field of Object.keys(openedFields || {})) {
+            if (protectedFields.has(field)) continue;
+            patch[field] = openedFields[field];
+        }
+        return this._stripPresenceFlags(spec, patch);
+    }
+
+    _retainConflict(entityType, entityId, change, localRow) {
+        if (!Array.isArray(this.state.conflicts)) this.state.conflicts = [];
+        this.state.conflicts.push({
+            entityType,
+            entityId,
+            remoteRevision: Number(change.revision) || 0,
+            remoteAction: change.action,
+            local: localRow || null,
+            at: nowMs(),
+        });
+        this.state.conflictCount = this.state.conflicts.length;
+        this._saveState();
     }
 
     listDevices() {
@@ -1266,4 +1732,6 @@ module.exports = {
     RATE_LIMIT_DEFAULT_SEC,
     canonicalRequestPath,
     applyQuery,
+    accountKeyOf,
+    MIRROR_TYPES,
 };

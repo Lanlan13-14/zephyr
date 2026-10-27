@@ -6,6 +6,12 @@ on:
     paths:
       - 'zephyr-link/**'
       - 'link-v2-*.js'
+      - 'agent-policy-engine.js'
+      - 'webdav-writer-grade.js'
+      - 'tests/link-v2-sync-envelope.test.mjs'
+      - 'tests/agent-policy-engine.test.mjs'
+      - 'tests/webdav-writer-grade.test.mjs'
+      - 'tests/link-v2-sync-bridge.test.mjs'
       - 'scripts/gen-*-vectors.mjs'
       - 'docs/zephyr-link/**'
       - '.github/workflows/zephyr-link.yml'
@@ -14,6 +20,12 @@ on:
     paths:
       - 'zephyr-link/**'
       - 'link-v2-*.js'
+      - 'agent-policy-engine.js'
+      - 'webdav-writer-grade.js'
+      - 'tests/link-v2-sync-envelope.test.mjs'
+      - 'tests/agent-policy-engine.test.mjs'
+      - 'tests/webdav-writer-grade.test.mjs'
+      - 'tests/link-v2-sync-bridge.test.mjs'
       - 'scripts/gen-*-vectors.mjs'
       - 'docs/zephyr-link/**'
       - '.github/workflows/zephyr-link.yml'
@@ -43,6 +55,8 @@ jobs:
           node docs/zephyr-link/conformance/run-conformance.mjs
           node docs/zephyr-link/conformance/verify-conformance.mjs
           node docs/zephyr-link/conformance/run-source-mutations.mjs
+          node docs/zephyr-link/conformance/run-production-conformance.mjs
+          node --test tests/link-v2-sync-envelope.test.mjs tests/agent-policy-engine.test.mjs tests/webdav-writer-grade.test.mjs tests/link-v2-sync-bridge.test.mjs
 
   test:
     runs-on: ubuntu-latest

@@ -395,3 +395,576 @@ test('a probe update keeps iconSource even though the field mask lists only icon
     assert.equal(rows.get('c1').icon, 'debian');
     assert.equal(rows.get('c1').iconSource, 'probed');
 });
+
+/*
+ * Permanent regressions for the audited desktop sync defects
+ * (TESTING-AND-RELEASE-GATES.md §11). Each one asserts the user-visible
+ * result, not the absence of an exception.
+ */
+
+function memoryAdapter(rows) {
+    return {
+        idOf: (row) => row.id,
+        revisionOf: (row) => Number(row.revision) || 0,
+        list: () => [...rows.values()],
+        read: (_user, id) => rows.get(id) || null,
+        create: (_user, id, payload) => {
+            rows.set(id, { id, revision: 1, ...payload });
+        },
+        update: (_user, id, patch) => {
+            rows.set(id, { ...rows.get(id), ...patch, revision: (Number(rows.get(id).revision) || 0) + 1 });
+        },
+        remove: (_user, id) => { rows.delete(id); },
+    };
+}
+
+function scriptedSync(mod, { rows, specs, httpRequest }) {
+    const { sync } = bindDesktopSync(mod, { httpRequest });
+    sync.mobileV1Api = {
+        adapters: new Map([...rows.keys()].map((type) => [type, memoryAdapter(rows.get(type))])),
+        entityByType: new Map(Object.entries(specs)),
+    };
+    sync.state.bootstrapComplete = true;
+    return sync;
+}
+
+function pushAwareHttp(onPush) {
+    return async (_base, opts) => {
+        if (opts.path === '/api/mobile/v1/devices/proof-challenge') return challengeOk(opts);
+        if (opts.path === '/api/mobile/v1/sync/push') return onPush(opts);
+        if (opts.path === '/api/mobile/v1/capabilities' || String(opts.path || '').includes('capabilities')) {
+            return { ok: true, status: 200, headers: {}, data: { registryHash: 'hash', serverId: 'srv-1', serverEncryption: null } };
+        }
+        throw new Error('unexpected ' + opts.path + ' ' + opts.method);
+    };
+}
+
+test('SYNC-CAS-001 a locally created row is pushed with baseRevision 0, not its local revision', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n-new', { id: 'n-new', title: 'fresh', revision: 1 }]]);
+    let pushed = null;
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp((opts) => {
+            pushed = opts.body;
+            return {
+                ok: true, status: 200, headers: {},
+                data: {
+                    results: [{ opId: opts.body.operations[0].opId, status: 'accepted', revision: 1 }],
+                    serverCursor: 40,
+                },
+            };
+        }),
+    });
+    await sync._pushPending();
+    assert.ok(pushed, 'a local create must produce an upload');
+    assert.equal(pushed.operations.length, 1);
+    assert.equal(pushed.operations[0].action, 'upsert');
+    assert.equal(pushed.operations[0].baseRevision, 0);
+});
+
+test('SYNC-CUR-001 push serverCursor must not advance appliedCursor past unpulled changes', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'edited', revision: 4, confirmedBaseRevision: 3 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp((opts) => ({
+            ok: true, status: 200, headers: {},
+            data: {
+                results: [{ opId: opts.body.operations[0].opId, status: 'accepted', revision: 5 }],
+                serverCursor: 20,
+            },
+        })),
+    });
+    sync.state.appliedCursor = 10;
+    await sync._pushPending();
+    assert.equal(sync.state.appliedCursor, 10);
+    assert.equal(sync.state.ackedCursor <= 10, true);
+});
+
+test('SYNC-OUT-004 a local delete is uploaded and is not resurrected by the mirror scan', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map();
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp((opts) => ({
+            ok: true, status: 200, headers: {},
+            data: {
+                results: opts.body.operations.map((op) => ({ opId: op.opId, status: 'accepted', revision: op.baseRevision })),
+                serverCursor: 11,
+            },
+        })),
+    });
+    sync._rememberConfirmed('note', 'gone', 7);
+    sync._enqueueDelete('note', 'gone', 7);
+    const actions = [];
+    const original = sync._http;
+    sync._http = async (base, opts) => {
+        if (opts.path === '/api/mobile/v1/sync/push') actions.push(...opts.body.operations.map((op) => op.action));
+        return original(base, opts);
+    };
+    await sync._pushPending();
+    assert.deepEqual(actions, ['delete']);
+});
+
+test('SYNC-SEC-001 a bad secret envelope aborts the entity and never writes a false secret presence', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const connections = new Map();
+    const writes = [];
+    const adapter = memoryAdapter(connections);
+    adapter.create = (...args) => { writes.push(['create', ...args]); };
+    adapter.update = (...args) => { writes.push(['update', ...args]); };
+    const { sync, keys } = bindDesktopSync(mod, { httpRequest: async () => { throw new Error('unused'); } });
+    sync.binding.serverId = 'srv-1';
+    sync.mobileV1Api = {
+        adapters: new Map([['connection', adapter]]),
+        entityByType: new Map([['connection', {
+            editableFields: ['name'],
+            secretFields: ['password'],
+            serverAuthorityFields: ['revision'],
+        }]]),
+    };
+    await assert.rejects(() => sync._applyRemoteChange({
+        entityType: 'connection',
+        entityId: 'c-secret',
+        action: 'upsert',
+        revision: 2,
+        fieldMask: ['name'],
+        payload: { name: 'box', hasPassword: true },
+        secretEnvelopes: {
+            password: { entityRevision: 2, keyVersion: 1, ciphertext: 'AAAA', nonce: 'BBBB' },
+        },
+    }), /secret|envelope|aad/i);
+    assert.equal(connections.size, 0);
+    assert.equal(writes.length, 0);
+    assert.equal(JSON.stringify([...connections.values()]).includes('hasPassword'), false);
+    void keys;
+});
+
+test('SYNC-CON-001 an unpushed local edit survives a remote change to the same row', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local-edit', revision: 4, confirmedBaseRevision: 3 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title', 'body'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync._enqueueUpsert('note', 'n1', ['title']);
+    await sync._applyRemoteChange({
+        entityType: 'note',
+        entityId: 'n1',
+        action: 'upsert',
+        revision: 5,
+        fieldMask: ['body'],
+        payload: { body: 'from-server' },
+    });
+    assert.equal(notes.get('n1').title, 'local-edit');
+    assert.equal(notes.get('n1').body, 'from-server');
+    assert.equal(sync.state.pendingCount >= 1, true);
+});
+
+test('rebinding isolates the previous account mirror instead of reusing its cursors', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const { sync, dir } = bindDesktopSync(mod, { httpRequest: async () => ({ ok: true, status: 200, headers: {}, data: {} }) });
+    sync.state.appliedCursor = 88;
+    sync.state.ackedCursor = 80;
+    sync._saveState();
+    const notes = new Map([['n1', { id: 'n1', title: 'account-a', revision: 3 }]]);
+    const localOnly = new Map([['local-1', { id: 'local-1', title: 'keep-me', revision: 1 }]]);
+    const noteAdapter = memoryAdapter(notes);
+    const localAdapter = memoryAdapter(localOnly);
+    sync.mobileV1Api = {
+        adapters: new Map([['note', noteAdapter]]),
+        entityByType: new Map([['note', { editableFields: ['title'], secretFields: [] }]]),
+    };
+    /* Non-mirror types must survive unbind. */
+    sync.mobileV1Api.adapters.set('snippet', localAdapter);
+    sync.unbind();
+    const archivePath = path.join(dir, 'accounts', 'srv-1', 'u1', 'dev-1', 'one-link-sync-state.json');
+    const snapshotPath = path.join(dir, 'accounts', 'srv-1', 'u1', 'dev-1', 'mirror-snapshot.json');
+    assert.equal(fs.existsSync(archivePath), true);
+    assert.equal(fs.existsSync(snapshotPath), true);
+    const rebound = JSON.parse(fs.readFileSync(path.join(dir, 'one-link-sync-state.json'), 'utf8'));
+    assert.equal(Number(rebound.appliedCursor) || 0, 0);
+    assert.equal(Number(rebound.ackedCursor) || 0, 0);
+    assert.deepEqual(rebound.outbox || [], []);
+    assert.deepEqual(rebound.confirmedBaseRevisions || {}, {});
+    assert.equal(notes.has('n1'), false);
+    assert.equal(localOnly.has('local-1'), true);
+});
+
+test('SYNC-CAS-002 a confirmed-base edit is pushed with the server baseline, not the local display revision', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'edited', revision: 10 }]]);
+    let pushed = null;
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp((opts) => {
+            pushed = opts.body;
+            return {
+                ok: true, status: 200, headers: {},
+                data: {
+                    results: [{ opId: opts.body.operations[0].opId, status: 'accepted', revision: 42 }],
+                    serverCursor: 99,
+                },
+            };
+        }),
+    });
+    sync._rememberConfirmed('note', 'n1', 41);
+    sync.recordLocalMutation({
+        entityType: 'note',
+        entityId: 'n1',
+        action: 'upsert',
+        fieldMask: ['title'],
+    });
+    await sync._pushPending();
+    assert.ok(pushed, 'the local edit must produce an upload');
+    assert.equal(pushed.operations.length, 1);
+    assert.equal(pushed.operations[0].baseRevision, 41);
+    assert.notEqual(pushed.operations[0].baseRevision, 10);
+    assert.equal(sync.state.appliedCursor, 0);
+});
+
+test('SYNC-OUT-001 the same opId is retried after an unknown network failure', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'retry-me', revision: 2 }]]);
+    const opIds = [];
+    let attempts = 0;
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp((opts) => {
+            attempts += 1;
+            opIds.push(...opts.body.operations.map((op) => op.opId));
+            if (attempts === 1) {
+                const err = new Error('network_unknown');
+                err.code = 'network_unknown';
+                throw err;
+            }
+            return {
+                ok: true, status: 200, headers: {},
+                data: {
+                    results: opts.body.operations.map((op) => ({ opId: op.opId, status: 'duplicate', revision: 3 })),
+                    serverCursor: 12,
+                },
+            };
+        }),
+    });
+    sync._rememberConfirmed('note', 'n1', 1);
+    sync.recordLocalMutation({ entityType: 'note', entityId: 'n1', action: 'upsert', fieldMask: ['title'] });
+    await assert.rejects(() => sync._pushPending(), /network_unknown/);
+    const pendingAfterFail = (sync.state.outbox || []).filter((op) => op.status === 'pending');
+    assert.equal(pendingAfterFail.length, 1);
+    await sync._pushPending();
+    assert.equal(opIds.length, 2);
+    assert.equal(opIds[0], opIds[1]);
+    assert.equal((sync.state.outbox || []).filter((op) => op.status === 'pending').length, 0);
+});
+
+test('SYNC-OUT-002 mixed accepted/conflict/rejected leaves each op in the protocol state', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([
+        ['ok', { id: 'ok', title: 'ok', revision: 2 }],
+        ['clash', { id: 'clash', title: 'clash', revision: 2 }],
+        ['nope', { id: 'nope', title: 'nope', revision: 2 }],
+    ]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp((opts) => {
+            const [a, b, c] = opts.body.operations;
+            return {
+                ok: true, status: 200, headers: {},
+                data: {
+                    results: [
+                        { opId: a.opId, status: 'accepted', revision: 3 },
+                        { opId: b.opId, status: 'conflict', reason: 'cas' },
+                        { opId: c.opId, status: 'rejected', reason: 'policy' },
+                    ],
+                    serverCursor: 50,
+                },
+            };
+        }),
+    });
+    sync.recordLocalMutation({ entityType: 'note', entityId: 'ok', action: 'upsert', fieldMask: ['title'] });
+    sync.recordLocalMutation({ entityType: 'note', entityId: 'clash', action: 'upsert', fieldMask: ['title'] });
+    sync.recordLocalMutation({ entityType: 'note', entityId: 'nope', action: 'upsert', fieldMask: ['title'] });
+    await sync._pushPending();
+    const byEntity = Object.fromEntries((sync.state.outbox || []).map((op) => [op.entityId, op]));
+    assert.equal(byEntity.ok, undefined);
+    assert.equal(byEntity.clash.status, 'conflict');
+    assert.equal(byEntity.nope.status, 'pending');
+    assert.equal(sync.state.conflicts.some((row) => row.entityId === 'clash'), true);
+    assert.equal(sync.state.appliedCursor, 0);
+});
+
+test('SYNC-CON-002/003 different fields merge; the same field keeps the local overlay', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local-title', body: 'local-body', revision: 4 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title', 'body'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync.recordLocalMutation({ entityType: 'note', entityId: 'n1', action: 'upsert', fieldMask: ['title'] });
+    await sync._applyRemoteChange({
+        entityType: 'note',
+        entityId: 'n1',
+        action: 'upsert',
+        revision: 8,
+        fieldMask: ['title', 'body'],
+        payload: { title: 'server-title', body: 'server-body' },
+    });
+    assert.equal(notes.get('n1').title, 'local-title');
+    assert.equal(notes.get('n1').body, 'server-body');
+});
+
+test('_enqueue persists fieldMask on the pending op', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'a', body: 'b', revision: 2 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title', 'body'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    const op = sync._enqueueUpsert('note', 'n1', ['title']);
+    assert.deepEqual(op.fieldMask, ['title']);
+    const again = sync._enqueueUpsert('note', 'n1', ['body']);
+    assert.equal(again.opId, op.opId);
+    assert.deepEqual([...again.fieldMask].sort(), ['body', 'title']);
+});
+
+test('a pending upsert followed by a local delete does not resurrect the row', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map();
+    let pushed = null;
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp((opts) => {
+            pushed = opts.body;
+            return {
+                ok: true, status: 200, headers: {},
+                data: {
+                    results: opts.body.operations.map((op) => ({ opId: op.opId, status: 'accepted', revision: op.baseRevision })),
+                    serverCursor: 7,
+                },
+            };
+        }),
+    });
+    sync._rememberConfirmed('note', 'n1', 4);
+    sync._enqueueUpsert('note', 'n1', ['title']);
+    sync._enqueueDelete('note', 'n1', 4);
+    const pending = (sync.state.outbox || []).filter((op) => op.status === 'pending' && op.entityId === 'n1');
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].action, 'delete');
+    await sync._pushPending();
+    assert.ok(pushed);
+    assert.deepEqual(pushed.operations.map((op) => op.action), ['delete']);
+});
+
+test('SYNC-OUT-004 capture enqueues a delete when a confirmed row vanishes from list', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map();
+    const actions = [];
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp((opts) => {
+            actions.push(...opts.body.operations.map((op) => op.action));
+            return {
+                ok: true, status: 200, headers: {},
+                data: {
+                    results: opts.body.operations.map((op) => ({ opId: op.opId, status: 'accepted', revision: op.baseRevision })),
+                    serverCursor: 11,
+                },
+            };
+        }),
+    });
+    sync._rememberConfirmed('note', 'gone', 7);
+    await sync._pushPending();
+    assert.deepEqual(actions, ['delete']);
+});
+
+test('bootstrap overlay still protects pending local fields', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local-edit', revision: 1 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title', 'body'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync.state.bootstrapComplete = false;
+    sync.recordLocalMutation({ entityType: 'note', entityId: 'n1', action: 'upsert', fieldMask: ['title'] });
+    await sync._applyRemoteChange({
+        entityType: 'note',
+        entityId: 'n1',
+        action: 'upsert',
+        revision: 9,
+        fieldMask: ['title', 'body'],
+        payload: { title: 'from-bootstrap', body: 'boot-body' },
+    });
+    assert.equal(notes.get('n1').title, 'local-edit');
+    assert.equal(notes.get('n1').body, 'boot-body');
+});
+
+test('ResourceService create/update/delete fire onOwnedMutation', () => {
+    const { ResourceService } = require('../resource-service.js');
+    const { CAP, HttpError } = require('../authz.js');
+    const events = [];
+    const connections = [];
+    const storage = {
+        rawDb: () => ({ prepare() { return { all: () => [], get: () => null, run: () => {} }; } }),
+        getConnectionById: (id) => connections.find((row) => row.id === id) || null,
+        insertConnection: (row) => {
+            const saved = { ...row, revision: 1 };
+            connections.push(saved);
+            return saved;
+        },
+        updateConnectionRow: (row) => {
+            const idx = connections.findIndex((item) => item.id === row.id);
+            connections[idx] = row;
+            return row;
+        },
+        deleteConnectionRow: (id) => {
+            const idx = connections.findIndex((item) => item.id === id);
+            if (idx >= 0) connections.splice(idx, 1);
+        },
+        getProxyRaw: () => null,
+        getSshKeyRaw: () => null,
+        listJumpHosts: () => [],
+    };
+    const authz = {
+        can() { return true; },
+        assertCan(user, capability, resourceType, resourceId, resource, { resourceExists = true } = {}) {
+            if (!resourceExists) throw new HttpError(404, 'denied', 'denied', false);
+            void capability;
+            void CAP;
+        },
+        audit() {},
+        revokeAllForResource() {},
+        effectiveCapabilities() { return new Set(['view', 'edit', 'delete', 'use', 'revealSecret']); },
+    };
+    const service = new ResourceService(storage, authz, {
+        mobileChangeBridge: false,
+        onOwnedMutation: (event) => events.push(event),
+    });
+    const user = { userId: 'u1', role: 'user', status: 'active' };
+    service.createConnection(user, { id: 'c1', name: 'box', host: 'h', port: 22, protocol: 'SSH' });
+    service.updateConnection(user, 'c1', (row) => ({ ...row, name: 'box-2' }));
+    service.deleteConnection(user, 'c1');
+    assert.equal(events.length, 3);
+    assert.deepEqual(events.map((event) => event.action), ['upsert', 'upsert', 'delete']);
+    assert.equal(events.every((event) => event.entityType === 'connection' && event.entityId === 'c1'), true);
+    assert.equal(events[0].user.userId, 'u1');
+});
+
+test('NotesService create/update/delete fire onOwnedMutation', () => {
+    const { NotesService } = require('../notes-service.js');
+    const events = [];
+    const rows = new Map();
+    const db = {
+        prepare(sql) {
+            const text = String(sql);
+            if (text.startsWith('INSERT INTO notes')) {
+                return {
+                    run(params) {
+                        rows.set(params.noteId, {
+                            note_id: params.noteId,
+                            owner_user_id: params.ownerUserId,
+                            title: params.title,
+                            content: params.content,
+                            group_path: params.groupPath,
+                            tags_json: params.tagsJson,
+                            linked_connection_ids_json: params.linkedJson,
+                            sort_order: params.sortOrder,
+                            revision: 1,
+                            created_at: params.createdAt,
+                            updated_at: params.updatedAt,
+                            deleted_at: null,
+                            visibility: params.visibility,
+                            share_with_users: params.shareWithUsers,
+                            share_with_admins: params.shareWithAdmins,
+                            allow_ai: params.allowAi,
+                            allow_ai_read: params.allowAiRead,
+                            allow_ai_write: params.allowAiWrite,
+                        });
+                    },
+                };
+            }
+            if (text.startsWith('SELECT * FROM notes WHERE note_id')) {
+                return { get: (id) => rows.get(String(id)) || null };
+            }
+            if (text.startsWith('UPDATE notes SET title=')) {
+                return {
+                    run(params) {
+                        const row = rows.get(params.noteId);
+                        if (!row || row.deleted_at || row.revision !== params.expectedRevision) {
+                            return { changes: 0 };
+                        }
+                        Object.assign(row, {
+                            title: params.title,
+                            content: params.content,
+                            group_path: params.groupPath,
+                            tags_json: params.tagsJson,
+                            linked_connection_ids_json: params.linkedJson,
+                            sort_order: params.sortOrder,
+                            revision: params.revision,
+                            updated_at: params.updatedAt,
+                            visibility: params.visibility,
+                            share_with_users: params.shareWithUsers,
+                            share_with_admins: params.shareWithAdmins,
+                            allow_ai: params.allowAi,
+                            allow_ai_read: params.allowAiRead,
+                            allow_ai_write: params.allowAiWrite,
+                        });
+                        return { changes: 1 };
+                    },
+                };
+            }
+            if (text.startsWith('UPDATE notes SET deleted_at')) {
+                return {
+                    run(deletedAt, updatedAt, noteId) {
+                        const row = rows.get(String(noteId));
+                        if (!row || row.deleted_at) return { changes: 0 };
+                        row.deleted_at = deletedAt;
+                        row.updated_at = updatedAt;
+                        row.revision = Number(row.revision) + 1;
+                        return { changes: 1 };
+                    },
+                };
+            }
+            return { run() { return { changes: 0 }; }, get() { return null; }, all() { return []; } };
+        },
+        transaction(fn) { return (...args) => fn(...args); },
+    };
+    const notes = new NotesService(db, {
+        can() { return false; },
+        audit() {},
+        getUserById: (id) => ({ userId: id, status: 'active' }),
+    }, () => 1_700_000_000_000, {
+        mobileChangeBridge: false,
+        onOwnedMutation: (event) => events.push(event),
+    });
+    const user = { userId: 'u1', role: 'user', status: 'active' };
+    const created = notes.create(user, { title: 'Alpha', content: 'body' });
+    notes.update(user, created.noteId, { title: 'Beta', expectedRevision: created.revision });
+    notes.delete(user, created.noteId);
+    assert.equal(events.length, 3);
+    assert.deepEqual(events.map((event) => event.action), ['upsert', 'upsert', 'delete']);
+    assert.equal(events.every((event) => event.entityType === 'note' && event.entityId === created.noteId), true);
+});

@@ -1,6 +1,6 @@
 module github.com/Lanlan13-14/zephyr-ssh/zephyr-link
 
-go 1.24
+go 1.26.10
 
 require (
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect

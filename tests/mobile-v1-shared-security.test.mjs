@@ -288,6 +288,73 @@ test('device, token, ACL and account mutations immediately drop live relay sessi
   }
 });
 
+test('refreshSession output is scanned by serializeShared and refuses injected forbidden keys', () => {
+  const h = makeHarness();
+  const opened = h.open();
+  const original = h.api.serializeShared.bind(h.api);
+  let scanned = false;
+  h.api.serializeShared = (payload) => {
+    scanned = true;
+    payload.clientToken = 'must-not-leave';
+    payload.password = 'owner-plaintext-secret';
+    payload.privateKey = '-----BEGIN PRIVATE KEY-----';
+    return original(payload);
+  };
+  assert.throws(
+    () => h.api.refreshSession(
+      h.borrower,
+      h.device,
+      opened.sessionId,
+      'fresh-nonce-long-enough-for-refresh',
+    ),
+    (err) => err.code === 'shared_content_export_forbidden',
+    'refresh must not bypass the unified forbidden-key export gate',
+  );
+  assert.equal(scanned, true, 'refreshSession must call serializeShared');
+});
+
+test('serializeShared walks arrays, nested objects and fails closed past depth 6', () => {
+  const h = makeHarness();
+  assert.throws(
+    () => h.api.serializeShared([{ nested: { clientToken: 'x' } }]),
+    (err) => err.code === 'shared_content_export_forbidden' && err.details.field === 'clientToken',
+  );
+  assert.throws(
+    () => h.api.serializeShared({ outer: { password: 'p' } }),
+    (err) => err.code === 'shared_content_export_forbidden' && err.details.field === 'password',
+  );
+  let deep = { leaf: true };
+  for (let i = 0; i < 40; i += 1) deep = { child: deep };
+  assert.throws(
+    () => h.api.serializeShared(deep),
+    (err) => err.code === 'shared_content_export_forbidden',
+  );
+  const clean = h.api.serializeShared({ items: [{ displayName: 'ok' }], nextPageToken: null });
+  assert.equal(clean.items[0].displayName, 'ok');
+});
+
+test('shared HTTP refresh still sets no-store and public methods return through serializeShared', () => {
+  const { noStore } = require('../mobile-v1-shared.js');
+  const headers = new Map();
+  const res = {
+    set(name, value) { headers.set(String(name).toLowerCase(), String(value)); return this; },
+  };
+  noStore(res);
+  assert.match(headers.get('cache-control'), /no-store/);
+  assert.match(headers.get('cache-control'), /private/);
+  assert.equal(headers.get('pragma'), 'no-cache');
+
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { fileURLToPath } = require('node:url');
+  const routes = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'mobile-v1-routes.js'), 'utf8');
+  assert.match(
+    routes,
+    /shared\/sessions\/:sessionId\/refresh[\s\S]{0,500}noStore\(res\)/,
+    'refresh HTTP handler must keep Cache-Control no-store',
+  );
+});
+
 test('watchdog validation rechecks generation, backing token and ACL without a hook', () => {
   const generation = makeHarness();
   const generationSession = generation.open();

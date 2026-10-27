@@ -35,10 +35,36 @@ class ResourceService {
         this.mobileChangeBridge = options.mobileChangeBridge === false
             ? null
             : (options.mobileChangeBridge || getMobileV1ChangeBridge(storage.rawDb()));
+        this.onOwnedMutation = typeof options.onOwnedMutation === 'function'
+            ? options.onOwnedMutation
+            : null;
     }
 
     _runMobileMutation(meta, write) {
-        return this.mobileChangeBridge ? this.mobileChangeBridge.runMutation(meta, write) : write();
+        const result = this.mobileChangeBridge ? this.mobileChangeBridge.runMutation(meta, write) : write();
+        this._emitOwnedMutation(meta, result);
+        return result;
+    }
+
+    _emitOwnedMutation(meta, result) {
+        if (typeof this.onOwnedMutation !== 'function' || !meta) return;
+        if (meta.entityType === 'connection' && (meta.before?.ephemeral || result?.ephemeral)) return;
+        const entityId = String(meta.entityId || result?.id || '');
+        if (!entityId) return;
+        try {
+            this.onOwnedMutation({
+                entityType: meta.entityType,
+                entityId,
+                action: meta.action,
+                user: meta.user,
+                actorDeviceId: meta.actorDeviceId || null,
+                fieldMask: Array.isArray(meta.fieldMask) ? meta.fieldMask : undefined,
+                remoteMerge: meta.remoteMerge === true,
+                baseRevision: meta.baseRevision,
+            });
+        } catch {
+            /* Hook must not roll back a committed canonical write. */
+        }
     }
 
     /* ── raw lookups (server-internal only) ─────────────────────── */
@@ -137,6 +163,8 @@ class ResourceService {
             mutationReceipt: mutationContext.mutationReceipt,
             forceChange: mutationContext.forceMobileChange === true,
             changedSecretFields: mutationContext.changedSecretFields,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._createConnection(user, data));
     }
 
@@ -184,6 +212,8 @@ class ResourceService {
             mutationReceipt: mutationContext.mutationReceipt,
             forceChange: mutationContext.forceMobileChange === true,
             changedSecretFields: mutationContext.changedSecretFields,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._updateConnection(user, id, mutate));
     }
 
@@ -213,6 +243,8 @@ class ResourceService {
             entityType: 'connection', entityId: id, action: 'delete', user, before,
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._deleteConnection(user, id));
     }
 
@@ -683,6 +715,8 @@ class ResourceService {
             mutationReceipt: mutationContext.mutationReceipt,
             forceChange: mutationContext.forceMobileChange === true,
             changedSecretFields: mutationContext.changedSecretFields,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._createOwned(user, resourceType, data));
     }
 
@@ -710,6 +744,8 @@ class ResourceService {
             mutationReceipt: mutationContext.mutationReceipt,
             forceChange: mutationContext.forceMobileChange === true,
             changedSecretFields: mutationContext.changedSecretFields,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._updateOwned(user, resourceType, id, data));
     }
 
@@ -740,6 +776,8 @@ class ResourceService {
             entityType: resourceType, entityId: id, action: 'delete', user, before,
             actorDeviceId: mutationContext.actorDeviceId,
             mutationReceipt: mutationContext.mutationReceipt,
+            fieldMask: mutationContext.fieldMask,
+            remoteMerge: mutationContext.remoteMerge === true,
         }, () => this._deleteOwned(user, resourceType, id));
     }
 
