@@ -176,7 +176,7 @@ Shared 数据不得进入 SQLite/Room、SecretStore、FTS、最近记录、草�
 
 1. v1→v2 适配发生在**进入新业务 dispatcher 前**，不把原 mobile v1 body 复制进 v2 `body` 后再重复携带一份冲突的外层参数字段。转换后 `body` 是业务请求对象，不是整个旧请求 envelope。
 2. `requestId` 新生成 UUID；`idempotencyKey` 在 v1 push 中使用 `push:<deviceId>:<batchId>`，并保留 operation 内既有 `opId` 作为操作幂等依据，不能用新 requestId 代替。**bootstrap/changes/status 是普通只读操作，不引入新的副作用幂等语义，按各自调用时点重新读取；ack 沿用原 `cursor/appliedOpIds` 的单调确认语义，不把多个不同 ack 错合并成一个。** v1 没有原始 requestId 可供关联结果查询时，不得伪造跨请求的查询历史。
-3. `deviceId` 取 v1 body 的 `deviceId` 或 ZSL session 已认证设备；`bindingGeneration` 取绑定记录，不接受客户端任意声明。若二者不一致返回 `device_proof_invalid`。
+3. `deviceId` 取 v1 body 的 `deviceId` 或 ZSL session 已认证设备；`bindingGeneration` 取绑定记录，不接受客户端任意声明。若二者不一致返回 `device_proof_invalid`。v1 body 的 `registryHash` 仅表示客户端已见版本，主端当前 `serverRegistryHash` 必须来自 capabilities/绑定会话；`currentRevision` 只能来自 canonical store，禁止从请求 body 的伪“server”字段读取。
 4. `capability` 固定映射为 `sync.bootstrap/sync.changes/sync.push/sync.ack/sync.status`。`schemaVersion=1`、`sessionId/sessionEpoch=null`；普通同步不使用会话 epoch。
 5. `deadlineAt` 由接收方按当前限流策略生成，v1 无该字段，不得把不可信旧客户端时间戳当截止时间。
 6. **响应沿用原业务 schema，不套用 v2 request envelope**：`sync.bootstrap` 返回 BootstrapPage、`sync.changes` 返回 ChangePage、`sync.push` 返回 PushResponse、`sync.ack` 返回 `{ok:true}`、`sync.status` 返回 SyncStatus。错误按既有嵌套 error schema 返回，并附 `requestId`。不要求旧客户端凭空补齐新响应字段。

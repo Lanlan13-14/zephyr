@@ -22,12 +22,10 @@ const workflow = fs.readFileSync(path.join(repo, '.github/workflows/zephyr-link.
 for (const branch of ['zephyr-newui', 'zephyr-link-foundation-v1']) assert.ok(workflow.includes(branch), `CI must cover actual branch ${branch}`);
 for (const command of Object.values(manifest.commands)) assert.ok(workflow.includes(command), `CI must execute ${command}`);
 assert.ok(productionContract.includes('调用栈进入生产业务路径'), 'production adapter contract must require real production call chain review');
-const expectedTotal = manifest.minimumVectorIds.syncEnvelope + manifest.minimumVectorIds.agentPolicy + manifest.minimumVectorIds.webdavWriters;
-for (const docPath of ['../README.md', '../TESTING-AND-RELEASE-GATES.md']) {
-  const doc = fs.readFileSync(path.join(here, docPath), 'utf8');
-  assert.ok(doc.includes(`${expectedTotal} 个规范向量`) || doc.includes(`**${expectedTotal}**`), `${docPath}: stale vector total ${expectedTotal}`);
-  assert.ok(!doc.includes('221 个规范向量'), `${docPath}: stale vector total from previous baseline`);
+for (const phrase of ['total > 0', 'executed === total && passed === executed', 'required case ID', '参考执行与生产执行是两个不可抵扣的全量集合']) {
+  assert.ok(productionContract.includes(phrase), `production adapter contract missing anti-empty evidence rule: ${phrase}`);
 }
+const expectedTotal = manifest.minimumVectorIds.syncEnvelope + manifest.minimumVectorIds.agentPolicy + manifest.minimumVectorIds.webdavWriters;
 for (const [name, file] of [['syncEnvelope', 'sync-envelope-v1.json'], ['agentPolicy', 'agent-policy-v1.json'], ['webdavWriters', 'webdav-writers-v1.json']]) {
   cases[name] = JSON.parse(fs.readFileSync(path.join(here, 'cases', file), 'utf8'));
 }
@@ -57,6 +55,8 @@ const commands = [
     assert.equal(report.productEvidence, false);
     assert.equal(report.failures.length, 0);
     assert.equal(report.totalVectors, Object.values(cases).flat().length);
+    assert.equal(report.referenceValidated + report.productionRequiredCount, report.totalVectors, 'every vector must be either reference-executed or explicitly production-pending');
+    assert.equal(report.referenceValidated <= report.totalVectors, true, 'reference execution must not exceed actual vector count');
     assert.equal(report.productionRequiredCount > 0, true, 'production obligations must not be silently counted as reference passes');
     assert.equal(report.antiBypassGuardsPassed >= 11, true);
   }],
@@ -76,14 +76,20 @@ for (const [name, script, verify] of commands) {
   verify(report);
   reports[name] = report;
 }
+for (const docPath of ['../README.md', '../TESTING-AND-RELEASE-GATES.md']) {
+  const doc = fs.readFileSync(path.join(here, docPath), 'utf8');
+  assert.ok(doc.includes(`${expectedTotal} 个规范向量`) || doc.includes(`**${expectedTotal}**`), `${docPath}: stale vector total ${expectedTotal}`);
+  assert.ok(doc.includes(`${reports['reference'].referenceValidated}`), `${docPath}: stale reference validated count`);
+  assert.ok(!doc.includes('221 个规范向量'), `${docPath}: stale vector total from previous baseline`);
+}
 console.log(JSON.stringify({
   ok: true,
   evidenceType: 'documentation-conformance',
   vectorCounts: Object.fromEntries(Object.entries(cases).map(([name, entries]) => [name, entries.length])),
   totalVectors: Object.values(cases).flat().length,
-  referenceValidated: reports.reference.referenceValidated,
-  productionRequired: reports.reference.productionRequiredCount,
-  antiBypassGuardsPassed: reports.reference.antiBypassGuardsPassed,
+  referenceValidated: reports['reference'].referenceValidated,
+  productionRequired: reports['reference'].productionRequiredCount,
+  antiBypassGuardsPassed: reports['reference'].antiBypassGuardsPassed,
   mutationsKilled: reports.sourceMutations.killed,
   productEvidence: false,
 }, null, 2));

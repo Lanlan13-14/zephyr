@@ -27,7 +27,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-001:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-002",
@@ -59,7 +86,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-002:list:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-003",
@@ -91,7 +145,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-003:stat:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-004",
@@ -124,7 +205,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-004:write:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-005",
@@ -154,7 +262,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-005:mkdir:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-006",
@@ -184,7 +319,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-006:rename:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-007",
@@ -214,7 +376,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-007:truncate:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-008",
@@ -245,7 +434,45 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
   },
   {
     "id": "AP-VALID-009",
@@ -276,7 +503,34 @@
     ],
     "localChannels": [
       "agent-tunnel"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [],
+    "systemShares": [],
+    "primaryNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "systemNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "agent-tunnel"
+    ],
+    "systemChannels": [
+      "agent-tunnel"
+    ],
+    "requestHash": "requestHash:AP-VALID-009:tunnel.local:agent-tunnel::db.corp:5432:127.0.0.1:5"
   },
   {
     "id": "AP-VALID-010",
@@ -307,7 +561,34 @@
     ],
     "localChannels": [
       "agent-tunnel"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [],
+    "systemShares": [],
+    "primaryNetworkTargets": [
+      "127.0.0.1:3000"
+    ],
+    "systemNetworkTargets": [
+      "127.0.0.1:3000"
+    ],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "agent-tunnel"
+    ],
+    "systemChannels": [
+      "agent-tunnel"
+    ],
+    "requestHash": "requestHash:AP-VALID-010:tunnel.remote:agent-tunnel::127.0.0.1:3000:127.0.0.1:5"
   },
   {
     "id": "AP-VALID-011",
@@ -338,7 +619,34 @@
     ],
     "localChannels": [
       "agent-tunnel"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "::1"
+    ],
+    "primaryListenHosts": [
+      "::1"
+    ],
+    "systemListenHosts": [
+      "::1"
+    ],
+    "primaryShares": [],
+    "systemShares": [],
+    "primaryNetworkTargets": [
+      "intranet:443"
+    ],
+    "systemNetworkTargets": [
+      "intranet:443"
+    ],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "agent-tunnel"
+    ],
+    "systemChannels": [
+      "agent-tunnel"
+    ],
+    "requestHash": "requestHash:AP-VALID-011:tunnel.dynamic:agent-tunnel::intranet:443:::1:5"
   },
   {
     "id": "AP-VALID-012",
@@ -370,7 +678,45 @@
     ],
     "localChannels": [
       "agent-tunnel"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "0.0.0.0"
+    ],
+    "primaryListenHosts": [
+      "0.0.0.0"
+    ],
+    "systemListenHosts": [
+      "0.0.0.0"
+    ],
+    "primaryShares": [],
+    "systemShares": [],
+    "primaryNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "systemNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "agent-tunnel"
+    ],
+    "systemChannels": [
+      "agent-tunnel"
+    ],
+    "requestHash": "requestHash:AP-VALID-012:tunnel.local:agent-tunnel::db.corp:5432:0.0.0.0:5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-012",
+      "requestHash": "requestHash:AP-VALID-012:tunnel.local:agent-tunnel::db.corp:5432:0.0.0.0:5",
+      "policyGeneration": 5,
+      "channel": "agent-tunnel",
+      "operation": "tunnel.local",
+      "share": null,
+      "networkTarget": "db.corp:5432",
+      "listenHost": "0.0.0.0",
+      "expiresAt": 1000
+    }
   },
   {
     "id": "AP-VALID-013",
@@ -400,7 +746,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-013:clipboard.read:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-014",
@@ -430,7 +803,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-014:clipboard.write:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-015",
@@ -460,7 +860,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-015:clipboard.fileManifest:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-016",
@@ -490,7 +917,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-016:clipboard.fileRead:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-017",
@@ -520,7 +974,34 @@
     ],
     "localChannels": [
       "shared-remote"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "shared-remote"
+    ],
+    "systemChannels": [
+      "shared-remote"
+    ],
+    "requestHash": "requestHash:AP-VALID-017:drive.map:shared-remote:projects:::5"
   },
   {
     "id": "AP-VALID-018",
@@ -550,7 +1031,34 @@
     ],
     "localChannels": [
       "shared-remote"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "shared-remote"
+    ],
+    "systemChannels": [
+      "shared-remote"
+    ],
+    "requestHash": "requestHash:AP-VALID-018:desktop.control:shared-remote:projects:::5"
   },
   {
     "id": "AP-VALID-019",
@@ -580,7 +1088,34 @@
     ],
     "localChannels": [
       "ai"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "ai"
+    ],
+    "systemChannels": [
+      "ai"
+    ],
+    "requestHash": "requestHash:AP-VALID-019:ai.read:ai:projects:::5"
   },
   {
     "id": "AP-VALID-020",
@@ -610,7 +1145,34 @@
     ],
     "localChannels": [
       "ai"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "ai"
+    ],
+    "systemChannels": [
+      "ai"
+    ],
+    "requestHash": "requestHash:AP-VALID-020:ai.write:ai:projects:::5"
   },
   {
     "id": "AP-VALID-021",
@@ -640,7 +1202,46 @@
     ],
     "localChannels": [
       "ai"
-    ]
+    ],
+    "riskLevel": "high",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "ai"
+    ],
+    "systemChannels": [
+      "ai"
+    ],
+    "requestHash": "requestHash:AP-VALID-021:ai.execute:ai:projects:::5",
+    "confirmed": true,
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-021",
+      "requestHash": "requestHash:AP-VALID-021:ai.execute:ai:projects:::5",
+      "policyGeneration": 5,
+      "channel": "ai",
+      "operation": "ai.execute",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
   },
   {
     "id": "AP-VALID-022",
@@ -671,7 +1272,34 @@
     ],
     "localChannels": [
       "ai"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [],
+    "systemShares": [],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [
+      "media.transcode"
+    ],
+    "systemOffloadCapabilities": [
+      "media.transcode"
+    ],
+    "primaryChannels": [
+      "ai"
+    ],
+    "systemChannels": [
+      "ai"
+    ],
+    "requestHash": "requestHash:AP-VALID-022:offload.invoke:ai::::5"
   },
   {
     "id": "AP-VALID-023",
@@ -704,7 +1332,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-023:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-VALID-024",
@@ -735,7 +1390,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-024:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-001",
@@ -767,7 +1449,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-001:write:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-002",
@@ -795,7 +1504,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-002:write:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-003",
@@ -823,7 +1559,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-003:write:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-004",
@@ -853,7 +1616,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-004:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-005",
@@ -883,7 +1673,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-005:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-006",
@@ -911,7 +1728,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-006:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-007",
@@ -939,7 +1783,34 @@
     ],
     "localChannels": [
       "agent-tunnel"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [],
+    "systemShares": [],
+    "primaryNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "systemNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "agent-tunnel"
+    ],
+    "systemChannels": [
+      "agent-tunnel"
+    ],
+    "requestHash": "requestHash:AP-DENY-007:tunnel.local:agent-tunnel::db.corp:5432::5"
   },
   {
     "id": "AP-DENY-008",
@@ -967,7 +1838,34 @@
     ],
     "localChannels": [
       "ai"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [],
+    "systemShares": [],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [
+      "media.transcode"
+    ],
+    "systemOffloadCapabilities": [
+      "media.transcode"
+    ],
+    "primaryChannels": [
+      "ai"
+    ],
+    "systemChannels": [
+      "ai"
+    ],
+    "requestHash": "requestHash:AP-DENY-008:offload.invoke:ai::::5"
   },
   {
     "id": "AP-DENY-009",
@@ -998,7 +1896,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-009:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-010",
@@ -1029,7 +1954,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-010:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-011",
@@ -1059,7 +2011,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-011:delete:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-012",
@@ -1090,7 +2069,34 @@
     ],
     "localChannels": [
       "agent-tunnel"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "0.0.0.0"
+    ],
+    "primaryListenHosts": [
+      "0.0.0.0"
+    ],
+    "systemListenHosts": [
+      "0.0.0.0"
+    ],
+    "primaryShares": [],
+    "systemShares": [],
+    "primaryNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "systemNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "agent-tunnel"
+    ],
+    "systemChannels": [
+      "agent-tunnel"
+    ],
+    "requestHash": "requestHash:AP-DENY-012:tunnel.local:agent-tunnel::db.corp:5432:0.0.0.0:5"
   },
   {
     "id": "AP-DENY-013",
@@ -1122,7 +2128,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-013:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-014",
@@ -1152,7 +2185,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-014:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-015",
@@ -1182,7 +2242,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "ai"
+    ],
+    "systemChannels": [
+      "ai"
+    ],
+    "requestHash": "requestHash:AP-DENY-015:read:ai:projects:::5"
   },
   {
     "id": "AP-DENY-016",
@@ -1214,7 +2301,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-016:delete:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-017",
@@ -1250,7 +2364,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-017:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-018",
@@ -1286,7 +2427,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-018:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-019",
@@ -1322,7 +2490,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-019:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-020",
@@ -1358,7 +2553,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-020:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-021",
@@ -1394,7 +2616,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-021:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-022",
@@ -1430,7 +2679,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-022:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-023",
@@ -1466,7 +2742,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-023:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-DENY-024",
@@ -1497,7 +2800,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-024:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-RULE-001",
@@ -1559,7 +2889,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-RULE-001:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-RULE-002",
@@ -1620,7 +2977,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-RULE-002:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-RULE-003",
@@ -1667,7 +3051,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-RULE-003:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-RULE-004",
@@ -1737,7 +3148,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-RULE-004:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-RULE-005",
@@ -1807,7 +3245,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-RULE-005:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-RULE-006",
@@ -1874,7 +3339,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-RULE-006:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-RULE-007",
@@ -1937,7 +3429,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-RULE-007:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-RULE-008",
@@ -1983,7 +3502,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-RULE-008:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-SCHEMA-001",
@@ -2526,7 +4072,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-EXEC-001:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-EXEC-002",
@@ -2558,7 +4131,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-EXEC-002:write:file-bridge:projects:::5"
   },
   {
     "id": "AP-EXEC-003",
@@ -2591,7 +4191,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-EXEC-003:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-EXEC-004",
@@ -2623,7 +4250,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-EXEC-004:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-EXEC-005",
@@ -2654,7 +4308,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-EXEC-005:write:file-bridge:projects:::5"
   },
   {
     "id": "AP-EXEC-006",
@@ -2685,7 +4366,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-EXEC-006:write:file-bridge:projects:::5"
   },
   {
     "id": "AP-EXEC-007",
@@ -2717,7 +4425,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-EXEC-007:delete:file-bridge:projects:::5"
   },
   {
     "id": "AP-EXEC-008",
@@ -2753,7 +4488,34 @@
     ],
     "localChannels": [
       "file-bridge"
-    ]
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-EXEC-008:read:file-bridge:projects:::5"
   },
   {
     "id": "AP-EXEC-009",
@@ -2785,7 +4547,34 @@
     "sessionGeneration": 5,
     "retrySameRequest": true,
     "expected": "system_grant_denied",
-    "note": "An old success receipt must not bypass a later system permission revocation."
+    "note": "An old success receipt must not bypass a later system permission revocation.",
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-EXEC-009:write:file-bridge:projects:::5"
   },
   {
     "family": "authority",
@@ -2817,7 +4606,34 @@
     "localOperations": [
       "revealSecret"
     ],
-    "expected": "approval_required"
+    "expected": "approval_required",
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-025:revealSecret:file-bridge:projects:::5"
   },
   {
     "family": "authority",
@@ -2849,7 +4665,34 @@
     "localOperations": [
       "remoteWipe"
     ],
-    "expected": "approval_required"
+    "expected": "approval_required",
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-026:remoteWipe:file-bridge:projects:::5"
   },
   {
     "family": "authority",
@@ -2878,6 +4721,1453 @@
     "expected": "agent_local_policy_denied",
     "localOperations": [
       "read"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-DENY-027:read:file-bridge:projects:::5"
+  },
+  {
+    "id": "AP-DENY-028",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    },
+    "listenHost": "0.0.0.0"
+  },
+  {
+    "id": "AP-DENY-029",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "primary_acl_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "another-share"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
+  },
+  {
+    "id": "AP-DENY-030",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "primary_acl_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "ai"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
+  },
+  {
+    "id": "AP-DENY-031",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "agent-tunnel",
+    "operation": "tunnel.local",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "tunnel.local"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "tunnel.local"
+    ],
+    "systemOperations": [
+      "tunnel.local"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "primary_acl_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "agent-tunnel"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [
+      "another-host:443"
+    ],
+    "systemNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "agent-tunnel"
+    ],
+    "systemChannels": [
+      "agent-tunnel"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    },
+    "localNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "networkTarget": "db.corp:5432"
+  },
+  {
+    "id": "AP-DENY-032",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1
+    },
+    "now": 2
+  },
+  {
+    "id": "AP-DENY-033",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 4,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
+  },
+  {
+    "id": "AP-DENY-034",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "another-share",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
+  },
+  {
+    "id": "AP-DENY-035",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "read",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
+  },
+  {
+    "id": "AP-DENY-036",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "wrong-hash",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
+  },
+  {
+    "id": "AP-DENY-037",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
+  },
+  {
+    "id": "AP-DENY-038",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "sharedWrite": true
+  },
+  {
+    "id": "AP-DENY-039",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "high",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5"
+  },
+  {
+    "id": "AP-DENY-040",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    },
+    "offloadCapability": "shell.exec",
+    "localOffloadCapabilities": [
+      "media.transcode"
     ]
+  },
+  {
+    "id": "AP-DENY-041",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "primary_acl_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "0.0.0.0"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": "0.0.0.0",
+      "expiresAt": 1000
+    },
+    "listenHost": "0.0.0.0"
+  },
+  {
+    "id": "AP-DENY-042",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "system_grant_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "0.0.0.0"
+    ],
+    "primaryListenHosts": [
+      "0.0.0.0"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": "0.0.0.0",
+      "expiresAt": 1000
+    },
+    "listenHost": "0.0.0.0"
+  },
+  {
+    "id": "AP-DENY-043",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    },
+    "usage": {
+      "maxChunkBytes": 1
+    },
+    "limits": {
+      "maxChunkBytes": 0
+    }
+  },
+  {
+    "id": "AP-DENY-044",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "primary_acl_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
+  },
+  {
+    "id": "AP-DENY-045",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "system_grant_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    }
+  },
+  {
+    "id": "AP-DENY-046",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "offload.invoke",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "offload.invoke"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "offload.invoke"
+    ],
+    "systemOperations": [
+      "offload.invoke"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "primary_acl_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [
+      "other.tool"
+    ],
+    "systemOffloadCapabilities": [],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    },
+    "offloadCapability": "media.transcode",
+    "localOffloadCapabilities": [
+      "media.transcode"
+    ]
+  },
+  {
+    "id": "AP-DENY-047",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "offload.invoke",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "offload.invoke"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "offload.invoke"
+    ],
+    "systemOperations": [
+      "offload.invoke"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "system_grant_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "riskLevel": "low",
+    "localListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryListenHosts": [
+      "127.0.0.1"
+    ],
+    "systemListenHosts": [
+      "127.0.0.1"
+    ],
+    "primaryShares": [
+      "projects"
+    ],
+    "systemShares": [
+      "projects"
+    ],
+    "primaryNetworkTargets": [],
+    "systemNetworkTargets": [],
+    "primaryOffloadCapabilities": [
+      "media.transcode"
+    ],
+    "systemOffloadCapabilities": [
+      "other.tool"
+    ],
+    "primaryChannels": [
+      "file-bridge"
+    ],
+    "systemChannels": [
+      "file-bridge"
+    ],
+    "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+    "approval": {
+      "confirmationId": "confirm_AP-VALID-008",
+      "requestHash": "requestHash:AP-VALID-008:delete:file-bridge:projects:::5",
+      "policyGeneration": 5,
+      "channel": "file-bridge",
+      "operation": "delete",
+      "share": "projects",
+      "networkTarget": null,
+      "listenHost": null,
+      "expiresAt": 1000
+    },
+    "offloadCapability": "media.transcode",
+    "localOffloadCapabilities": [
+      "media.transcode"
+    ]
+  },
+  {
+    "id": "AP-SCHEMA-021",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {
+            "maxChunkBytes": 0
+          }
+        }
+      ]
+    },
+    "expected": "valid",
+    "note": "zero is a valid explicit deny, not an unlimited quota"
   }
 ]

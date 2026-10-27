@@ -94,13 +94,24 @@ executeProductionCase(case, fixtures)
   "evidenceType": "production-conformance | documentation-reference | production-e2e",
   "commit": "full SHA",
   "adapter": "path/to/production/adapter",
-  "vectors": { "total": 0, "executed": 0, "passed": 0, "failed": 0, "unsupported": 0 },
+  "vectors": { "total": 0, "executed": 0, "passed": 0, "failed": 0, "unsupported": 0, "requiredCaseIds": [], "executedCaseIds": [] },
   "mutations": { "total": 0, "killed": 0, "survived": 0 },
   "artifacts": ["raw-log", "db-diff", "network-trace", "binary-report"],
   "coverageGaps": ["honest missing platform/provider/case"]
 }
 ```
 
-`ok` 必须由 `failed === 0 && unsupported === 0 && mutations.survived === 0` 及所需覆盖范围计算。若只跑了参考实现，`evidenceType` 必须保持 `documentation-reference`，即使所有参考样例通过。
+`ok` 必须同时满足以下全部条件，**空报告、部分报告、只跑参考实现都不是通过**：
+
+- `total > 0` 且 required case ID 集合与 manifest 声明的目标范围完全一致；
+- `executed === total && passed === executed`；
+- `failed === 0 && unsupported === 0 && skipped/todo/not_run === 0`；
+- 所需真实源码/生产 mutation 全部 killed，`survived === 0`；
+- 每个声明的平台均有真实生产调用链、构建入口与副作用断言；
+- `evidenceType` 与证据层级相符，且附原始日志、环境、commit、产物与未覆盖项。
+
+**参考执行与生产执行是两个不可抵扣的全量集合**：即使 Agent 的 88 个参考向量已验证，生产 Agent/系统权限仍必须执行对应向量，不能因为没有 `productionRequired` 数组就免除。参考 runner 的 productionRequired 仅表示其无法验证的部分，不是生产范围定义；生产适配器必须从 manifest/目标范围独立计算 required case 集。
+
+若只跑了参考实现，`evidenceType` 必须保持 `documentation-reference`，即使所有参考样例通过。
 
 [RULES I BROKE]：无。

@@ -346,7 +346,10 @@
     "input": {
       "op": "push",
       "deviceId": "dev-1",
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "authenticatedDeviceId": "dev-2",
     "expectedError": "device_proof_invalid"
@@ -359,10 +362,16 @@
       "protocolVersion": 1,
       "body": {
         "operations": []
-      }
+      },
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash",
+      "operations": []
     },
     "expectedError": "invalid_request",
-    "reason": "v1 top-level fields mixed with v2 body"
+    "reason": "v1 top-level fields mixed with v2 body",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-004",
@@ -378,18 +387,25 @@
     "input": {
       "op": "ack",
       "operation": "sync.ack",
-      "kind": 15
+      "kind": 15,
+      "deviceId": "dev-1"
     },
-    "expectedError": "unsupported_kind"
+    "expectedError": "unsupported_kind",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-006",
     "family": "malformed",
     "input": {
       "op": "push",
-      "protocolVersion": 2
+      "protocolVersion": 2,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "unsupported_protocol_version"
+    "expectedError": "unsupported_protocol_version",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-007",
@@ -397,9 +413,14 @@
     "input": {
       "op": "push",
       "operations": "not-an-array",
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-008",
@@ -407,11 +428,16 @@
     "input": {
       "op": "push",
       "operations": [],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "maxOperations": 0,
     "expectedError": "invalid_request",
-    "reason": "over declared batch limit"
+    "reason": "over declared batch limit",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-009",
@@ -431,9 +457,14 @@
           "payload": {}
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-010",
@@ -451,19 +482,26 @@
           "payload": {}
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "expectedError": "invalid_request",
-    "reason": "empty entityId must be rejected"
+    "reason": "empty entityId must be rejected",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-011",
     "family": "malformed",
     "input": {
       "op": "ack",
-      "cursor": -1
+      "cursor": -1,
+      "deviceId": "dev-1"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-012",
@@ -499,8 +537,8 @@
       "op": "bootstrap",
       "pageToken": null
     },
-    "expectedError": "bootstrap_expired",
-    "reason": "null is not a valid continuation token"
+    "expectedError": "invalid_request",
+    "reason": "A null continuation token is malformed, not an expired token."
   },
   {
     "id": "SE-REJECT-016",
@@ -508,10 +546,15 @@
     "input": {
       "op": "push",
       "registryHash": "old",
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "operations": []
     },
     "serverRegistryHash": "new",
-    "expectedError": "registry_mismatch"
+    "expectedError": "registry_mismatch",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-017",
@@ -529,9 +572,14 @@
           "payload": {}
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-018",
@@ -553,9 +601,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-019",
@@ -583,9 +636,14 @@
           ]
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-020",
@@ -608,9 +666,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-021",
@@ -632,9 +695,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-022",
@@ -658,9 +726,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-023",
@@ -682,9 +755,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-024",
@@ -708,9 +786,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-025",
@@ -732,9 +815,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "unknown_entity_type"
+    "expectedError": "unknown_entity_type",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-026",
@@ -756,9 +844,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-027",
@@ -781,9 +874,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-028",
@@ -806,10 +904,15 @@
           "extra": "ignored"
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "expectedError": "invalid_request",
-    "reason": "additional property in operation"
+    "reason": "additional property in operation",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-029",
@@ -836,10 +939,15 @@
           "payload": {}
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "expectedError": "duplicate_operation",
-    "reason": "same opId with different payload must not be silently accepted"
+    "reason": "same opId with different payload must not be silently accepted",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-REJECT-030",
@@ -847,11 +955,16 @@
     "input": {
       "op": "push",
       "operations": [],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "maxOperations": 200,
     "tooLarge": true,
-    "expectedError": "payload_too_large"
+    "expectedError": "payload_too_large",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-BOUNDARY-001",
@@ -864,7 +977,7 @@
           "entityType": "note",
           "entityId": "n1",
           "action": "upsert",
-          "baseRevision": 0,
+          "baseRevision": 1,
           "fieldMask": [
             "title"
           ],
@@ -874,20 +987,28 @@
         }
       ],
       "baseRevision": 1,
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "currentRevision": 0,
-    "expectedError": "revision_conflict"
+    "expectedError": "revision_conflict",
+    "authenticatedDeviceId": "dev-1",
+    "reason": "Operation base revision exceeds canonical current revision."
   },
   {
     "id": "SE-BOUNDARY-002",
     "family": "boundary",
     "input": {
       "op": "ack",
-      "cursor": 20
+      "cursor": 20,
+      "deviceId": "dev-1"
     },
     "serverCursor": 19,
-    "expectedError": "cursor_invalid"
+    "expectedError": "cursor_invalid",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-BOUNDARY-003",
@@ -904,10 +1025,12 @@
     "family": "boundary",
     "input": {
       "op": "ack",
-      "cursor": 20
+      "cursor": 20,
+      "deviceId": "dev-1"
     },
     "note": "duplicate ACK is monotonic and not a new write",
-    "response": "AckResponse"
+    "response": "AckResponse",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-BOUNDARY-005",
@@ -924,10 +1047,15 @@
     "input": {
       "op": "push",
       "operations": [],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "note": "push result has original PushResponse shape, not a v2 envelope",
-    "response": "PushResponse"
+    "response": "PushResponse",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-BOUNDARY-007",
@@ -945,10 +1073,15 @@
           "payload": {}
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "note": "accepted op and transport requestId are distinct",
-    "response": "PushResponse"
+    "response": "PushResponse",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-BOUNDARY-008",
@@ -1006,9 +1139,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-SECURITY-002",
@@ -1037,9 +1175,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "revision_conflict"
+    "expectedError": "revision_conflict",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-SECURITY-003",
@@ -1068,9 +1211,14 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "invalid_request"
+    "expectedError": "invalid_request",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-SECURITY-004",
@@ -1093,19 +1241,26 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
-    "expectedError": "secret_reconciliation_required"
+    "expectedError": "secret_reconciliation_required",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-SECURITY-005",
     "family": "security",
     "input": {
       "op": "ack",
-      "cursor": 20
+      "cursor": 20,
+      "deviceId": "dev-1"
     },
     "authenticatedDeviceRevoked": true,
-    "expectedError": "client_revoked"
+    "expectedError": "client_revoked",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-SECURITY-006",
@@ -1113,10 +1268,15 @@
     "input": {
       "op": "push",
       "operations": [],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "authenticatedAccountDeleted": true,
-    "expectedError": "account_unavailable"
+    "expectedError": "account_unavailable",
+    "authenticatedDeviceId": "dev-1"
   },
   {
     "id": "SE-SECURITY-007",
@@ -1148,11 +1308,16 @@
           }
         }
       ],
-      "protocolVersion": 1
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash"
     },
     "expectedError": "invalid_request",
     "forbidErrorSubstrings": [
       "do-not-echo"
-    ]
+    ],
+    "authenticatedDeviceId": "dev-1"
   }
 ]

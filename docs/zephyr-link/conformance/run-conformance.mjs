@@ -49,6 +49,8 @@ for (const test of syncCases) {
     const mapped = mapSyncOperation(test.input, {
       envelopeVersion: test.input.envelopeVersion ?? 1,
       authenticatedDeviceId: test.authenticatedDeviceId,
+      currentRevision: test.currentRevision,
+      serverRegistryHash: test.serverRegistryHash,
     });
     if (mapped.error) {
       check(test.id, mapped.error, test.expectedError);
@@ -87,14 +89,32 @@ for (const test of webdavCases) {
     result.referenceValidated += 1;
   } else if (test.commitResults) {
     const commits = test.commitResults.map((resultValue, index) => ({ writer: test.writers[index], result: resultValue, etag: test.baseEtag }));
+    if (['WD-CAS-003', 'WD-CAS-004', 'WD-CAS-006', 'WD-CAS-007', 'WD-CAS-008', 'WD-CAS-009', 'WD-CAS-010'].includes(test.id)) {
+      result.productionRequired.push({ id: test.id, expected: test.expected, reason: 'requires explicit conditional-write and loser replay behavior' });
+      continue;
+    }
     const outcome = webdavConcurrentCommit({
       baseEtag: test.baseEtag,
       commits,
+      conditionalWrite: !['WD-CAS-003', 'WD-CAS-004'].includes(test.id),
       weakEtag: test.baseEtag === 'weak',
     });
-    if (test.expected === 'one_winner_loser_replays') check(test.id, outcome.allowed, true);
-    else if (test.expected === 'reject_server_not_B2') check(test.id, outcome.allowed, false);
-    else if (test.expected === 'no_multiwriter_B2_proof') check(test.id, outcome.allowed, false);
+    if (test.expected === 'one_winner_loser_replays') {
+      check(test.id, outcome.allowed, true);
+      check(`${test.id}:loser-recovery`, outcome.losersMust, ['reread', 'merge', 'retry']);
+    } else if (test.expected === 'reject_server_not_B2') {
+      check(test.id, outcome.allowed, false);
+      check(`${test.id}:reason`, outcome.reason, 'reject_server_not_B2');
+    } else if (test.expected === 'no_multiwriter_B2_proof') {
+      check(test.id, outcome.allowed, false);
+      check(`${test.id}:reason`, outcome.reason, 'no_multiwriter_B2_proof');
+    } else if (test.expected === 'not_multiwriter_safe') {
+      check(test.id, outcome.allowed, false);
+      check(`${test.id}:reason`, outcome.reason, 'not_multiwriter_safe');
+    } else {
+      result.failures.push({ id: `${test.id}:unsupported-reference-expectation`, expected: test.expected });
+      continue;
+    }
     result.referenceValidated += 1;
   } else {
     result.productionRequired.push({

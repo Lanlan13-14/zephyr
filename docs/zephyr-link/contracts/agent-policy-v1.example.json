@@ -35,7 +35,7 @@
       "properties": {
         "maxFileBytes": { "type": "integer", "minimum": 0, "maximum": 1099511627776 },
         "maxInflight": { "type": "integer", "minimum": 0, "maximum": 64 },
-        "maxChunkBytes": { "type": "integer", "minimum": 65536, "maximum": 262144 },
+        "maxChunkBytes": { "anyOf": [{ "const": 0 }, { "type": "integer", "minimum": 65536, "maximum": 262144 }] },
         "maxDailyBytes": { "type": "integer", "minimum": 0 },
         "maxDirectoryDepth": { "type": "integer", "minimum": 0, "maximum": 256 },
         "maxRequestsPerMinute": { "type": "integer", "minimum": 0, "maximum": 100000 }
