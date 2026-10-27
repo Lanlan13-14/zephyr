@@ -12,6 +12,31 @@
 
 ---
 
+## 0. 反绕过、反假通过与生产一致性强制规则
+
+1. **样例数量不是质量证明**：不得用“8 条/几十条参考用例通过”代替完整兼容性与故障覆盖，更不得把参考模型通过宣称为生产通过。
+2. 所有同步映射、Agent 策略与 WebDAV 写者分级的规范向量统一位于 `docs/zephyr-link/conformance/cases/`，Node/Go/Kotlin/Swift 的生产适配器必须消费**同一文件、同一预期**，禁止各端私自翻译、删减或放宽。
+3. **参考适配器与生产实现严格分离**：`reference-adapter-v1.mjs` 只验证规范示例，输出 `documentation-reference`。真实生产证据必须来自实际生产函数及适配器，满足 [PRODUCTION-ADAPTER-CONTRACT.md](./conformance/PRODUCTION-ADAPTER-CONTRACT.md)。
+4. 每个生产待验向量必须有真实执行结果。`productionRequired / unsupported / skip / todo / not_run` **一律不是 pass**，不得通过修改状态或删除案例将其转为通过。
+5. 高敏合同、向量、预期与生产测试若被同一 PR 修改，必须提供修改前后双跑证据；需要失败的案例必须先在旧版本失败，再在当前版本得到合同结果。
+6. **真实源码 mutation 必跑**：故意移除设备校验、KIND 校验、deny、空资源限制、零配额、审批、CAS、协议协商等，必须被见证用例全部杀死。陈旧、未适用或未执行的 mutant 均不得计入 killed。
+7. 不能只测返回值：涉及副作用的向量必须检查实际实体、cursor、revision、outbox、secret、lease、listener、审计、幂等回执和文件字节。
+8. **参考绿灯不解除发布门禁**：如果生产适配器未提供、未覆盖目标平台、报告缺失、失败、有生产待验项或 mutant 存活，仍不得发布稳定功能。
+9. 高敏合同与生产适配器须独立复核，防止实现者同时修改坏实现与测试预期“协商出”假通过；不能以一次历史 reviewer 通过永久豁免后续变更。
+
+### 0.1 当前反绕过基线（必须持续增加，不允许删减规避）
+
+| 类别 | 当前规范向量数 | 当前参考执行数 | 当前生产待验数 | 当前真实源码变异 |
+|---|---:|---:|---:|---:|
+| mobile v1 / 新同步信封 | 64 | 部分格式/身份/映射反例 | 其余 entity、secret、cursor、auth、schema、真实响应 | 身份/KIND/双重 envelope/协商 |
+| Agent 本机策略 | 88 | 88（含 Schema/规则/审批/重试） | 生产 Agent 与系统权限联调另计 | deny/空资源/配额/审批/撤销后重放 |
+| WebDAV 写者与故障 | 72 | 能力分级与 CAS 反例 | 真实 WebDAV 状态/故障/恢复全部待验 | 多写者/弱 CAS/无条件覆盖 |
+| **合计** | **224** | **128** | **96** | **14/14 killed** |
+
+这组数字是当前基线，**不是“224 项产品测试全部通过”**。若后续实现增加新操作、字段、存储后端或故障模式，必须同时补充向量、生产适配器与真实见证，不得仅更新参考函数或数字。
+
+---
+
 ## 1. 强制测试分层：不同证据不可互相冒充
 
 | 层级 | 必须回答的问题 | 合法证据 | 不能替代成 |
@@ -313,13 +338,23 @@ change:
 ## 9. CI 分支与产物门禁
 
 1. 所有 Link 相关 workflow 必须覆盖实际开发分支，包括 `zephyr-newui`；不能只监听 `main` 后用旧历史结果代替。
-2. 当前提交的 `test/build` 与目标分支/产物 digest 必须一致。
-3. Node/Go/跨语言测试、真实主端集成、Android 编译与 instrumentation、iOS Xcode 测试、Desktop 运行时测试分别设 job。
-4. **Android/iOS 原生编译不可被静态合同测试替代；缺少 runner/SDK 时状态必须是未验证，不得默认成功。**
-5. 每次构建对安装包内的原生库执行 `go version -m` 与 `govulncheck -mode=binary`；检查 toolchain、module、源码 revision。
-6. 生成物、schema、黄金向量、CBOR interop、版本号文件必须做 drift 检查。
-7. 发布 job 需要所有必需 job 的真实结果和原始 artifact；任何缺失均阻止发布。
-8. 安全热修必须能独立出包回滚，不等待大型互联重构全部完成。
+2. 每个 Link 变更必须至少执行以下三条，并保存输出；缺少任一报告不得视为合同检查完成：
+
+```bash
+node docs/zephyr-link/verify-docs.mjs
+node docs/zephyr-link/conformance/run-conformance.mjs
+node docs/zephyr-link/conformance/verify-conformance.mjs
+node docs/zephyr-link/conformance/run-source-mutations.mjs
+```
+
+3. 上述命令只证明**规范/参考层**。生产适配器必须另跑同目录全部向量及目标平台 E2E，并输出 `production-conformance` 或 `production-e2e` 报告；`productionRequired` 未清零时不得声明完成。
+4. 当前提交的 `test/build` 与目标分支/产物 digest 必须一致。
+5. Node/Go/跨语言测试、真实主端集成、Android 编译与 instrumentation、iOS Xcode 测试、Desktop 运行时测试分别设 job。
+6. **Android/iOS 原生编译不可被静态合同测试替代；缺少 runner/SDK 时状态必须是未验证，不得默认成功。**
+7. 每次构建对安装包内的原生库执行 `go version -m` 与 `govulncheck -mode=binary`；检查 toolchain、module、源码 revision。
+8. 生成物、schema、黄金向量、CBOR interop、版本号文件必须做 drift 检查。
+9. 发布 job 需要所有必需 job 的真实结果和原始 artifact；任何缺失均阻止发布。
+10. 安全热修必须能独立出包回滚，不等待大型互联重构全部完成。
 
 ---
 

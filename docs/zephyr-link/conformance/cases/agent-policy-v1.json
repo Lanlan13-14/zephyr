@@ -1,0 +1,2883 @@
+[
+  {
+    "id": "AP-VALID-001",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-002",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "list",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "list",
+      "stat",
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "list"
+    ],
+    "systemOperations": [
+      "list"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-003",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "stat",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "list",
+      "stat",
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "stat"
+    ],
+    "systemOperations": [
+      "stat"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-004",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "write",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read",
+      "write"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read",
+      "write"
+    ],
+    "systemOperations": [
+      "read",
+      "write"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-005",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "mkdir",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "mkdir"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "mkdir"
+    ],
+    "systemOperations": [
+      "mkdir"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-006",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "rename",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "rename"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "rename"
+    ],
+    "systemOperations": [
+      "rename"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-007",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "truncate",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "truncate"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "truncate"
+    ],
+    "systemOperations": [
+      "truncate"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-008",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-009",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "agent-tunnel",
+    "operation": "tunnel.local",
+    "networkTarget": "db.corp:5432",
+    "localEffect": "allow",
+    "localOperations": [
+      "tunnel.local"
+    ],
+    "localNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "primaryOperations": [
+      "tunnel.local"
+    ],
+    "systemOperations": [
+      "tunnel.local"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "listenHost": "127.0.0.1",
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "agent-tunnel"
+    ]
+  },
+  {
+    "id": "AP-VALID-010",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "agent-tunnel",
+    "operation": "tunnel.remote",
+    "networkTarget": "127.0.0.1:3000",
+    "localEffect": "allow",
+    "localOperations": [
+      "tunnel.remote"
+    ],
+    "localNetworkTargets": [
+      "127.0.0.1:3000"
+    ],
+    "primaryOperations": [
+      "tunnel.remote"
+    ],
+    "systemOperations": [
+      "tunnel.remote"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "listenHost": "127.0.0.1",
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "agent-tunnel"
+    ]
+  },
+  {
+    "id": "AP-VALID-011",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "agent-tunnel",
+    "operation": "tunnel.dynamic",
+    "networkTarget": "intranet:443",
+    "localEffect": "allow",
+    "localOperations": [
+      "tunnel.dynamic"
+    ],
+    "localNetworkTargets": [
+      "intranet:443"
+    ],
+    "primaryOperations": [
+      "tunnel.dynamic"
+    ],
+    "systemOperations": [
+      "tunnel.dynamic"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "listenHost": "::1",
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "agent-tunnel"
+    ]
+  },
+  {
+    "id": "AP-VALID-012",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "agent-tunnel",
+    "operation": "tunnel.local",
+    "networkTarget": "db.corp:5432",
+    "localEffect": "allow",
+    "localOperations": [
+      "tunnel.local"
+    ],
+    "localNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "primaryOperations": [
+      "tunnel.local"
+    ],
+    "systemOperations": [
+      "tunnel.local"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "listenHost": "0.0.0.0",
+    "confirmed": true,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "agent-tunnel"
+    ]
+  },
+  {
+    "id": "AP-VALID-013",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "clipboard.read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "clipboard.read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "clipboard.read"
+    ],
+    "systemOperations": [
+      "clipboard.read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-014",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "clipboard.write",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "clipboard.write"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "clipboard.write"
+    ],
+    "systemOperations": [
+      "clipboard.write"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-015",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "clipboard.fileManifest",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "clipboard.fileManifest"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "clipboard.fileManifest"
+    ],
+    "systemOperations": [
+      "clipboard.fileManifest"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-016",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "clipboard.fileRead",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "clipboard.fileRead"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "clipboard.fileRead"
+    ],
+    "systemOperations": [
+      "clipboard.fileRead"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-017",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "shared-remote",
+    "operation": "drive.map",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "drive.map"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "drive.map"
+    ],
+    "systemOperations": [
+      "drive.map"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "shared-remote"
+    ]
+  },
+  {
+    "id": "AP-VALID-018",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "shared-remote",
+    "operation": "desktop.control",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "desktop.control"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "desktop.control"
+    ],
+    "systemOperations": [
+      "desktop.control"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "shared-remote"
+    ]
+  },
+  {
+    "id": "AP-VALID-019",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "ai",
+    "operation": "ai.read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "ai.read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "ai.read"
+    ],
+    "systemOperations": [
+      "ai.read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "ai"
+    ]
+  },
+  {
+    "id": "AP-VALID-020",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "ai",
+    "operation": "ai.write",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "ai.write"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "ai.write"
+    ],
+    "systemOperations": [
+      "ai.write"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "ai"
+    ]
+  },
+  {
+    "id": "AP-VALID-021",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "ai",
+    "operation": "ai.execute",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "ai.execute"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "ai.execute"
+    ],
+    "systemOperations": [
+      "ai.execute"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "ai"
+    ]
+  },
+  {
+    "id": "AP-VALID-022",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "ai",
+    "operation": "offload.invoke",
+    "offloadCapability": "media.transcode",
+    "localEffect": "allow",
+    "localOperations": [
+      "offload.invoke"
+    ],
+    "localShares": [],
+    "localOffloadCapabilities": [
+      "media.transcode"
+    ],
+    "primaryOperations": [
+      "offload.invoke"
+    ],
+    "systemOperations": [
+      "offload.invoke"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "ai"
+    ]
+  },
+  {
+    "id": "AP-VALID-023",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read",
+      "write"
+    ],
+    "systemOperations": [
+      "read",
+      "write"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "note": "Intersection may narrow but never widen local authority",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-VALID-024",
+    "family": "valid",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "allow",
+    "note": "A second Agent with different policy does not inherit this grant",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-001",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "write",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read",
+      "write"
+    ],
+    "systemOperations": [
+      "read",
+      "write"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-002",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "write",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "write"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [],
+    "systemOperations": [
+      "write"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "primary_acl_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-003",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "write",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "write"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "write"
+    ],
+    "systemOperations": [],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "system_grant_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-004",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 4,
+    "expected": "agent_policy_generation_stale",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-005",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "deny",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-006",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-007",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "agent-tunnel",
+    "operation": "tunnel.local",
+    "networkTarget": "db.corp:5432",
+    "localEffect": "allow",
+    "localOperations": [
+      "tunnel.local"
+    ],
+    "localNetworkTargets": [],
+    "primaryOperations": [
+      "tunnel.local"
+    ],
+    "systemOperations": [
+      "tunnel.local"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "agent-tunnel"
+    ]
+  },
+  {
+    "id": "AP-DENY-008",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "ai",
+    "operation": "offload.invoke",
+    "offloadCapability": "media.transcode",
+    "localEffect": "allow",
+    "localOperations": [
+      "offload.invoke"
+    ],
+    "localOffloadCapabilities": [],
+    "primaryOperations": [
+      "offload.invoke"
+    ],
+    "systemOperations": [
+      "offload.invoke"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "ai"
+    ]
+  },
+  {
+    "id": "AP-DENY-009",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "paused": true,
+    "expected": "agent_paused",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-010",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "agentRevoked": true,
+    "expected": "agent_revoked",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-011",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-012",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "agent-tunnel",
+    "operation": "tunnel.local",
+    "networkTarget": "db.corp:5432",
+    "localEffect": "allow",
+    "localOperations": [
+      "tunnel.local"
+    ],
+    "localNetworkTargets": [
+      "db.corp:5432"
+    ],
+    "primaryOperations": [
+      "tunnel.local"
+    ],
+    "systemOperations": [
+      "tunnel.local"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "listenHost": "0.0.0.0",
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "agent-tunnel"
+    ]
+  },
+  {
+    "id": "AP-DENY-013",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expiresAt": 100,
+    "now": 100,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-014",
+    "family": "authority",
+    "subject": "user:bob",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-015",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "ai",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-016",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "confirmationHashMismatch": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-017",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxFileBytes": 1
+    },
+    "limits": {
+      "maxFileBytes": 0
+    },
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-018",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxFileBytes": 100
+    },
+    "limits": {
+      "maxFileBytes": 50
+    },
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-019",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxInflight": 65
+    },
+    "limits": {
+      "maxInflight": 64
+    },
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-020",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxChunkBytes": 262145
+    },
+    "limits": {
+      "maxChunkBytes": 262144
+    },
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-021",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxDailyBytes": 5368709121
+    },
+    "limits": {
+      "maxDailyBytes": 5368709120
+    },
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-022",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxDirectoryDepth": 257
+    },
+    "limits": {
+      "maxDirectoryDepth": 256
+    },
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-023",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxRequestsPerMinute": 100001
+    },
+    "limits": {
+      "maxRequestsPerMinute": 100000
+    },
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-DENY-024",
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "systemGrantChangedBeforeExecution": true,
+    "expected": "system_grant_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-RULE-001",
+    "family": "rule-order",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "rules": [
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      },
+      {
+        "effect": "deny",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      }
+    ],
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "note": "deny wins regardless of rule order",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-RULE-002",
+    "family": "rule-order",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "rules": [
+      {
+        "effect": "deny",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      },
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      }
+    ],
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-RULE-003",
+    "family": "rule-order",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "rules": [
+      {
+        "effect": "allow",
+        "operations": [
+          "write"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      }
+    ],
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "note": "No matching allow => default deny",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-RULE-004",
+    "family": "rule-order",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "rules": [
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "limits": {
+          "maxFileBytes": 1000
+        },
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      },
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "limits": {
+          "maxFileBytes": 50
+        },
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      }
+    ],
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxFileBytes": 100
+    },
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-RULE-005",
+    "family": "rule-order",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "rules": [
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "limits": {
+          "maxFileBytes": 1000
+        },
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      },
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "limits": {
+          "maxFileBytes": 50
+        },
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      }
+    ],
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxFileBytes": 50
+    },
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-RULE-006",
+    "family": "rule-order",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "rules": [
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "limits": {
+          "maxFileBytes": 1000
+        },
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      },
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "limits": {
+          "maxFileBytes": 0
+        },
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      }
+    ],
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-RULE-007",
+    "family": "rule-order",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "rules": [
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "expiresAt": 99,
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      },
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "subjects": [
+          "user:alice"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      }
+    ],
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "now": 100,
+    "expected": "allow",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-RULE-008",
+    "family": "rule-order",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "rules": [
+      {
+        "effect": "allow",
+        "operations": [
+          "read"
+        ],
+        "shares": [
+          "projects"
+        ],
+        "subjects": [
+          "user:bob"
+        ],
+        "channels": [
+          "file-bridge"
+        ]
+      }
+    ],
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-SCHEMA-001",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 2,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": []
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-002",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 0,
+      "defaultEffect": "deny",
+      "rules": []
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-003",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "allow",
+      "rules": []
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-004",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "bad",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {}
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-005",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "private"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {}
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-006",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "rm -rf /"
+          ],
+          "effect": "allow",
+          "limits": {}
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-007",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {
+            "maxInflight": 0
+          }
+        }
+      ]
+    },
+    "expected": "valid",
+    "note": "zero explicitly disables concurrent work; runtime returns agent_quota_exceeded"
+  },
+  {
+    "id": "AP-SCHEMA-008",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {
+            "maxChunkBytes": 65535
+          }
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-009",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {
+            "maxChunkBytes": 262145
+          }
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-010",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {
+            "unknown": 1
+          }
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-011",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {},
+          "extra": true
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-012",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {}
+        },
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "write"
+          ],
+          "effect": "allow",
+          "limits": {}
+        }
+      ]
+    },
+    "expected": "schema_invalid",
+    "note": "duplicate rule ids must be rejected"
+  },
+  {
+    "id": "AP-SCHEMA-013",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a",
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {}
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-014",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {}
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-015",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [],
+          "effect": "allow",
+          "limits": {}
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-016",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {}
+        }
+      ],
+      "extra": true
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-017",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {},
+          "shares": [
+            "../etc"
+          ]
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-018",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {},
+          "networkTargets": [
+            "db:22",
+            "db:22"
+          ]
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-019",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1,
+      "defaultEffect": "deny",
+      "rules": [
+        {
+          "ruleId": "rule_valid",
+          "subjects": [
+            "user:a"
+          ],
+          "channels": [
+            "file-bridge"
+          ],
+          "operations": [
+            "read"
+          ],
+          "effect": "allow",
+          "limits": {},
+          "expiresAt": -1
+        }
+      ]
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-SCHEMA-020",
+    "family": "schema",
+    "input": {
+      "schemaVersion": 1,
+      "agentId": "a",
+      "policyGeneration": 1.5,
+      "defaultEffect": "deny",
+      "rules": []
+    },
+    "expected": "schema_invalid"
+  },
+  {
+    "id": "AP-EXEC-001",
+    "family": "execution",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "primaryElevatedAfterApproval": true,
+    "expected": "allow",
+    "note": "Primary can narrow, never elevate beyond local rule",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-EXEC-002",
+    "family": "execution",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "write",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read",
+      "write"
+    ],
+    "systemOperations": [
+      "write"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "primaryElevatedAfterApproval": true,
+    "expected": "agent_local_policy_denied",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-EXEC-003",
+    "family": "execution",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "primaryOffline": true,
+    "localAuthorizedOffline": true,
+    "expected": "allow",
+    "note": "Only explicitly local offline work may continue",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-EXEC-004",
+    "family": "execution",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "primaryOffline": true,
+    "localAuthorizedOffline": false,
+    "expected": "primary_unavailable",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-EXEC-005",
+    "family": "execution",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "write",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "write"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "write"
+    ],
+    "systemOperations": [
+      "write"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "retrySameRequest": true,
+    "expected": "return_original_receipt",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-EXEC-006",
+    "family": "execution",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "write",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "write"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "write"
+    ],
+    "systemOperations": [
+      "write"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "retrySameIdempotencyDifferentPayload": true,
+    "expected": "idempotency_conflict",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-EXEC-007",
+    "family": "execution",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "delete",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "delete"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "delete"
+    ],
+    "systemOperations": [
+      "delete"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "confirmed": true,
+    "confirmationHashMismatch": true,
+    "expected": "approval_required",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-EXEC-008",
+    "family": "execution",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "read",
+    "share": "projects",
+    "localEffect": "allow",
+    "localOperations": [
+      "read"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "usage": {
+      "maxInflight": 2
+    },
+    "limits": {
+      "maxInflight": 1
+    },
+    "expected": "agent_quota_exceeded",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ]
+  },
+  {
+    "id": "AP-EXEC-009",
+    "family": "execution",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "operation": "write",
+    "share": "projects",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "localEffect": "allow",
+    "localOperations": [
+      "read",
+      "write"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read",
+      "write"
+    ],
+    "systemOperations": [],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "retrySameRequest": true,
+    "expected": "system_grant_denied",
+    "note": "An old success receipt must not bypass a later system permission revocation."
+  },
+  {
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "share": "projects",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "localEffect": "allow",
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "revealSecret",
+      "remoteWipe"
+    ],
+    "systemOperations": [
+      "revealSecret",
+      "remoteWipe"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "id": "AP-DENY-025",
+    "operation": "revealSecret",
+    "localOperations": [
+      "revealSecret"
+    ],
+    "expected": "approval_required"
+  },
+  {
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "share": "projects",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "localEffect": "allow",
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "revealSecret",
+      "remoteWipe"
+    ],
+    "systemOperations": [
+      "revealSecret",
+      "remoteWipe"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "id": "AP-DENY-026",
+    "operation": "remoteWipe",
+    "localOperations": [
+      "remoteWipe"
+    ],
+    "expected": "approval_required"
+  },
+  {
+    "family": "authority",
+    "subject": "user:alice",
+    "channel": "file-bridge",
+    "share": "projects",
+    "localSubjects": [
+      "user:alice"
+    ],
+    "localChannels": [
+      "file-bridge"
+    ],
+    "localShares": [
+      "projects"
+    ],
+    "primaryOperations": [
+      "read"
+    ],
+    "systemOperations": [
+      "read"
+    ],
+    "generation": 5,
+    "sessionGeneration": 5,
+    "id": "AP-DENY-027",
+    "operation": "read",
+    "expected": "agent_local_policy_denied",
+    "localOperations": [
+      "read"
+    ]
+  }
+]

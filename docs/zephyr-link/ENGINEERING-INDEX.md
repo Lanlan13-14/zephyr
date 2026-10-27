@@ -11,6 +11,7 @@
 | Agent 本机策略 JSON 示例 | `docs/zephyr-link/contracts/agent-policy-v1.example.json` |
 | Agent 权限交集正反向量 | `docs/zephyr-link/contracts/agent-authorization-v1.cases.json` |
 | mobile v1 与新 `sync.*` 信封映射 | `docs/zephyr-link/contracts/mobile-sync-envelope-v1.cases.json` |
+| 反绕过全量向量、真实变异与生产适配治理 | `docs/zephyr-link/conformance/` |
 | 新 Link 业务 body 信封 | `docs/zephyr-link/contracts/link-frame-envelope-v1.example.json` |
 | Link PR 影响声明 | `docs/zephyr-link/contracts/change-impact-v1.example.json` |
 | 已批准决策机器记录 | `docs/zephyr-link/contracts/decision-record-v1.json` |

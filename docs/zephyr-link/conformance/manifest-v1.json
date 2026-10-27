@@ -1,0 +1,53 @@
+{
+  "suite": "ZEPHYR-LINK-CONFORMANCE",
+  "version": "1.0.0",
+  "purpose": "Anti-bypass compatibility, authorization and writer-safety checks. Documentation-only until an actual production adapter is supplied.",
+  "categories": [
+    "sync-envelope",
+    "agent-policy",
+    "webdav-writers"
+  ],
+  "requirements": {
+    "productionAdapterRequiredForProductEvidence": true,
+    "sameVectorsAcrossNodeGoKotlinSwift": true,
+    "malformedInputsMustFailClosed": true,
+    "everyCriticalMutationMustBeKilled": true,
+    "skipTodoAndNotRunAreNotPass": true,
+    "docVerificationIsNotProductVerification": true,
+    "productionRequiredCasesCannotCountAsPassed": true,
+    "sourceMutationWitnessMustExerciseActualProductionFunction": true,
+    "highRiskContractChangesRequireIndependentReview": true
+  },
+  "commands": {
+    "reference": "node docs/zephyr-link/conformance/run-conformance.mjs",
+    "sourceMutations": "node docs/zephyr-link/conformance/run-source-mutations.mjs",
+    "schemaAndLinks": "node docs/zephyr-link/verify-docs.mjs"
+  },
+  "productionAdapterContract": "docs/zephyr-link/conformance/PRODUCTION-ADAPTER-CONTRACT.md",
+  "minimumVectorIds": {
+    "syncEnvelope": 64,
+    "agentPolicy": 88,
+    "webdavWriters": 72
+  },
+  "requiredSourceMutations": 14,
+  "requiredAntiBypassGuards": 11,
+  "requiredCaseIds": [
+    "SE-REJECT-002",
+    "SE-REJECT-003",
+    "SE-REJECT-005",
+    "SE-BOUNDARY-010",
+    "AP-RULE-001",
+    "AP-RULE-004",
+    "AP-RULE-006",
+    "AP-DENY-007",
+    "AP-DENY-011",
+    "AP-DENY-012",
+    "AP-DENY-025",
+    "AP-DENY-026",
+    "AP-DENY-027",
+    "AP-EXEC-009",
+    "WD-CAS-002",
+    "WD-CAP-003"
+  ],
+  "completionRule": "Reference green is documentation evidence only. Product release additionally requires every production adapter's real results and zero unresolved productionRequired cases in the declared scope."
+}

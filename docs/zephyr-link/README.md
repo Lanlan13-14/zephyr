@@ -9,6 +9,7 @@
 | [ZEPHYR-LINK-INTERCONNECTION-SPEC.md](./ZEPHYR-LINK-INTERCONNECTION-SPEC.md) | D1–D15 决策、身份/数据域、Link 帧、同步、WebDAV、Handoff、Agent、AI、Shared、HA 与 Go 安全 |
 | [TESTING-AND-RELEASE-GATES.md](./TESTING-AND-RELEASE-GATES.md) | 必测层级、影响声明、故障注入、多端回归目录、CI 和发布验收报告 |
 | [ENGINEERING-INDEX.md](./ENGINEERING-INDEX.md) | 工程师改代码、查调用链、选测试与交付证据的导航 |
+| [conformance/](./conformance/) | 224 个规范向量、参考适配器、真实源码变异与生产适配器反绕过治理 |
 | `contracts/decision-record-v1.json` | 机器可读的已批准决策与 Agent 本机最终授权原则 |
 | `contracts/link-frame-envelope-v1.example.json` | 新互联业务的版本化帧信封参考合同 |
 | `contracts/agent-policy-v1.example.json` | 每台 Agent 独立配置的本机策略参考合同 |
@@ -30,9 +31,12 @@
 
 ```bash
 node docs/zephyr-link/verify-docs.mjs
+node docs/zephyr-link/conformance/run-conformance.mjs
+node docs/zephyr-link/conformance/verify-conformance.mjs
+node docs/zephyr-link/conformance/run-source-mutations.mjs
 ```
 
-该验证器检查决策完整性、D15 本机授权原则、Node/Go KIND 对齐、JSON Schema 可编译、示例/负例和文档链接，并覆盖 mobile v1→v2 映射、deny 优先、空资源列表、最小配额和 WebDAV B0/B1/B2 分级。它只验证规范的一致性，**不替代任何真实同步、互联或原生平台测试**。
+上述命令检查决策完整性、D15 本机授权原则、Node/Go KIND 对齐、JSON Schema、示例/负例、224 个规范向量及真实源码变异，并区分 128 个参考执行通过与 96 个生产待验项。它们只验证规范的一致性，**不替代任何真实同步、互联或原生平台测试**。生产必须按 [生产适配器合同](./conformance/PRODUCTION-ADAPTER-CONTRACT.md) 提供实际实现结果。
 
 ## 当前基线与现状
 

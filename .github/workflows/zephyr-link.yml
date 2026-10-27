@@ -2,17 +2,20 @@ name: Zephyr Link (Go)
 
 on:
   push:
-    branches: [main]
+    branches: [main, zephyr-newui, zephyr-link-foundation-v1]
     paths:
       - 'zephyr-link/**'
       - 'link-v2-*.js'
       - 'scripts/gen-*-vectors.mjs'
+      - 'docs/zephyr-link/**'
       - '.github/workflows/zephyr-link.yml'
   pull_request:
+    branches: [main, zephyr-newui]
     paths:
       - 'zephyr-link/**'
       - 'link-v2-*.js'
       - 'scripts/gen-*-vectors.mjs'
+      - 'docs/zephyr-link/**'
       - '.github/workflows/zephyr-link.yml'
   workflow_dispatch:
 
@@ -23,6 +26,24 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install schema validation dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify Link specification and anti-bypass contracts
+        run: |
+          node docs/zephyr-link/verify-docs.mjs
+          node docs/zephyr-link/conformance/run-conformance.mjs
+          node docs/zephyr-link/conformance/verify-conformance.mjs
+          node docs/zephyr-link/conformance/run-source-mutations.mjs
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -32,7 +53,7 @@ jobs:
       # ZSL/2 needs crypto/mlkem, which landed in the Go standard library in 1.24.
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.3'
+          go-version: '1.26.10'
           cache-dependency-path: zephyr-link/go.sum
 
       - uses: actions/setup-node@v4
@@ -48,6 +69,13 @@ jobs:
         run: |
           go vet ./...
           go test ./...
+
+      - name: Install govulncheck for reachable vulnerability analysis
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+
+      - name: Check Link vulnerabilities with the actual toolchain
+        working-directory: zephyr-link
+        run: govulncheck -mode=source -format=text ./...
 
       # The interop vectors are the contract that the Go and Node runtimes share a
       # wire format. Regenerate them from the Node reference and fail on any drift,

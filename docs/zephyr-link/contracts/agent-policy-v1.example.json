@@ -23,7 +23,7 @@
     },
     "operation": {
       "enum": [
-        "list", "stat", "read", "write", "mkdir", "delete", "rename", "truncate",
+        "list", "stat", "read", "write", "mkdir", "delete", "rename", "truncate", "revealSecret", "remoteWipe",
         "clipboard.read", "clipboard.write", "clipboard.fileManifest", "clipboard.fileRead",
         "tunnel.local", "tunnel.remote", "tunnel.dynamic", "drive.map", "desktop.control",
         "ai.read", "ai.write", "ai.execute", "offload.invoke"
@@ -34,11 +34,11 @@
       "additionalProperties": false,
       "properties": {
         "maxFileBytes": { "type": "integer", "minimum": 0, "maximum": 1099511627776 },
-        "maxInflight": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "maxInflight": { "type": "integer", "minimum": 0, "maximum": 64 },
         "maxChunkBytes": { "type": "integer", "minimum": 65536, "maximum": 262144 },
         "maxDailyBytes": { "type": "integer", "minimum": 0 },
         "maxDirectoryDepth": { "type": "integer", "minimum": 0, "maximum": 256 },
-        "maxRequestsPerMinute": { "type": "integer", "minimum": 1, "maximum": 100000 }
+        "maxRequestsPerMinute": { "type": "integer", "minimum": 0, "maximum": 100000 }
       }
     },
     "rule": {

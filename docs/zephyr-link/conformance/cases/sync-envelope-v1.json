@@ -1,0 +1,1158 @@
+[
+  {
+    "id": "SE-VALID-001",
+    "family": "valid",
+    "op": "bootstrap",
+    "operation": "sync.bootstrap",
+    "legacy": {
+      "op": "bootstrap",
+      "pageSize": 100
+    },
+    "expectedBody": {
+      "pageSize": 100
+    },
+    "response": "BootstrapPage"
+  },
+  {
+    "id": "SE-VALID-002",
+    "family": "valid",
+    "op": "changes",
+    "operation": "sync.changes",
+    "legacy": {
+      "op": "changes",
+      "sinceCursor": 0,
+      "limit": 200
+    },
+    "expectedBody": {
+      "sinceCursor": 0,
+      "limit": 200
+    },
+    "response": "ChangePage"
+  },
+  {
+    "id": "SE-VALID-003",
+    "family": "valid",
+    "op": "push",
+    "operation": "sync.push",
+    "legacy": {
+      "op": "push",
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 10,
+      "registryHash": "hash",
+      "operations": []
+    },
+    "expectedBody": {
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 10,
+      "registryHash": "hash",
+      "operations": []
+    },
+    "response": "PushResponse"
+  },
+  {
+    "id": "SE-VALID-004",
+    "family": "valid",
+    "op": "ack",
+    "operation": "sync.ack",
+    "legacy": {
+      "op": "ack",
+      "deviceId": "dev-1",
+      "cursor": 20,
+      "appliedOpIds": [
+        "op-1"
+      ]
+    },
+    "expectedBody": {
+      "deviceId": "dev-1",
+      "cursor": 20,
+      "appliedOpIds": [
+        "op-1"
+      ]
+    },
+    "response": "AckResponse"
+  },
+  {
+    "id": "SE-VALID-005",
+    "family": "valid",
+    "op": "status",
+    "operation": "sync.status",
+    "legacy": {
+      "op": "status"
+    },
+    "expectedBody": {},
+    "response": "SyncStatus"
+  },
+  {
+    "id": "SE-VALID-006",
+    "family": "valid",
+    "op": "bootstrap",
+    "operation": "sync.bootstrap",
+    "legacy": {
+      "op": "bootstrap",
+      "pageToken": "opaque+/=~",
+      "pageSize": 1
+    },
+    "expectedBody": {
+      "pageToken": "opaque+/=~",
+      "pageSize": 1
+    },
+    "response": "BootstrapPage"
+  },
+  {
+    "id": "SE-VALID-007",
+    "family": "valid",
+    "op": "changes",
+    "operation": "sync.changes",
+    "legacy": {
+      "op": "changes",
+      "sinceCursor": 9007199254740991
+    },
+    "expectedBody": {
+      "sinceCursor": 9007199254740991
+    },
+    "response": "ChangePage"
+  },
+  {
+    "id": "SE-VALID-008",
+    "family": "valid",
+    "op": "ack",
+    "operation": "sync.ack",
+    "legacy": {
+      "op": "ack",
+      "deviceId": "dev-1",
+      "cursor": 0,
+      "appliedOpIds": []
+    },
+    "expectedBody": {
+      "deviceId": "dev-1",
+      "cursor": 0,
+      "appliedOpIds": []
+    },
+    "response": "AckResponse"
+  },
+  {
+    "id": "SE-VALID-009",
+    "family": "valid",
+    "op": "push",
+    "operation": "sync.push",
+    "legacy": {
+      "op": "push",
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "title"
+          ],
+          "payload": {
+            "title": "中文"
+          }
+        }
+      ]
+    },
+    "response": "PushResponse"
+  },
+  {
+    "id": "SE-VALID-010",
+    "family": "valid",
+    "op": "push",
+    "operation": "sync.push",
+    "legacy": {
+      "op": "push",
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash",
+      "operations": [
+        {
+          "opId": "op-2",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "delete",
+          "baseRevision": 2,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ]
+    },
+    "response": "PushResponse"
+  },
+  {
+    "id": "SE-VALID-011",
+    "family": "valid",
+    "op": "push",
+    "operation": "sync.push",
+    "legacy": {
+      "op": "push",
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash",
+      "operations": [
+        {
+          "opId": "op-3",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "restore",
+          "baseRevision": 3,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ]
+    },
+    "response": "PushResponse"
+  },
+  {
+    "id": "SE-VALID-012",
+    "family": "valid",
+    "op": "push",
+    "operation": "sync.push",
+    "legacy": {
+      "op": "push",
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash",
+      "operations": [
+        {
+          "opId": "op-4",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "db"
+          },
+          "secretEnvelopes": {
+            "password": {
+              "v": 1,
+              "ciphertext": "opaque"
+            }
+          }
+        }
+      ]
+    },
+    "response": "PushResponse"
+  },
+  {
+    "id": "SE-VALID-013",
+    "family": "valid",
+    "op": "push",
+    "operation": "sync.push",
+    "legacy": {
+      "op": "push",
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash",
+      "operations": [
+        {
+          "opId": "op-5",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "db"
+          },
+          "clearSecretFields": [
+            "password"
+          ]
+        }
+      ]
+    },
+    "response": "PushResponse"
+  },
+  {
+    "id": "SE-VALID-014",
+    "family": "valid",
+    "op": "push",
+    "operation": "sync.push",
+    "legacy": {
+      "op": "push",
+      "protocolVersion": 1,
+      "deviceId": "dev-1",
+      "batchId": "batch-1",
+      "baseCursor": 0,
+      "registryHash": "hash",
+      "operations": []
+    },
+    "idempotencyPrefix": "push:dev-1:batch-1",
+    "response": "PushResponse"
+  },
+  {
+    "id": "SE-VALID-015",
+    "family": "valid",
+    "op": "ack",
+    "operation": "sync.ack",
+    "legacy": {
+      "op": "ack",
+      "deviceId": "dev-1",
+      "cursor": 21,
+      "appliedOpIds": [
+        "op-1",
+        "op-2"
+      ]
+    },
+    "note": "ACK is monotonic; no artificial batch idempotency",
+    "response": "AckResponse"
+  },
+  {
+    "id": "SE-VALID-016",
+    "family": "valid",
+    "op": "status",
+    "operation": "sync.status",
+    "legacy": {
+      "op": "status"
+    },
+    "note": "Read-only status is evaluated at call time",
+    "response": "SyncStatus"
+  },
+  {
+    "id": "SE-REJECT-001",
+    "family": "malformed",
+    "input": {
+      "op": "bootstrap",
+      "operation": "sync.push"
+    },
+    "expectedError": "invalid_request",
+    "reason": "op and operation disagree"
+  },
+  {
+    "id": "SE-REJECT-002",
+    "family": "identity",
+    "input": {
+      "op": "push",
+      "deviceId": "dev-1",
+      "protocolVersion": 1
+    },
+    "authenticatedDeviceId": "dev-2",
+    "expectedError": "device_proof_invalid"
+  },
+  {
+    "id": "SE-REJECT-003",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "protocolVersion": 1,
+      "body": {
+        "operations": []
+      }
+    },
+    "expectedError": "invalid_request",
+    "reason": "v1 top-level fields mixed with v2 body"
+  },
+  {
+    "id": "SE-REJECT-004",
+    "family": "malformed",
+    "input": {
+      "op": "explode"
+    },
+    "expectedError": "unsupported_op"
+  },
+  {
+    "id": "SE-REJECT-005",
+    "family": "malformed",
+    "input": {
+      "op": "ack",
+      "operation": "sync.ack",
+      "kind": 15
+    },
+    "expectedError": "unsupported_kind"
+  },
+  {
+    "id": "SE-REJECT-006",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "protocolVersion": 2
+    },
+    "expectedError": "unsupported_protocol_version"
+  },
+  {
+    "id": "SE-REJECT-007",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": "not-an-array",
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-008",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [],
+      "protocolVersion": 1
+    },
+    "maxOperations": 0,
+    "expectedError": "invalid_request",
+    "reason": "over declared batch limit"
+  },
+  {
+    "id": "SE-REJECT-009",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "title"
+          ],
+          "payload": {}
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-010",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "",
+          "action": "delete",
+          "baseRevision": 0,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request",
+    "reason": "empty entityId must be rejected"
+  },
+  {
+    "id": "SE-REJECT-011",
+    "family": "malformed",
+    "input": {
+      "op": "ack",
+      "cursor": -1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-012",
+    "family": "malformed",
+    "input": {
+      "op": "changes",
+      "sinceCursor": -1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-013",
+    "family": "malformed",
+    "input": {
+      "op": "changes",
+      "limit": 0
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-014",
+    "family": "malformed",
+    "input": {
+      "op": "bootstrap",
+      "pageSize": 501
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-015",
+    "family": "malformed",
+    "input": {
+      "op": "bootstrap",
+      "pageToken": null
+    },
+    "expectedError": "bootstrap_expired",
+    "reason": "null is not a valid continuation token"
+  },
+  {
+    "id": "SE-REJECT-016",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "registryHash": "old",
+      "protocolVersion": 1
+    },
+    "serverRegistryHash": "new",
+    "expectedError": "registry_mismatch"
+  },
+  {
+    "id": "SE-REJECT-017",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-018",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "password"
+          ],
+          "payload": {
+            "password": "plaintext"
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-019",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "db"
+          },
+          "secretEnvelopes": {
+            "password": {}
+          },
+          "clearSecretFields": [
+            "password"
+          ]
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-020",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "delete",
+          "baseRevision": 0,
+          "fieldMask": [],
+          "payload": {},
+          "secretEnvelopes": {
+            "password": {
+              "v": 1
+            }
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-021",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "delete",
+          "baseRevision": 0,
+          "fieldMask": [
+            "title"
+          ],
+          "payload": {
+            "title": "not-allowed"
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-022",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "__proto__"
+          ],
+          "payload": {
+            "__proto__": {
+              "polluted": true
+            }
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-023",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "constructor"
+          ],
+          "payload": {
+            "constructor": "bad"
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-024",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "prototype.x"
+          ],
+          "payload": {
+            "prototype": {
+              "x": "bad"
+            }
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-025",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "unknown",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "x"
+          ],
+          "payload": {
+            "x": 1
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "unknown_entity_type"
+  },
+  {
+    "id": "SE-REJECT-026",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "revision"
+          ],
+          "payload": {
+            "revision": 99
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-027",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "db",
+            "ownerUserId": "other"
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-REJECT-028",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "title"
+          ],
+          "payload": {
+            "title": "a"
+          },
+          "extra": "ignored"
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request",
+    "reason": "additional property in operation"
+  },
+  {
+    "id": "SE-REJECT-029",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "delete",
+          "baseRevision": 0,
+          "fieldMask": [],
+          "payload": {}
+        },
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n2",
+          "action": "delete",
+          "baseRevision": 0,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "duplicate_operation",
+    "reason": "same opId with different payload must not be silently accepted"
+  },
+  {
+    "id": "SE-REJECT-030",
+    "family": "malformed",
+    "input": {
+      "op": "push",
+      "operations": [],
+      "protocolVersion": 1
+    },
+    "maxOperations": 200,
+    "tooLarge": true,
+    "expectedError": "payload_too_large"
+  },
+  {
+    "id": "SE-BOUNDARY-001",
+    "family": "boundary",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "title"
+          ],
+          "payload": {
+            "title": "x"
+          }
+        }
+      ],
+      "baseRevision": 1,
+      "protocolVersion": 1
+    },
+    "currentRevision": 0,
+    "expectedError": "revision_conflict"
+  },
+  {
+    "id": "SE-BOUNDARY-002",
+    "family": "boundary",
+    "input": {
+      "op": "ack",
+      "cursor": 20
+    },
+    "serverCursor": 19,
+    "expectedError": "cursor_invalid"
+  },
+  {
+    "id": "SE-BOUNDARY-003",
+    "family": "boundary",
+    "input": {
+      "op": "changes",
+      "sinceCursor": 10
+    },
+    "prunedThroughCursor": 11,
+    "expectedError": "cursor_expired"
+  },
+  {
+    "id": "SE-BOUNDARY-004",
+    "family": "boundary",
+    "input": {
+      "op": "ack",
+      "cursor": 20
+    },
+    "note": "duplicate ACK is monotonic and not a new write",
+    "response": "AckResponse"
+  },
+  {
+    "id": "SE-BOUNDARY-005",
+    "family": "boundary",
+    "input": {
+      "op": "status"
+    },
+    "note": "bootstrap/changes/status remain read-only; no artificial durable idempotent execution",
+    "response": "SyncStatus"
+  },
+  {
+    "id": "SE-BOUNDARY-006",
+    "family": "boundary",
+    "input": {
+      "op": "push",
+      "operations": [],
+      "protocolVersion": 1
+    },
+    "note": "push result has original PushResponse shape, not a v2 envelope",
+    "response": "PushResponse"
+  },
+  {
+    "id": "SE-BOUNDARY-007",
+    "family": "boundary",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "note",
+          "entityId": "n1",
+          "action": "delete",
+          "baseRevision": 0,
+          "fieldMask": [],
+          "payload": {}
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "note": "accepted op and transport requestId are distinct",
+    "response": "PushResponse"
+  },
+  {
+    "id": "SE-BOUNDARY-008",
+    "family": "boundary",
+    "input": {
+      "op": "status",
+      "envelopeVersion": 1
+    },
+    "note": "v1 clients never receive v2 body absent negotiation",
+    "response": "SyncStatus"
+  },
+  {
+    "id": "SE-BOUNDARY-009",
+    "family": "boundary",
+    "input": {
+      "op": "status",
+      "envelopeVersion": 2
+    },
+    "note": "v2 is selected only by session negotiation, not has(operation)",
+    "response": "SyncStatus"
+  },
+  {
+    "id": "SE-BOUNDARY-010",
+    "family": "boundary",
+    "input": {
+      "op": "status",
+      "envelopeVersion": 99
+    },
+    "expectedError": "unsupported_protocol_version"
+  },
+  {
+    "id": "SE-SECURITY-001",
+    "family": "security",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "db"
+          },
+          "secretEnvelopes": {
+            "password": {
+              "entityRevision": 1,
+              "keyVersion": 99,
+              "ciphertext": "bad"
+            }
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-SECURITY-002",
+    "family": "security",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "db"
+          },
+          "secretEnvelopes": {
+            "password": {
+              "entityRevision": 2,
+              "keyVersion": 1,
+              "ciphertext": "bad"
+            }
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "revision_conflict"
+  },
+  {
+    "id": "SE-SECURITY-003",
+    "family": "security",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "db"
+          },
+          "secretEnvelopes": {
+            "password": {
+              "entityRevision": 1,
+              "keyVersion": 1,
+              "ciphertext": "bad"
+            }
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request"
+  },
+  {
+    "id": "SE-SECURITY-004",
+    "family": "security",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "db",
+            "hasPassword": true
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "secret_reconciliation_required"
+  },
+  {
+    "id": "SE-SECURITY-005",
+    "family": "security",
+    "input": {
+      "op": "ack",
+      "cursor": 20
+    },
+    "authenticatedDeviceRevoked": true,
+    "expectedError": "client_revoked"
+  },
+  {
+    "id": "SE-SECURITY-006",
+    "family": "security",
+    "input": {
+      "op": "push",
+      "operations": [],
+      "protocolVersion": 1
+    },
+    "authenticatedAccountDeleted": true,
+    "expectedError": "account_unavailable"
+  },
+  {
+    "id": "SE-SECURITY-007",
+    "family": "security",
+    "input": {
+      "op": "status"
+    },
+    "note": "error carries requestId and retryability; no secret echo",
+    "expectedErrorMetadata": true
+  },
+  {
+    "id": "SE-SECURITY-008",
+    "family": "security",
+    "input": {
+      "op": "push",
+      "operations": [
+        {
+          "opId": "op-1",
+          "entityType": "connection",
+          "entityId": "c1",
+          "action": "upsert",
+          "baseRevision": 0,
+          "fieldMask": [
+            "host"
+          ],
+          "payload": {
+            "host": "db",
+            "password": "do-not-echo"
+          }
+        }
+      ],
+      "protocolVersion": 1
+    },
+    "expectedError": "invalid_request",
+    "forbidErrorSubstrings": [
+      "do-not-echo"
+    ]
+  }
+]
