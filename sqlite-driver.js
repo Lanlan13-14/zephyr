@@ -170,6 +170,11 @@ function attachBetterSqliteHelpers(db) {
         }
     };
 
+    Object.defineProperty(db, 'inTransaction', {
+        get() { return transactionDepth > 0; },
+        enumerable: true,
+    });
+
     db.transaction = (fn) => {
         if (typeof fn !== 'function') throw new TypeError('transaction callback must be a function');
         return (...args) => {

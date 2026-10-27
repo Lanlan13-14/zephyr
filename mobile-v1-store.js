@@ -39,6 +39,8 @@ const HMAC_KEY_FILE = path.join(DATA_DIR, 'crypto', 'mobile-v1-access.key');
 
 /** Frozen by SyncContract: retention for replay protection and tombstones. */
 const APPLIED_OP_RETENTION_DAYS = 180;
+/** Change-feed retention; same 180-day window as tombstones (ZEPHYR-LINK §5.4). */
+const CHANGE_RETENTION_DAYS = 180;
 /** SyncContract.BOOTSTRAP_PAGE_TOKEN_TTL_MINUTES. */
 const BOOTSTRAP_TOKEN_TTL_MINUTES = 30;
 const BOOTSTRAP_TOKEN_VERSION = 2;
@@ -1504,6 +1506,89 @@ class MobileV1Store {
         return prune();
     }
 
+    /**
+     * Age-based feed GC. Finds the greatest `change_seq` whose `changed_at`
+     * is strictly older than `cutoffMs`, then reuses [pruneChangesBefore]
+     * (`change_seq < before`) so retention and `isCursorExpired` stay in lockstep.
+     * No expired row → 0, and the retention watermark is left untouched.
+     */
+    pruneChangesOlderThan(ownerUserId, cutoffMs = nowMs() - CHANGE_RETENTION_DAYS * 86400000) {
+        const owner = String(ownerUserId || '');
+        const cutoff = Number(cutoffMs);
+        const ageCutoff = Number.isFinite(cutoff)
+            ? cutoff
+            : (nowMs() - CHANGE_RETENTION_DAYS * 86400000);
+        const doomed = this.db.prepare(`SELECT MAX(change_seq) AS seq
+            FROM mobile_sync_changes WHERE owner_user_id = ? AND changed_at < ?`)
+            .get(owner, ageCutoff);
+        const beforeSeq = Number(doomed?.seq || 0);
+        if (!beforeSeq) return 0;
+        return this.pruneChangesBefore(owner, beforeSeq + 1);
+    }
+
+    /**
+     * Drop wake-outbox rows that a dispatcher already delivered. Never touches
+     * `delivered_at IS NULL` — those are still waiting for APNs/FCM/in-process
+     * publish, and deleting them would silently lose a wake.
+     */
+    gcDeliveredWakeOutbox({ olderThanMs = 7 * 86400000, now } = {}) {
+        const ts = Number(now);
+        const reference = Number.isFinite(ts) && ts > 0 ? ts : nowMs();
+        const age = Number(olderThanMs);
+        const windowMs = Number.isFinite(age) && age >= 0 ? age : (7 * 86400000);
+        const info = this.db.prepare(`DELETE FROM mobile_change_outbox
+            WHERE delivered_at IS NOT NULL AND delivered_at < ?`)
+            .run(reference - windowMs);
+        return Number(info.changes || 0);
+    }
+
+    /**
+     * Hourly maintenance: 180-day change retention per owner, applied-op GC,
+     * bootstrap snapshot TTL, and delivered wake-outbox GC.
+     */
+    runMaintenance({ now } = {}) {
+        const ts = Number(now);
+        const reference = Number.isFinite(ts) && ts > 0 ? ts : nowMs();
+        const cutoff = reference - CHANGE_RETENTION_DAYS * 86400000;
+        const owners = this.db.prepare(`
+            SELECT owner_user_id AS id FROM mobile_sync_changes
+            UNION
+            SELECT owner_user_id AS id FROM mobile_change_retention
+            UNION
+            SELECT owner_user_id AS id FROM mobile_entity_versions
+        `).all();
+        let pruned = 0;
+        for (const row of owners) {
+            pruned += Number(this.pruneChangesOlderThan(row.id, cutoff) || 0);
+        }
+        this.gcAppliedOps();
+        this.gcBootstrapSnapshots(reference);
+        const outboxDropped = this.gcDeliveredWakeOutbox({ now: reference });
+        return { pruned, outboxDropped };
+    }
+
+    /**
+     * One-shot baseline for a historical entity that has an entity revision but
+     * no per-field ledger. Empty ledger is fail-closed (hasOverlap); filling it
+     * with the *current* projection at the current revision lets disjoint
+     * later edits merge. Existing per-field rows are never overwritten.
+     */
+    backfillFieldLedger({ ownerUserId, entityType, entityId, fields, revision, changedAt }) {
+        const existing = this.fieldRevisions(ownerUserId, entityType, entityId);
+        if (existing.size > 0) return 0;
+        const names = [...new Set((fields || []).map(String).filter(Boolean))];
+        if (!names.length) return 0;
+        this.setFieldRevisions({
+            ownerUserId,
+            entityType,
+            entityId,
+            fields: names,
+            revision,
+            changedAt,
+        });
+        return names.length;
+    }
+
     // -------------------------------------------------- bootstrap tokens ---
 
     /*
@@ -2912,12 +2997,15 @@ class MobileV1Store {
     }
 }
 
+MobileV1Store.CHANGE_RETENTION_DAYS = CHANGE_RETENTION_DAYS;
+
 module.exports = {
     MobileV1Store,
     MobileStoreError,
     canonicalJson,
     fieldPathsOverlap,
     APPLIED_OP_RETENTION_DAYS,
+    CHANGE_RETENTION_DAYS,
     BOOTSTRAP_TOKEN_TTL_MINUTES,
     ACCESS_TTL_SEC,
     GRANT_TTL_SEC,

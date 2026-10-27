@@ -157,6 +157,12 @@ class MobileV1ChangeBridge {
             const result = write();
             const after = typeof meta.after === 'function' ? meta.after(result) : result;
             this.recordMutation({ ...meta, after });
+            /* Desktop outbox enqueue (and any other same-commit side effect)
+             * must share this transaction. If insideTx throws, the canonical
+             * row and the change feed roll back together (SYNC-OUT-005). */
+            if (typeof meta.insideTx === 'function') {
+                meta.insideTx({ result, after, meta });
+            }
             return result;
         })();
     }
@@ -341,7 +347,18 @@ function createDisabledMobileV1ChangeBridge(db) {
         publishCommittedChange() {},
         runMutation(meta, write) {
             if (typeof write !== 'function') throw new TypeError('mutation write must be a function');
-            return write();
+            const execute = () => {
+                const result = write();
+                const after = typeof meta?.after === 'function' ? meta.after(result) : result;
+                if (typeof meta?.insideTx === 'function') {
+                    meta.insideTx({ result, after, meta });
+                }
+                return result;
+            };
+            if (db && typeof db.transaction === 'function') {
+                return db.transaction(execute)();
+            }
+            return execute();
         },
         recordMutation() {
             return { skipped: true, reason: 'change_bridge_disabled' };

@@ -27,6 +27,7 @@ const mobileCrypto = require('./mobile-v1-crypto');
 const mobileProof = require('./mobile-v1-proof');
 const { proofPayload: enrollmentProofPayload } = require('./link-v2-enrollment');
 const { extractSecrets, presenceFlag } = require('./mobile-v1-entities');
+const { OneLinkLocalStore } = require('./one-link-local-store');
 function normalizeFieldMask(fieldMask) {
     if (!Array.isArray(fieldMask)) return [];
     const out = [];
@@ -50,6 +51,8 @@ const DEFAULT_INTERVAL_SEC = 300;
 const WRITE_DEBOUNCE_MS = 1500;
 const PAGE_SIZE = 100;
 const CHANGE_LIMIT = 200;
+const MAX_OPS_PER_BATCH = 200;
+const PUSH_TYPE_ORDER = ['sshKey', 'proxy', 'jumpHost', 'connection', 'note'];
 /* Android SyncActor.MAX_PAGES_PER_ROUND is 512; desktop stays well under the
  * proof-challenge budget (120 issues / minute). A round that hits this cap
  * persists the page token and continues on the next trigger instead of
@@ -62,6 +65,36 @@ const RATE_LIMIT_DEFAULT_SEC = 5;
 const RATE_LIMIT_MAX_WAIT_MS = 15 * 1000;
 const LINK_TOKEN_ID = 'link-v2-enrollment';
 const MIRROR_TYPES = new Set(['connection', 'proxy', 'sshKey', 'jumpHost', 'note']);
+
+function diff3Text(base, local, server) {
+    const b = String(base ?? '');
+    const l = String(local ?? '');
+    const s = String(server ?? '');
+    if (l === s) return { text: l, unresolved: false };
+    if (l === b) return { text: s, unresolved: false };
+    if (s === b) return { text: l, unresolved: false };
+    const bL = b.split('\n');
+    const lL = l.split('\n');
+    const sL = s.split('\n');
+    if (bL.length === lL.length && bL.length === sL.length) {
+        const out = [];
+        let unresolved = false;
+        for (let i = 0; i < bL.length; i += 1) {
+            if (lL[i] === sL[i]) out.push(lL[i]);
+            else if (lL[i] === bL[i]) out.push(sL[i]);
+            else if (sL[i] === bL[i]) out.push(lL[i]);
+            else {
+                out.push('<<<<<<< local', lL[i], '=======', sL[i], '>>>>>>> server');
+                unresolved = true;
+            }
+        }
+        return { text: out.join('\n'), unresolved };
+    }
+    return {
+        text: `<<<<<<< local\n${l}\n=======\n${s}\n>>>>>>> server`,
+        unresolved: true,
+    };
+}
 
 function clampInterval(value) {
     const number = Number(value);
@@ -262,6 +295,7 @@ class ZephyrOneLinkSync {
         notesService,
         userSettingsService,
         mobileV1Api,
+        db = null,
         log = console.log,
         now = nowMs,
         httpRequest = requestJson,
@@ -274,6 +308,8 @@ class ZephyrOneLinkSync {
         this.notesService = notesService;
         this.userSettingsService = userSettingsService;
         this.mobileV1Api = mobileV1Api;
+        this.db = db && typeof db.prepare === 'function' ? db : null;
+        this.localStore = this.db ? new OneLinkLocalStore(this.db) : null;
         this.log = typeof log === 'function' ? log : () => {};
         this.now = now;
         this._http = typeof httpRequest === 'function' ? httpRequest : requestJson;
@@ -289,9 +325,10 @@ class ZephyrOneLinkSync {
         this._listeners = new Set();
         this._capabilitiesCache = null;
         this._rateLimitedUntil = 0;
-        this.state = this._loadState();
         this.binding = this._loadBinding();
         this.keys = this._loadKeys();
+        this.state = this._loadState();
+        this._hydrateFromLocalStore();
     }
 
     onChange(listener) {
@@ -338,6 +375,24 @@ class ZephyrOneLinkSync {
         };
     }
 
+    _accountKey() {
+        return accountKeyOf(this.binding) || this.state.accountKey || '';
+    }
+
+    _hydrateFromLocalStore() {
+        if (!this.localStore) return;
+        const key = this._accountKey();
+        if (!key) return;
+        const loaded = this.localStore.loadAccount(key);
+        if (loaded.meta) {
+            Object.assign(this.state, loaded.meta);
+        }
+        if (loaded.outbox && loaded.outbox.length) this.state.outbox = loaded.outbox;
+        if (loaded.conflicts && loaded.conflicts.length) this.state.conflicts = loaded.conflicts;
+        this.state.accountKey = key;
+        this._refreshPendingCount();
+    }
+
     _loadBinding() {
         const saved = readJson(this.bindingPath, null);
         if (!saved || !saved.deviceId || !saved.accessCredential) return null;
@@ -352,6 +407,10 @@ class ZephyrOneLinkSync {
 
     _saveState() {
         atomicWriteJson(this.statePath, this.state);
+        if (this.localStore) {
+            const key = this._accountKey();
+            if (key) this.localStore.persistState(key, this.state);
+        }
     }
 
     _saveBinding() {
@@ -906,6 +965,7 @@ class ZephyrOneLinkSync {
             this.state.bootstrapId = '';
             this.state.bootstrapPagesFetched = 0;
             this.state.bootstrapTokenExpiresAt = 0;
+            if (this.localStore) this.localStore.clearStaging(this._accountKey());
             return null;
         }
         return token;
@@ -961,7 +1021,12 @@ class ZephyrOneLinkSync {
                 throw err;
             }
             const entities = Array.isArray(page.entities) ? page.entities : [];
-            for (const entity of entities) await this._applyRemoteChange(entity);
+            if (this.localStore) {
+                const key = this._accountKey();
+                for (const entity of entities) this.localStore.upsertStaging(key, entity);
+            } else {
+                for (const entity of entities) await this._applyRemoteChange(entity);
+            }
             this.state.snapshotCursor = Number(page.snapshotCursor) || this.state.snapshotCursor;
             this.state.appliedCursor = this.state.snapshotCursor;
             this.state.bootstrapId = page.bootstrapId || this.state.bootstrapId;
@@ -969,6 +1034,7 @@ class ZephyrOneLinkSync {
             pagesThisRound += 1;
             pageToken = page.nextPageToken || null;
             if (page.complete || !pageToken) {
+                if (this.localStore) this._promoteBootstrapStaging();
                 this.state.bootstrapComplete = true;
                 this.state.bootstrapPageToken = null;
                 this.state.bootstrapTokenExpiresAt = 0;
@@ -988,6 +1054,21 @@ class ZephyrOneLinkSync {
         throw err;
     }
 
+    _promoteBootstrapStaging() {
+        if (!this.localStore) return;
+        const key = this._accountKey();
+        const staged = this.localStore.listStaging(key);
+        const apply = () => {
+            for (const entity of staged) this._applyRemoteChange(entity);
+            this.localStore.clearStaging(key);
+        };
+        if (this.db && typeof this.db.transaction === 'function') {
+            this.db.transaction(apply)();
+        } else {
+            apply();
+        }
+    }
+
     async _pullChanges() {
         let cursor = this.state.appliedCursor;
         for (let i = 0; i < MAX_PAGES_PER_ROUND; i += 1) {
@@ -1000,12 +1081,35 @@ class ZephyrOneLinkSync {
                 },
             });
             const changes = Array.isArray(page.changes) ? page.changes : [];
-            for (const change of changes) await this._applyRemoteChange(change);
-            cursor = Number(page.nextCursor) || cursor;
-            this.state.appliedCursor = cursor;
+            const previousCursor = cursor;
+            const checkpoint = this._checkpointMirrors();
+            const applyPage = () => {
+                for (const change of changes) this._applyRemoteChange(change);
+                cursor = Number(page.nextCursor) || cursor;
+                this.state.appliedCursor = cursor;
+            };
+            try {
+                if (this.db && typeof this.db.transaction === 'function') {
+                    this.db.transaction(applyPage)();
+                } else {
+                    applyPage();
+                }
+            } catch (err) {
+                this.state.appliedCursor = previousCursor;
+                cursor = previousCursor;
+                this._restoreMirrors(checkpoint);
+                throw err;
+            }
             if (changes.length) {
-                await this._ack(cursor, changes.map((item) => item.opId).filter(Boolean));
-                this.state.ackedCursor = cursor;
+                try {
+                    await this._ack(cursor, changes.map((item) => item.opId).filter(Boolean));
+                    this.state.ackedCursor = cursor;
+                } catch (err) {
+                    this.state.lastError = err.message || String(err);
+                    this.state.lastErrorCode = err.code || 'ack_failed';
+                    this._saveState();
+                    return;
+                }
             }
             this._saveState();
             if (!page.hasMore) return;
@@ -1131,6 +1235,8 @@ class ZephyrOneLinkSync {
                 if (Number.isFinite(Number(baseRevision))) {
                     existing.baseRevision = Number(baseRevision);
                 }
+                const snapshot = this._snapshotPayload(entityType, id);
+                if (snapshot !== undefined) existing.payload = snapshot;
                 this._refreshPendingCount();
                 this._saveState();
                 return existing;
@@ -1141,6 +1247,7 @@ class ZephyrOneLinkSync {
              * meaning of a server-idempotent id. */
             existing.status = 'superseded';
         }
+        const snapshot = this._snapshotPayload(entityType, id);
         const op = {
             opId: `local-${entityType}-${id}-${nextAction}-${crypto.randomUUID()}`,
             entityType,
@@ -1148,13 +1255,42 @@ class ZephyrOneLinkSync {
             action: nextAction,
             baseRevision: Number(baseRevision) || 0,
             fieldMask: mask,
+            payload: snapshot,
+            createdLocally: (Number(baseRevision) || 0) === 0,
+            dispatchedAt: null,
+            attemptCount: 0,
             status: 'pending',
             enqueuedAt: nowMs(),
         };
         this.state.outbox.push(op);
         this._refreshPendingCount();
-        this._saveState();
+        if (this.localStore) {
+            const key = this._accountKey();
+            if (!key) {
+                const err = new Error('desktop outbox requires a bound account');
+                err.code = 'unbound';
+                throw err;
+            }
+            this.localStore.upsertOutbox(key, op);
+            this.localStore.persistMeta(key, this.state);
+        } else {
+            this._saveState();
+        }
         return op;
+    }
+
+    _snapshotPayload(entityType, entityId) {
+        const api = this.mobileV1Api;
+        const user = this._localUser();
+        if (!api || !user) return undefined;
+        const adapter = api.adapters && api.adapters.get(entityType);
+        if (!adapter || typeof adapter.read !== 'function') return undefined;
+        try {
+            const row = adapter.read(user, entityId);
+            return row ? { ...row } : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     _captureDirtyRows(user) {
@@ -1268,6 +1404,7 @@ class ZephyrOneLinkSync {
             }
             let envelopes = {};
             if (Object.keys(secrets).length) {
+                this._prepareSecretJournal(op, Object.keys(secrets));
                 try {
                     envelopes = this._sealSecrets({
                         spec,
@@ -1278,6 +1415,7 @@ class ZephyrOneLinkSync {
                         serverId: capabilities.serverId || this.binding.serverId,
                         serverKey,
                     });
+                    this._markSecretJournal(op.opId, 'applied');
                 } catch (cause) {
                     const err = new Error(`secret envelope seal failed: ${cause && cause.message ? cause.message : 'seal failed'}`);
                     err.code = 'secret_envelope_invalid';
@@ -1305,6 +1443,24 @@ class ZephyrOneLinkSync {
             this._saveState();
             return;
         }
+        operations.sort((left, right) => {
+            const ia = PUSH_TYPE_ORDER.indexOf(left.entityType);
+            const ib = PUSH_TYPE_ORDER.indexOf(right.entityType);
+            return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        });
+        for (let offset = 0; offset < operations.length; offset += MAX_OPS_PER_BATCH) {
+            const batch = operations.slice(offset, offset + MAX_OPS_PER_BATCH);
+            await this._submitPushBatch(batch, registryHash);
+        }
+        this.state.outbox = (this.state.outbox || []).filter((op) => op.status === 'pending' || op.status === 'conflict');
+        this._refreshPendingCount();
+        /* serverCursor is the server's feed head, not proof that this device
+         * applied everything up to it. Pull owns appliedCursor. */
+        this._saveState();
+    }
+
+    async _submitPushBatch(operations, registryHash) {
+        if (!operations.length) return;
         this.state.pendingCount = operations.length;
         const result = await this._authorizedRequest({
             method: 'POST',
@@ -1324,6 +1480,8 @@ class ZephyrOneLinkSync {
             const op = byId.get(item.opId);
             const queued = (this.state.outbox || []).find((row) => row.opId === item.opId);
             if (!op || !queued) continue;
+            queued.attemptCount = (Number(queued.attemptCount) || 0) + 1;
+            queued.dispatchedAt = nowMs();
             if (item.status === 'accepted' || item.status === 'duplicate') {
                 queued.status = 'done';
                 const revision = Number(item.revision) || (op.action === 'delete' ? op.baseRevision : op.baseRevision + 1);
@@ -1333,26 +1491,25 @@ class ZephyrOneLinkSync {
                     this.state.lastPushedRevisions[pushedKey(op.entityType, op.entityId)] = revision;
                     this._rememberConfirmed(op.entityType, op.entityId, revision);
                 }
+                this._ackSecretJournal(queued.opId);
             } else if (item.status === 'conflict') {
                 queued.status = 'conflict';
-                this.state.conflicts.push({
+                this._recordConflict({
                     opId: op.opId,
                     entityType: op.entityType,
                     entityId: op.entityId,
-                    at: nowMs(),
+                    base: queued.payload || null,
+                    baseRevision: Number(queued.baseRevision) || 0,
+                    local: queued.payload || null,
+                    server: item.serverPayload || item.payload || null,
+                    serverRevision: Number(item.revision) || 0,
                     reason: item.reason || item.error || 'conflict',
                 });
             } else if (item.status === 'rejected') {
                 queued.status = 'pending';
                 queued.lastError = item.reason || item.error || 'rejected';
             }
-            /* unknown / retryable statuses leave the op pending with the same opId */
         }
-        this.state.outbox = (this.state.outbox || []).filter((op) => op.status === 'pending' || op.status === 'conflict');
-        this._refreshPendingCount();
-        /* serverCursor is the server's feed head, not proof that this device
-         * applied everything up to it. Pull owns appliedCursor. */
-        this._saveState();
     }
 
     _pushPayload(spec, row, fieldMask) {
@@ -1433,7 +1590,57 @@ class ZephyrOneLinkSync {
         }
     }
 
-    async _applyRemoteChange(change) {
+    _checkpointMirrors() {
+        const api = this.mobileV1Api;
+        const user = this._localUser();
+        const snap = new Map();
+        if (!api || !user) return snap;
+        for (const type of MIRROR_TYPES) {
+            const adapter = api.adapters.get(type);
+            if (!adapter || typeof adapter.list !== 'function') continue;
+            const rows = [];
+            try {
+                for (const row of adapter.list(user) || []) rows.push({ ...row });
+            } catch {
+                continue;
+            }
+            snap.set(type, rows);
+        }
+        return snap;
+    }
+
+    _restoreMirrors(snap) {
+        const api = this.mobileV1Api;
+        const user = this._localUser();
+        if (!api || !user || !snap) return;
+        for (const type of MIRROR_TYPES) {
+            const adapter = api.adapters.get(type);
+            const rows = snap.get(type);
+            if (!adapter || !rows) continue;
+            const live = [];
+            try { live.push(...(adapter.list(user) || [])); } catch { continue; }
+            const keep = new Set(rows.map((row) => String(
+                typeof adapter.idOf === 'function' ? adapter.idOf(row) : (row.id || row.noteId || ''),
+            )));
+            if (typeof adapter.remove === 'function') {
+                for (const row of live) {
+                    const id = String(typeof adapter.idOf === 'function' ? adapter.idOf(row) : (row.id || row.noteId || ''));
+                    if (!id || keep.has(id)) continue;
+                    try { adapter.remove(user, id, { remoteMerge: true }); } catch { /* ignore */ }
+                }
+            }
+            for (const row of rows) {
+                const id = String(typeof adapter.idOf === 'function' ? adapter.idOf(row) : (row.id || row.noteId || ''));
+                if (!id) continue;
+                const current = typeof adapter.read === 'function' ? adapter.read(user, id) : null;
+                const ctx = { actorDeviceId: this.binding?.deviceId, remoteMerge: true };
+                if (current && typeof adapter.update === 'function') adapter.update(user, id, row, ctx);
+                else if (!current && typeof adapter.create === 'function') adapter.create(user, id, row, ctx);
+            }
+        }
+    }
+
+    _applyRemoteChange(change) {
         const api = this.mobileV1Api;
         const user = this._localUser();
         if (!api || !user || !change) return;
@@ -1448,7 +1655,25 @@ class ZephyrOneLinkSync {
         ));
         if (change.action === 'delete') {
             if (pending && pending.action !== 'delete') {
-                this._retainConflict(entityType, entityId, change, adapter.read(user, entityId));
+                const localRow = adapter.read(user, entityId) || pending.payload || null;
+                this._recordConflict({
+                    opId: pending.opId,
+                    entityType,
+                    entityId,
+                    base: pending.payload || localRow,
+                    baseRevision: Number(pending.baseRevision) || 0,
+                    local: localRow,
+                    server: { action: 'delete', revision: Number(change.revision) || 0 },
+                    serverRevision: Number(change.revision) || 0,
+                    reason: 'remote_delete',
+                });
+                this._copyPendingAsNew(entityType, entityId, localRow, pending);
+                try {
+                    adapter.remove(user, entityId, { actorDeviceId: this.binding.deviceId, remoteMerge: true });
+                } catch { /* already gone */ }
+                pending.status = 'conflict';
+                this._forgetConfirmed(entityType, entityId);
+                this._saveState();
                 return;
             }
             try {
@@ -1464,6 +1689,51 @@ class ZephyrOneLinkSync {
         const payload = this._stripPresenceFlags(spec, { ...(change.payload || {}), ...opened.fields });
         const existing = adapter.read(user, entityId);
         if (existing && pending && pending.action === 'upsert') {
+            const protectedFields = this._locallyChangedFields(entityType, entityId, existing);
+            const remoteMask = Array.isArray(change.fieldMask) && change.fieldMask.length
+                ? change.fieldMask
+                : Object.keys(payload);
+            const overlapping = remoteMask.filter((field) => protectedFields.has(field));
+            if (overlapping.length) {
+                const localPayload = pending.payload || existing;
+                let mergedPayload = null;
+                let unresolved = true;
+                if (entityType === 'note' && overlapping.includes('content')) {
+                    const diff = diff3Text(
+                        String(pending.payload?.content ?? existing.content ?? ''),
+                        String(existing.content ?? ''),
+                        String(payload.content ?? ''),
+                    );
+                    mergedPayload = { ...(localPayload || {}), ...payload, content: diff.text };
+                    unresolved = diff.unresolved;
+                    if (!unresolved) {
+                        adapter.update(user, entityId, { content: diff.text }, {
+                            actorDeviceId: this.binding.deviceId,
+                            remoteMerge: true,
+                        });
+                    }
+                }
+                this._recordConflict({
+                    opId: pending.opId,
+                    entityType,
+                    entityId,
+                    base: pending.payload || existing,
+                    baseRevision: Number(pending.baseRevision) || 0,
+                    local: localPayload,
+                    server: payload,
+                    serverRevision: Number(change.revision) || 0,
+                    mergedPayload,
+                    unresolved,
+                    reason: 'overlapping_fields',
+                });
+                const patch = this._mergeRemoteUnderPending(spec, existing, payload, change, opened.fields);
+                if (Object.keys(patch).length) {
+                    adapter.update(user, entityId, patch, { actorDeviceId: this.binding.deviceId, remoteMerge: true });
+                }
+                this._rememberConfirmed(entityType, entityId, Number(change.revision) || 0);
+                this._saveState();
+                return;
+            }
             const patch = this._mergeRemoteUnderPending(spec, existing, payload, change, opened.fields);
             if (Object.keys(patch).length) {
                 adapter.update(user, entityId, patch, { actorDeviceId: this.binding.deviceId, remoteMerge: true });
@@ -1597,17 +1867,175 @@ class ZephyrOneLinkSync {
     }
 
     _retainConflict(entityType, entityId, change, localRow) {
-        if (!Array.isArray(this.state.conflicts)) this.state.conflicts = [];
-        this.state.conflicts.push({
+        this._recordConflict({
             entityType,
             entityId,
-            remoteRevision: Number(change.revision) || 0,
-            remoteAction: change.action,
+            base: localRow || null,
+            baseRevision: this._confirmedBase(entityType, entityId, localRow),
             local: localRow || null,
-            at: nowMs(),
+            server: change && change.payload ? change.payload : { action: change && change.action },
+            serverRevision: Number(change && change.revision) || 0,
+            reason: (change && change.action) || 'conflict',
         });
-        this.state.conflictCount = this.state.conflicts.length;
+    }
+
+    _recordConflict(fields) {
+        if (!Array.isArray(this.state.conflicts)) this.state.conflicts = [];
+        const conflict = {
+            conflictId: fields.conflictId || crypto.randomUUID(),
+            opId: fields.opId || null,
+            entityType: fields.entityType,
+            entityId: fields.entityId,
+            base: fields.base || null,
+            baseRevision: Number(fields.baseRevision) || 0,
+            local: fields.local || null,
+            server: fields.server || null,
+            serverRevision: Number(fields.serverRevision) || 0,
+            mergedPayload: fields.mergedPayload || null,
+            unresolved: fields.unresolved !== false,
+            resolution: fields.resolution || null,
+            reason: fields.reason || 'conflict',
+            at: nowMs(),
+        };
+        this.state.conflicts.push(conflict);
+        if (this.localStore) {
+            const key = this._accountKey();
+            if (key) this.localStore.upsertConflict(key, conflict);
+        }
+        this._refreshPendingCount();
+        return conflict;
+    }
+
+    _copyPendingAsNew(entityType, entityId, localRow, pending) {
+        const api = this.mobileV1Api;
+        const user = this._localUser();
+        const adapter = api && api.adapters && api.adapters.get(entityType);
+        if (!adapter || typeof adapter.create !== 'function' || !user) return null;
+        const newId = crypto.randomUUID();
+        const payload = { ...(localRow || pending?.payload || {}) };
+        delete payload.id;
+        delete payload.noteId;
+        adapter.create(user, newId, payload, {
+            actorDeviceId: this.binding.deviceId,
+            remoteMerge: true,
+        });
+        this._enqueue({
+            entityType,
+            entityId: newId,
+            action: 'upsert',
+            baseRevision: 0,
+            fieldMask: pending?.fieldMask,
+        });
+        return newId;
+    }
+
+    copyConflictAsNew(entityType, entityId) {
+        const conflict = (this.state.conflicts || []).find((row) => (
+            row.entityType === entityType && row.entityId === entityId && row.unresolved !== false
+        ));
+        const local = conflict?.local || this._snapshotPayload(entityType, entityId);
+        const newId = this._copyPendingAsNew(entityType, entityId, local, {
+            fieldMask: Object.keys(local || {}),
+        });
+        if (conflict) {
+            conflict.resolution = 'COPY_AS_NEW';
+            conflict.copyId = newId;
+        }
         this._saveState();
+        return newId;
+    }
+
+    resolveConflict(conflictId, { resolution, mergedPayload } = {}) {
+        const conflict = (this.state.conflicts || []).find((row) => row.conflictId === conflictId);
+        if (!conflict) {
+            const err = new Error('conflict not found');
+            err.code = 'not_found';
+            throw err;
+        }
+        const serverRevision = Number(conflict.serverRevision) || Number(conflict.baseRevision) || 0;
+        const api = this.mobileV1Api;
+        const user = this._localUser();
+        const adapter = api && api.adapters && api.adapters.get(conflict.entityType);
+        let payload = conflict.local;
+        if (resolution === 'keep_server') payload = conflict.server;
+        if (resolution === 'manual_merge') payload = mergedPayload || conflict.mergedPayload;
+        if (resolution === 'keep_server' && adapter && user && payload && typeof adapter.update === 'function') {
+            adapter.update(user, conflict.entityId, payload, {
+                actorDeviceId: this.binding.deviceId,
+                remoteMerge: true,
+            });
+            this._rememberConfirmed(conflict.entityType, conflict.entityId, serverRevision);
+        } else {
+            const queued = (this.state.outbox || []).find((op) => (
+                op.entityType === conflict.entityType
+                && op.entityId === conflict.entityId
+                && op.status === 'pending'
+            ));
+            if (queued) queued.status = 'superseded';
+            const op = this._enqueue({
+                entityType: conflict.entityType,
+                entityId: conflict.entityId,
+                action: 'upsert',
+                baseRevision: serverRevision,
+                fieldMask: Object.keys(payload || {}),
+            });
+            if (op) {
+                op.payload = payload;
+                op.baseRevision = serverRevision;
+            }
+            conflict.resolvedOpId = op && op.opId;
+        }
+        conflict.resolution = resolution;
+        conflict.unresolved = false;
+        conflict.mergedPayload = payload;
+        const queued = (this.state.outbox || []).find((op) => op.opId === conflict.opId);
+        if (queued && queued.status === 'conflict') queued.status = 'done';
+        this._saveState();
+        return conflict;
+    }
+
+    _prepareSecretJournal(op, fields) {
+        if (!this.localStore || !op) return;
+        const key = this._accountKey();
+        if (!key) return;
+        for (const fieldName of fields || []) {
+            this.localStore.insertJournal({
+                journalId: crypto.randomUUID(),
+                accountKey: key,
+                opId: op.opId,
+                entityType: op.entityType,
+                entityId: op.entityId,
+                fieldName,
+                kind: 'put',
+                state: 'prepared',
+                createdAt: nowMs(),
+            });
+        }
+    }
+
+    _markSecretJournal(opId, state) {
+        if (!this.localStore || !opId) return;
+        const key = this._accountKey();
+        if (key) this.localStore.updateJournalState(key, opId, state);
+    }
+
+    _ackSecretJournal(opId) {
+        this._markSecretJournal(opId, 'acked');
+    }
+
+    recoverSecretJournal() {
+        if (!this.localStore) return [];
+        const key = this._accountKey();
+        if (!key) return [];
+        const prepared = this.localStore.listJournal(key, { state: 'prepared' });
+        return prepared.map((row) => ({
+            journalId: row.journal_id,
+            opId: row.op_id,
+            entityType: row.entity_type,
+            entityId: row.entity_id,
+            fieldName: row.field_name,
+            state: row.state,
+        }));
     }
 
     listDevices() {
@@ -1734,4 +2162,7 @@ module.exports = {
     applyQuery,
     accountKeyOf,
     MIRROR_TYPES,
+    MAX_OPS_PER_BATCH,
+    PUSH_TYPE_ORDER,
+    diff3Text,
 };

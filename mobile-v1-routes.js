@@ -503,6 +503,33 @@ function sendThrown(res, err, requestId) {
     });
 }
 
+/** Adapter/canonical 404s that hydrate may skip; anything else is a hard page abort. */
+function isExplicitNotFound(err) {
+    if (!err || typeof err !== 'object') return false;
+    const code = String(err.code || '');
+    if (code === 'resource_not_found_or_inaccessible') return true;
+    if (code === 'not_found' || code === 'entity_not_found') return true;
+    return Number(err.status) === 404;
+}
+
+function projectionFailed(change, cause) {
+    const err = new MobileStoreError(
+        'sync_projection_failed',
+        'canonical projection failed',
+        500,
+        {
+            retryable: true,
+            details: {
+                entityType: change && change.entityType,
+                entityId: change && change.entityId,
+                changeSeq: change && change.changeSeq,
+            },
+        },
+    );
+    if (cause) err.cause = cause;
+    return err;
+}
+
 class MobileV1Api {
     /**
      * @param {object} opts
@@ -619,6 +646,70 @@ class MobileV1Api {
             .slice()
             .sort((a, b) => Number(a.dependencyOrder || 0) - Number(b.dependencyOrder || 0))
             .map((entity) => entity.type);
+
+        try {
+            this.backfillEmptyFieldLedgers();
+        } catch (e) {
+            this.log('[mobile-v1] field-ledger backfill', e && e.message);
+        }
+        this._maintenanceTimer = setInterval(() => {
+            try { this.store.runMaintenance(); } catch (e) { this.log('[mobile-v1] maintenance', e && e.message); }
+        }, 60 * 60 * 1000);
+        this._maintenanceTimer.unref?.();
+    }
+
+    close() {
+        if (this._maintenanceTimer) {
+            clearInterval(this._maintenanceTimer);
+            this._maintenanceTimer = null;
+        }
+    }
+
+    runMaintenance(now) {
+        return this.store.runMaintenance({ now });
+    }
+
+    /**
+     * Historical databases have entity revisions but empty field ledgers, which
+     * fail-closed on every overlapping-looking push. Seed the current editable
+     * + secret fields at the current entity revision when the ledger is empty
+     * and a wired adapter can still read the row. Existing per-field rows are
+     * never overwritten.
+     */
+    backfillEmptyFieldLedgers() {
+        const rows = this.store.db.prepare(`SELECT owner_user_id, entity_type, entity_id, revision, updated_at
+            FROM mobile_entity_versions WHERE deleted_at IS NULL`).all();
+        let filled = 0;
+        for (const row of rows) {
+            const type = String(row.entity_type);
+            const adapter = this.adapters.get(type);
+            const spec = this.entityByType.get(type);
+            if (!adapter || typeof adapter.read !== 'function' || !spec) continue;
+            const owner = String(row.owner_user_id);
+            const entityId = String(row.entity_id);
+            if (this.store.fieldRevisions(owner, type, entityId).size > 0) continue;
+            let canonical = null;
+            try {
+                canonical = adapter.read({ userId: owner }, entityId);
+            } catch (err) {
+                this.log('[mobile-v1] field-ledger backfill read', type, entityId, err && err.message);
+                continue;
+            }
+            if (!canonical) continue;
+            const fields = [
+                ...(spec.editableFields || []),
+                ...(spec.secretFields || []),
+            ];
+            filled += Number(this.store.backfillFieldLedger({
+                ownerUserId: owner,
+                entityType: type,
+                entityId,
+                fields,
+                revision: Number(row.revision) || 1,
+                changedAt: Number(row.updated_at) || Date.now(),
+            }) || 0);
+        }
+        return filled;
     }
 
     // ------------------------------------------------------------ helpers ---
@@ -1991,8 +2082,16 @@ class MobileV1Api {
         let row = null;
         try {
             row = adapter.read(user, change.entityId);
-        } catch {
-            row = null;
+        } catch (err) {
+            /* Known type with a wired adapter: a hard read failure must abort
+             * the page (SYNC-CUR-006). Swallowing it as unsupported would skip
+             * the row and still advance nextCursor. Explicit not-found stays
+             * skippable so a later tombstone can catch up without freezing. */
+            if (isExplicitNotFound(err)) {
+                row = null;
+            } else {
+                throw projectionFailed(change, err);
+            }
         }
         if (!row) {
             /* A live change whose canonical row is gone, or whose owner key
@@ -2002,7 +2101,12 @@ class MobileV1Api {
              * skippable the same way an unknown type is skipped. */
             return { ...safeChange, payload: {}, unsupported: true };
         }
-        const payload = projectPayload(spec, row);
+        let payload;
+        try {
+            payload = projectPayload(spec, row);
+        } catch (err) {
+            throw projectionFailed(change, err);
+        }
         /* Presence flags stay in the payload. Re-sealing an unchanged secret
          * at a later entity revision is what made One fail the whole page
          * with internal_error after the first successful sync.
@@ -3035,5 +3139,6 @@ module.exports = {
     setPatchValueAtPath,
     createPushJsonBodyParser,
     sendError,
+    sendThrown,
     publishAcceptedPushWake,
 };

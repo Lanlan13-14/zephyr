@@ -75,7 +75,13 @@ class NotesService {
     }
 
     _runMobileMutation(meta, write) {
-        const result = this.mobileChangeBridge ? this.mobileChangeBridge.runMutation(meta, write) : write();
+        if (this.mobileChangeBridge) {
+            return this.mobileChangeBridge.runMutation({
+                ...meta,
+                insideTx: ({ result }) => this._emitOwnedMutation(meta, result),
+            }, write);
+        }
+        const result = write();
         this._emitOwnedMutation(meta, result);
         return result;
     }
@@ -84,20 +90,16 @@ class NotesService {
         if (typeof this.onOwnedMutation !== 'function' || !meta) return;
         const entityId = String(meta.entityId || result?.noteId || result?.id || '');
         if (!entityId) return;
-        try {
-            this.onOwnedMutation({
-                entityType: meta.entityType || 'note',
-                entityId,
-                action: meta.action,
-                user: meta.user,
-                actorDeviceId: meta.actorDeviceId || null,
-                fieldMask: Array.isArray(meta.fieldMask) ? meta.fieldMask : undefined,
-                remoteMerge: meta.remoteMerge === true,
-                baseRevision: meta.baseRevision,
-            });
-        } catch {
-            /* Hook must not roll back a committed canonical write. */
-        }
+        this.onOwnedMutation({
+            entityType: meta.entityType || 'note',
+            entityId,
+            action: meta.action,
+            user: meta.user,
+            actorDeviceId: meta.actorDeviceId || null,
+            fieldMask: Array.isArray(meta.fieldMask) ? meta.fieldMask : undefined,
+            remoteMerge: meta.remoteMerge === true,
+            baseRevision: meta.baseRevision,
+        });
     }
 
     _isActiveUserId(userId) {

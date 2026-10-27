@@ -266,11 +266,7 @@ function notifyOwnedLinkMutation(event) {
     if (!sync || typeof sync.recordLocalMutation !== 'function') return;
     if (!sync.binding) return;
     if (event && event.remoteMerge === true) return;
-    try {
-        sync.recordLocalMutation(event);
-    } catch (err) {
-        console.warn('[one-link] local mutation enqueue failed', err && err.message);
-    }
+    sync.recordLocalMutation(event);
 }
 const EMBEDDED_LISTEN_HOST = ZEPHYR_ONE_EMBEDDED
     ? '127.0.0.1'
@@ -9634,6 +9630,7 @@ if (ZEPHYR_ONE_EMBEDDED) {
         notesService,
         userSettingsService,
         mobileV1Api,
+        db: storage.rawDb(),
         log: (...args) => console.log('[one-link]', ...args),
     });
     mountZephyrOneLinkRoutes(app, {

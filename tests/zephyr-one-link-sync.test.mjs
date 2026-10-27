@@ -179,7 +179,7 @@ test('bootstrap GET proof is signed for the on-the-wire URL, not URLSearchParams
     assert.equal(challengePaths.some((p) => String(p).includes('pageToken=undefined')), false);
 });
 
-function bindDesktopSync(mod, { httpRequest, sleepFn } = {}) {
+function bindDesktopSync(mod, { httpRequest, sleepFn, db } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'one-link-'));
     const keys = mod.generateDeviceKeys();
     fs.writeFileSync(path.join(dir, 'one-link-device-keys.json'), JSON.stringify(keys));
@@ -205,6 +205,7 @@ function bindDesktopSync(mod, { httpRequest, sleepFn } = {}) {
         log: () => {},
         httpRequest,
         sleepFn: sleepFn || (async () => {}),
+        db,
     });
     return { dir, sync, keys };
 }
@@ -418,8 +419,8 @@ function memoryAdapter(rows) {
     };
 }
 
-function scriptedSync(mod, { rows, specs, httpRequest }) {
-    const { sync } = bindDesktopSync(mod, { httpRequest });
+function scriptedSync(mod, { rows, specs, httpRequest, db }) {
+    const { sync } = bindDesktopSync(mod, { httpRequest, db });
     sync.mobileV1Api = {
         adapters: new Map([...rows.keys()].map((type) => [type, memoryAdapter(rows.get(type))])),
         entityByType: new Map(Object.entries(specs)),
@@ -531,7 +532,7 @@ test('SYNC-SEC-001 a bad secret envelope aborts the entity and never writes a fa
             serverAuthorityFields: ['revision'],
         }]]),
     };
-    await assert.rejects(() => sync._applyRemoteChange({
+    assert.throws(() => sync._applyRemoteChange({
         entityType: 'connection',
         entityId: 'c-secret',
         action: 'upsert',
@@ -967,4 +968,286 @@ test('NotesService create/update/delete fire onOwnedMutation', () => {
     assert.equal(events.length, 3);
     assert.deepEqual(events.map((event) => event.action), ['upsert', 'upsert', 'delete']);
     assert.equal(events.every((event) => event.entityType === 'note' && event.entityId === created.noteId), true);
+});
+
+function memoryDb() {
+    const { createDatabase } = require('../sqlite-driver.js');
+    return createDatabase(':memory:', { forceBuiltin: true });
+}
+
+test('SYNC-CUR-002 pull mid-page failure does not advance appliedCursor', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'keep', revision: 1 }]]);
+    const db = memoryDb();
+    const sync = scriptedSync(mod, {
+        db,
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: async (_base, opts) => {
+            if (opts.path === '/api/mobile/v1/devices/proof-challenge') return challengeOk(opts);
+            if (opts.path === '/api/mobile/v1/sync/changes') {
+                return {
+                    ok: true, status: 200, headers: {},
+                    data: {
+                        changes: [
+                            { entityType: 'note', entityId: 'n1', action: 'upsert', revision: 2, fieldMask: ['title'], payload: { title: 'remote' } },
+                            { entityType: 'note', entityId: 'n-boom', action: 'upsert', revision: 2, fieldMask: ['title'], payload: { title: 'x' } },
+                        ],
+                        nextCursor: 20,
+                        hasMore: false,
+                    },
+                };
+            }
+            throw new Error('unexpected ' + opts.path);
+        },
+    });
+    sync.state.appliedCursor = 4;
+    sync.state.ackedCursor = 4;
+    const adapter = sync.mobileV1Api.adapters.get('note');
+    const originalRead = adapter.read.bind(adapter);
+    adapter.read = (user, id) => {
+        if (id === 'n-boom') throw new Error('boom');
+        return originalRead(user, id);
+    };
+    await assert.rejects(() => sync._pullChanges(), /boom/);
+    assert.equal(sync.state.appliedCursor, 4);
+    assert.equal(notes.get('n1').title, 'keep');
+});
+
+test('SYNC-CUR-003 ACK failure advances appliedCursor but not ackedCursor', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'keep', revision: 1 }]]);
+    const db = memoryDb();
+    const sync = scriptedSync(mod, {
+        db,
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: async (_base, opts) => {
+            if (opts.path === '/api/mobile/v1/devices/proof-challenge') return challengeOk(opts);
+            if (opts.path === '/api/mobile/v1/sync/changes') {
+                return {
+                    ok: true, status: 200, headers: {},
+                    data: {
+                        changes: [{ entityType: 'note', entityId: 'n1', action: 'upsert', revision: 2, fieldMask: ['title'], payload: { title: 'remote' } }],
+                        nextCursor: 9,
+                        hasMore: false,
+                    },
+                };
+            }
+            if (opts.path === '/api/mobile/v1/sync/ack') {
+                const err = new Error('ack timeout');
+                err.code = 'ack_failed';
+                throw err;
+            }
+            throw new Error('unexpected ' + opts.path);
+        },
+    });
+    sync.state.appliedCursor = 3;
+    sync.state.ackedCursor = 3;
+    await sync._pullChanges();
+    assert.equal(sync.state.appliedCursor, 9);
+    assert.equal(sync.state.ackedCursor, 3);
+    assert.equal(notes.get('n1').title, 'remote');
+});
+
+test('SYNC-CUR-004 bootstrap staging does not mutate the live mirror until promote', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map();
+    const db = memoryDb();
+    let pages = 0;
+    const sync = scriptedSync(mod, {
+        db,
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: async (_base, opts) => {
+            if (opts.path === '/api/mobile/v1/devices/proof-challenge') return challengeOk(opts);
+            if (opts.path === '/api/mobile/v1/capabilities' || String(opts.path || '').includes('capabilities')) {
+                return { ok: true, status: 200, headers: {}, data: { registryHash: 'hash', serverId: 'srv-1' } };
+            }
+            if (opts.path === '/api/mobile/v1/sync/bootstrap') {
+                pages += 1;
+                if (pages === 1) {
+                    return {
+                        ok: true, status: 200, headers: {},
+                        data: {
+                            entities: [{ entityType: 'note', entityId: 'n-boot', action: 'upsert', revision: 1, payload: { title: 'staged' } }],
+                            snapshotCursor: 5,
+                            nextPageToken: 'page-2',
+                            complete: false,
+                            bootstrapId: 'boot-1',
+                        },
+                    };
+                }
+                const err = new Error('killed');
+                err.code = 'network_reset';
+                throw err;
+            }
+            throw new Error('unexpected ' + opts.path);
+        },
+    });
+    sync.state.bootstrapComplete = false;
+    await assert.rejects(() => sync._bootstrapAll(), /killed/);
+    assert.equal(notes.has('n-boot'), false, 'live mirror must stay empty until promote');
+    assert.equal(sync.localStore.listStaging(sync._accountKey()).length, 1);
+});
+
+test('SYNC-OUT-003 201 pending ops split into two batches with sshKey before connection', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const sshKeys = new Map([['k1', { id: 'k1', name: 'key', revision: 1 }]]);
+    const connections = new Map();
+    const notes = new Map();
+    for (let i = 0; i < 200; i += 1) notes.set(`n${i}`, { id: `n${i}`, title: `t${i}`, revision: 1 });
+    connections.set('c1', { id: 'c1', name: 'box', sshKeyId: 'k1', revision: 1 });
+    const batches = [];
+    const sync = scriptedSync(mod, {
+        rows: new Map([['sshKey', sshKeys], ['connection', connections], ['note', notes]]),
+        specs: {
+            sshKey: { editableFields: ['name'], secretFields: [], serverAuthorityFields: ['revision'] },
+            connection: { editableFields: ['name', 'sshKeyId'], secretFields: [], serverAuthorityFields: ['revision'] },
+            note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] },
+        },
+        httpRequest: pushAwareHttp((opts) => {
+            batches.push(opts.body.operations.map((op) => op.entityType));
+            return {
+                ok: true, status: 200, headers: {},
+                data: {
+                    results: opts.body.operations.map((op) => ({ opId: op.opId, status: 'accepted', revision: 1 })),
+                    serverCursor: 1,
+                },
+            };
+        }),
+    });
+    await sync._pushPending();
+    assert.equal(batches.length, 2);
+    assert.ok(batches[0].includes('sshKey'));
+    const firstConn = batches[0].indexOf('connection');
+    const firstKey = batches[0].indexOf('sshKey');
+    if (firstConn >= 0) assert.equal(firstKey < firstConn, true);
+    else assert.equal(batches[1][0] === 'connection' || batches[1].includes('connection'), true);
+    assert.equal(batches[0].length + batches[1].length, 202);
+    assert.equal(batches[0].length, 200);
+});
+
+test('SYNC-CON-003 overlapping field conflict stores base/local/server', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local', revision: 2 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync.recordLocalMutation({ entityType: 'note', entityId: 'n1', action: 'upsert', fieldMask: ['title'], baseRevision: 1 });
+    await sync._applyRemoteChange({
+        entityType: 'note',
+        entityId: 'n1',
+        action: 'upsert',
+        revision: 3,
+        fieldMask: ['title'],
+        payload: { title: 'server' },
+    });
+    assert.equal(sync.state.conflicts.length, 1);
+    const conflict = sync.state.conflicts[0];
+    assert.ok(conflict.base);
+    assert.ok(conflict.local);
+    assert.equal(conflict.server.title, 'server');
+    assert.equal(notes.get('n1').title, 'local');
+});
+
+test('SYNC-CON-007 note content diff3 merges disjoint lines and keeps hunks', (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const merged = mod.diff3Text('a\nb\nc', 'a\nB\nc', 'a\nb\nC');
+    assert.equal(merged.unresolved, false);
+    assert.equal(merged.text, 'a\nB\nC');
+    const clash = mod.diff3Text('a\nb\nc', 'a\nL\nc', 'a\nS\nc');
+    assert.equal(clash.unresolved, true);
+    assert.match(clash.text, /<<<<<<< local/);
+    assert.match(clash.text, />>>>>>> server/);
+});
+
+test('SYNC-CON-008 COPY_AS_NEW uses a fresh UUID twice and never id-copy', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local', revision: 2 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync.recordLocalMutation({ entityType: 'note', entityId: 'n1', action: 'upsert', fieldMask: ['title'] });
+    await sync._applyRemoteChange({
+        entityType: 'note', entityId: 'n1', action: 'upsert', revision: 9,
+        fieldMask: ['title'], payload: { title: 'server' },
+    });
+    const first = sync.copyConflictAsNew('note', 'n1');
+    const second = sync.copyConflictAsNew('note', 'n1');
+    assert.notEqual(first, second);
+    assert.notEqual(first, 'n1-copy');
+    assert.notEqual(second, 'n1-copy');
+    assert.equal(notes.has(first), true);
+    assert.equal(notes.has(second), true);
+});
+
+test('SYNC-CON-009 remote delete with local pending keeps a conflict copy', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local-edit', revision: 2 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync.recordLocalMutation({ entityType: 'note', entityId: 'n1', action: 'upsert', fieldMask: ['title'], baseRevision: 1 });
+    await sync._applyRemoteChange({
+        entityType: 'note', entityId: 'n1', action: 'delete', revision: 8,
+    });
+    assert.equal(notes.has('n1'), false);
+    const copies = [...notes.keys()].filter((id) => id !== 'n1');
+    assert.equal(copies.length, 1);
+    assert.equal(notes.get(copies[0]).title, 'local-edit');
+    assert.equal(sync.state.conflicts.length, 1);
+});
+
+test('SYNC-CON-010 keep_local mints a new opId against the server base', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local', revision: 2 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    const original = sync.recordLocalMutation({
+        entityType: 'note', entityId: 'n1', action: 'upsert', fieldMask: ['title'], baseRevision: 1,
+    });
+    await sync._applyRemoteChange({
+        entityType: 'note', entityId: 'n1', action: 'upsert', revision: 7,
+        fieldMask: ['title'], payload: { title: 'server' },
+    });
+    const conflict = sync.state.conflicts[0];
+    const resolved = sync.resolveConflict(conflict.conflictId, { resolution: 'keep_local' });
+    assert.ok(resolved.resolvedOpId);
+    assert.notEqual(resolved.resolvedOpId, original.opId);
+    const next = sync.state.outbox.find((op) => op.opId === resolved.resolvedOpId);
+    assert.equal(next.baseRevision, 7);
+});
+
+test('SYNC-SEC-004 prepared secret journal survives a simulated crash', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const db = memoryDb();
+    const notes = new Map([['n1', { id: 'n1', title: 'x', password: 'secret', revision: 1 }]]);
+    const sync = scriptedSync(mod, {
+        db,
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: ['password'], serverAuthorityFields: ['revision'] } },
+    });
+    const op = sync.recordLocalMutation({ entityType: 'note', entityId: 'n1', action: 'upsert', fieldMask: ['password'] });
+    sync._prepareSecretJournal(op, ['password']);
+    const recovered = sync.recoverSecretJournal();
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0].opId, op.opId);
+    assert.equal(recovered[0].fieldName, 'password');
+    assert.equal(recovered[0].state, 'prepared');
 });

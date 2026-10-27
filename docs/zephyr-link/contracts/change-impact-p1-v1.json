@@ -1,0 +1,37 @@
+{
+  "channels": ["owned-sync", "secret", "control"],
+  "platforms": ["server", "desktop"],
+  "dataDomains": ["local", "owned"],
+  "states": ["unbound", "bound", "offline", "conflicted", "migrating"],
+  "protocolImpact": ["additive"],
+  "dataImpact": ["cursor", "revision", "tombstone", "secrets", "schema"],
+  "requiredEvidence": ["L0", "L1", "L2", "L3", "L4"],
+  "failureInjections": [
+    "kill-between-canonical-write-and-outbox",
+    "bootstrap-page-crash-before-promote",
+    "ack-timeout-after-apply",
+    "pull-page-mid-apply-kill",
+    "201-ops-dependency-batch",
+    "overlapping-field-keeps-base-local-server",
+    "note-diff3-unresolved-hunk",
+    "copy-as-new-fresh-uuid",
+    "remote-delete-with-local-pending-edit",
+    "conflict-resolve-new-opid",
+    "secret-journal-crash-between-store-and-db",
+    "known-type-projection-failure-no-skip",
+    "change-feed-180d-retention",
+    "empty-ledger-backfill-then-overlap",
+    "delivered-wake-outbox-gc"
+  ],
+  "compatibility": ["old-server", "old-client", "new-server", "new-client"],
+  "rollback": [
+    "git revert the P1 commit on zephyr-link-foundation-v1",
+    "restore SQLite from pre-change backup; one_link_* and ledger backfill are additive",
+    "desktop JSON one-link-sync-state.json remains readable if sqlite local store is empty",
+    "disable MobileV1Api maintenance timer by revert; pruneChangesBefore is opt-in by time"
+  ],
+  "evidenceLinks": [
+    "docs/zephyr-link/TESTING-AND-RELEASE-GATES.md",
+    "docs/zephyr-link/ZEPHYR-LINK-INTERCONNECTION-SPEC.md"
+  ]
+}

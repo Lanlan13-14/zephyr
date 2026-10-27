@@ -404,3 +404,30 @@ test('resource service mutations used by Web and AI enter the same feed', () => 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('insideTx shares the canonical write transaction and rolls it back on throw', () => {
+  const ctx = freshNotes();
+  try {
+    const user = { userId: 'account-1', role: 'user' };
+    let observedOpenTx = false;
+    const original = ctx.notes.mobileChangeBridge.runMutation.bind(ctx.notes.mobileChangeBridge);
+    ctx.notes.mobileChangeBridge.runMutation = (meta, write) => original({
+      ...meta,
+      insideTx(args) {
+        observedOpenTx = ctx.db.inTransaction === true || ctx.db.isTransaction === true;
+        if (typeof meta.insideTx === 'function') meta.insideTx(args);
+        throw new Error('outbox_fail');
+      },
+    }, write);
+    assert.throws(
+      () => ctx.notes.create(user, { id: 'must-rollback-insideTx', title: 'No partial commit' }),
+      /outbox_fail/,
+    );
+    assert.equal(observedOpenTx, true, 'insideTx must run inside this.db.transaction');
+    assert.equal(ctx.db.prepare('SELECT COUNT(*) AS count FROM notes').get().count, 0);
+    assert.equal(ctx.db.prepare('SELECT COUNT(*) AS count FROM mobile_sync_changes').get().count, 0);
+    assert.equal(ctx.db.prepare('SELECT COUNT(*) AS count FROM mobile_change_outbox').get().count, 0);
+  } finally {
+    ctx.cleanup();
+  }
+});
