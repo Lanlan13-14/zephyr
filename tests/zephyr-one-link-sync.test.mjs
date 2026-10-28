@@ -179,7 +179,7 @@ test('bootstrap GET proof is signed for the on-the-wire URL, not URLSearchParams
     assert.equal(challengePaths.some((p) => String(p).includes('pageToken=undefined')), false);
 });
 
-function bindDesktopSync(mod, { httpRequest, sleepFn, db } = {}) {
+function bindDesktopSync(mod, { httpRequest, sleepFn, db, linkClient } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'one-link-'));
     const keys = mod.generateDeviceKeys();
     fs.writeFileSync(path.join(dir, 'one-link-device-keys.json'), JSON.stringify(keys));
@@ -206,6 +206,7 @@ function bindDesktopSync(mod, { httpRequest, sleepFn, db } = {}) {
         httpRequest,
         sleepFn: sleepFn || (async () => {}),
         db,
+        linkClient,
     });
     return { dir, sync, keys };
 }
@@ -1486,3 +1487,67 @@ test('previewImport samples id/name/title and omits secrets', async (t) => {
     assert.equal(byType.connection.localCount, 1);
     assert.equal(byType.connection.sample[0].id, 'c1');
 });
+
+test('bound linkClient sends bootstrap over ZSL and skips HTTPS sync paths', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const calls = [];
+    const httpPaths = [];
+    const linkClient = {
+        push: async ({ kind, body }) => {
+            calls.push({ kind, body });
+            if (body.op === 'bootstrap') {
+                return {
+                    ackKind: 2,
+                    ack: { ok: true, complete: true, entities: [], snapshotCursor: 1, nextPageToken: null },
+                };
+            }
+            if (body.op === 'ack') {
+                return { ackKind: 2, ack: { ok: true } };
+            }
+            throw new Error('unexpected op ' + body.op);
+        },
+    };
+    const { sync } = bindDesktopSync(mod, {
+        linkClient,
+        httpRequest: async (_base, opts) => {
+            httpPaths.push(opts.path);
+            throw new Error('unexpected HTTP ' + opts.path);
+        },
+    });
+    const state = await sync.syncNow({ trigger: 'manual' });
+    assert.equal(state.bootstrapComplete, true);
+    assert.equal(calls.some((row) => row.kind === 1 && row.body.op === 'bootstrap'), true);
+    assert.equal(httpPaths.includes('/api/mobile/v1/sync/bootstrap'), false);
+    assert.equal(httpPaths.includes('/api/mobile/v1/devices/proof-challenge'), false);
+});
+
+test('ZSL ack cursor_expired rejects with that code and does not fall back to HTTPS', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const httpPaths = [];
+    const linkClient = {
+        push: async () => ({
+            ackKind: 2,
+            ack: { ok: false, error: { code: 'cursor_expired', message: 'cursor expired', retryable: false } },
+        }),
+    };
+    const { sync } = bindDesktopSync(mod, {
+        linkClient,
+        httpRequest: async (_base, opts) => {
+            httpPaths.push(opts.path);
+            throw new Error('unexpected HTTP ' + opts.path);
+        },
+    });
+    await assert.rejects(
+        () => sync.syncNow({ trigger: 'manual' }),
+        (err) => {
+            assert.equal(err.code, 'cursor_expired');
+            assert.equal(err.retryable, false);
+            return true;
+        },
+    );
+    assert.equal(httpPaths.length, 0);
+});
+
+

@@ -154,7 +154,7 @@ const { OneClientManager } = require('./one-client-manager');
 const { MobileV1Api, createPushJsonBodyParser } = require('./mobile-v1-routes');
 const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-enrollment');
 const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go, linkTunnelDial, linkTunnelAttach } = require('./link-v2-go-proxy');
-const { OneLinkInitiator } = require('./zephyr-one-link-embed');
+const { OneLinkInitiator, OneLinkSyncSession } = require('./zephyr-one-link-embed');
 const { createLinkSyncBridge } = require('./link-v2-sync-bridge');
 const { createLinkFileBridge } = require('./link-v2-file-bridge');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
@@ -9627,6 +9627,26 @@ if (ZEPHYR_ONE_EMBEDDED) {
      * Android One. Bound to the auto-adopted local account and only mounted
      * inside the embedded core so a hosted main never talks to a remote as a
      * client of itself. */
+    const getOneLinkIdentity = () => {
+        const binding = oneLinkSync?.binding;
+        const keys = oneLinkSync?.keys;
+        if (!binding?.serverUrl || !binding?.deviceId || !keys?.signing?.privateKeyPem) return null;
+        return {
+            serverUrl: binding.serverUrl,
+            deviceId: binding.deviceId,
+            privateKeyPem: keys.signing.privateKeyPem,
+            allowInsecureTls: binding.allowInsecureTls === true,
+        };
+    };
+    oneLinkInitiator = new OneLinkInitiator({
+        getIdentity: getOneLinkIdentity,
+        log: (...args) => console.log(...args),
+    });
+    const linkClient = new OneLinkSyncSession({
+        getIdentity: getOneLinkIdentity,
+        process: oneLinkInitiator.process,
+        log: (...args) => console.log('[one-link]', ...args),
+    });
     oneLinkSync = createZephyrOneLinkSync({
         dataDir: DATA_DIR,
         storage,
@@ -9636,24 +9656,11 @@ if (ZEPHYR_ONE_EMBEDDED) {
         mobileV1Api,
         db: storage.rawDb(),
         log: (...args) => console.log('[one-link]', ...args),
+        linkClient,
     });
     mountZephyrOneLinkRoutes(app, {
         linkSync: oneLinkSync,
         requireUser,
-    });
-    oneLinkInitiator = new OneLinkInitiator({
-        getIdentity: () => {
-            const binding = oneLinkSync?.binding;
-            const keys = oneLinkSync?.keys;
-            if (!binding?.serverUrl || !binding?.deviceId || !keys?.signing?.privateKeyPem) return null;
-            return {
-                serverUrl: binding.serverUrl,
-                deviceId: binding.deviceId,
-                privateKeyPem: keys.signing.privateKeyPem,
-                allowInsecureTls: binding.allowInsecureTls === true,
-            };
-        },
-        log: (...args) => console.log(...args),
     });
     oneLinkSync.start();
 }

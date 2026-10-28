@@ -112,6 +112,9 @@ interface SyncStateDao {
     @Query("UPDATE sync_state SET ackedCursor = :cursor WHERE bindingKey = :bindingKey")
     suspend fun updateAckedCursor(bindingKey: String, cursor: Long)
 
+    @Query("UPDATE sync_state SET import_decision_required = :value WHERE bindingKey = :bindingKey")
+    suspend fun updateImportDecisionRequired(bindingKey: String, value: Boolean)
+
     @Query("DELETE FROM sync_state")
     suspend fun deleteAll()
 }

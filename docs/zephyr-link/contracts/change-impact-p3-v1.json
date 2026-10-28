@@ -1,0 +1,27 @@
+{
+  "channels": ["owned-sync", "control"],
+  "platforms": ["server", "desktop", "android", "ios"],
+  "dataDomains": ["local", "owned"],
+  "states": ["unbound", "bound", "offline", "conflicted", "migrating"],
+  "protocolImpact": ["additive"],
+  "dataImpact": ["cursor", "revision", "none"],
+  "requiredEvidence": ["L0", "L1", "L2", "L3", "L4"],
+  "failureInjections": [
+    "desktop-owned-sync-uses-zsl-not-https-when-embed-present",
+    "desktop-https-fallback-when-embed-missing",
+    "ios-link-transport-same-op-wire-as-android",
+    "android-first-bind-does-not-auto-upload",
+    "zsl-revoked-device-rejected-on-bridge",
+    "unnegotiated-v2-envelope-rejected"
+  ],
+  "compatibility": ["old-server", "old-client", "new-server", "new-client"],
+  "rollback": [
+    "git revert the P3 commit on zephyr-link-foundation-v1",
+    "desktop falls back to HTTPS device-proof if linkClient is null",
+    "iOS host keeps RefreshingSyncTransport if no LinkChannel is injected"
+  ],
+  "evidenceLinks": [
+    "docs/zephyr-link/TESTING-AND-RELEASE-GATES.md",
+    "docs/zephyr-link/ZEPHYR-LINK-INTERCONNECTION-SPEC.md"
+  ]
+}

@@ -5,11 +5,17 @@
  *
  * Android dials an Agent bastion through a loopback zephyr-link-embed child:
  * the child owns the ZSL/2 session and the one-relay splice, and the host
- * only signs the handshake and keeps the upgraded socket. The desktop core
- * already has the device key (zephyr-one-link-sync.js) but its sync path is
- * plain HTTPS, so a jumpHostIds entry of `agent:<id>` used to look for an
- * Agent connected to *this* machine and fail. This module is that missing
- * child: One → main → Agent, same wire as the phone.
+ * only signs the handshake and keeps the upgraded socket.
+ *
+ * Two host facades share that child:
+ *   - OneLinkSyncSession: owned-sync over /link/dial + /link/push (same wire
+ *     as Android EmbeddedLinkApi.dial/push). Never starts the initiator splice.
+ *   - OneLinkInitiator: Agent bastion jumper. It also POSTs
+ *     /link/tunnel/initiator/start and must not be reused as a sync session.
+ *
+ * A jumpHostIds entry of `agent:<id>` used to look for an Agent connected to
+ * *this* machine and fail. OneLinkInitiator is that missing jumper:
+ * One → main → Agent, same wire as the phone.
  */
 
 const { spawn } = require('child_process');
@@ -298,9 +304,172 @@ class OneLinkInitiator {
     }
 }
 
+class OneLinkSyncSession {
+    /**
+     * Owned-sync session over the embedded Go Link process.
+     * Dials `/link/dial` (+ `/link/dial/finish`) and pushes SYNC_OP frames
+     * through `/link/push`. This is not OneLinkInitiator: the jump-host
+     * path also starts `/link/tunnel/initiator/start`, which must not wrap
+     * a sync session.
+     *
+     * @param {object} opts
+     * @param {() => ({serverUrl:string, deviceId:string, privateKeyPem:string, allowInsecureTls?:boolean}|null)} opts.getIdentity
+     * @param {LinkEmbedProcess} [opts.process]
+     * @param {function} [opts.log]
+     * @param {function} [opts._postJson]
+     */
+    constructor({ getIdentity, process = null, log = () => {}, _postJson = null } = {}) {
+        this.getIdentity = getIdentity;
+        this.process = process || new LinkEmbedProcess({ log });
+        this.log = typeof log === 'function' ? log : () => {};
+        this.sessionId = '';
+        this.peerUrl = '';
+        this.dialing = null;
+        this._postJson = typeof _postJson === 'function' ? _postJson : null;
+    }
+
+    _identity() {
+        const identity = this.getIdentity ? this.getIdentity() : null;
+        if (!identity?.serverUrl || !identity.deviceId || !identity.privateKeyPem) {
+            const err = new Error('尚未绑定主端，无法经由 Link 通道同步');
+            err.code = 'unbound';
+            throw err;
+        }
+        return identity;
+    }
+
+    _peer(serverUrl) {
+        return `${String(serverUrl).replace(/\/+$/, '')}/api/link/v2`;
+    }
+
+    async _post(pathname, body) {
+        if (this._postJson) return this._postJson(pathname, body);
+        const base = await this.process.ensureStarted();
+        return postJson(base, pathname, body);
+    }
+
+    async ensureSession() {
+        if (this.sessionId) return this.sessionId;
+        if (this.dialing) return this.dialing;
+        this.dialing = this._dial().finally(() => { this.dialing = null; });
+        return this.dialing;
+    }
+
+    async _dial() {
+        const identity = this._identity();
+        const peer = this._peer(identity.serverUrl);
+        const hello = await this._post('/link/dial', {
+            serverUrl: peer,
+            deviceId: identity.deviceId,
+            insecure: identity.allowInsecureTls === true,
+        });
+        if (!hello.data?.ok) {
+            this.sessionId = '';
+            const message = hello.data?.error?.message || hello.raw || 'Link 握手失败';
+            throw Object.assign(new Error(message), {
+                code: hello.data?.error?.code || 'link_unavailable',
+                retryable: hello.data?.error?.retryable === true,
+            });
+        }
+        let sessionId = hello.data.sessionId;
+        if (hello.data.pending) {
+            const transcript = Buffer.from(String(hello.data.transcript || ''), 'base64');
+            const proof = handshakeProof(identity.privateKeyPem, identity.deviceId, transcript);
+            const finished = await this._post('/link/dial/finish', { sessionId, proof });
+            if (!finished.data?.ok) {
+                this.sessionId = '';
+                const message = finished.data?.error?.message || 'Link 握手签名被拒绝';
+                throw Object.assign(new Error(message), {
+                    code: finished.data?.error?.code || 'proof_required',
+                    retryable: finished.data?.error?.retryable === true,
+                });
+            }
+            sessionId = finished.data.sessionId || sessionId;
+        }
+        this.sessionId = sessionId;
+        this.peerUrl = peer;
+        return sessionId;
+    }
+
+    async push({ kind, body } = {}) {
+        try {
+            return await this._pushOnce({ kind, body });
+        } catch (error) {
+            if (error && (error.business || error.code === 'link_embed_missing' || error.code === 'unbound')) {
+                throw error;
+            }
+            this.sessionId = '';
+            this.peerUrl = '';
+            if (error && error._zslRetried) throw error;
+            try {
+                const retry = await this._pushOnce({ kind, body });
+                return retry;
+            } catch (retryError) {
+                if (retryError) retryError._zslRetried = true;
+                this.sessionId = '';
+                this.peerUrl = '';
+                throw retryError;
+            }
+        }
+    }
+
+    async _pushOnce({ kind, body }) {
+        const identity = this._identity();
+        const peer = this.peerUrl || this._peer(identity.serverUrl);
+        const sessionId = await this.ensureSession();
+        let response;
+        try {
+            response = await this._post('/link/push', {
+                sessionId,
+                peerUrl: peer,
+                kind: kind == null ? 1 : kind,
+                body,
+                secret: false,
+            });
+        } catch (error) {
+            this.sessionId = '';
+            this.peerUrl = '';
+            throw error;
+        }
+        if (!response.data?.ok) {
+            const code = response.data?.error?.code || 'link_unavailable';
+            if (code === 'session_unknown' || code === 'invalid_frame') {
+                this.sessionId = '';
+                this.peerUrl = '';
+            }
+            const err = new Error(response.data?.error?.message || response.raw || 'Link 推送失败');
+            err.code = code;
+            err.retryable = response.data?.error?.retryable === true;
+            err.sessionInvalid = code === 'session_unknown' || code === 'invalid_frame';
+            throw err;
+        }
+        const ack = response.data.ack;
+        if (ack && ack.ok === false) {
+            const nested = ack.error || {};
+            const err = new Error(nested.message || '同步请求失败');
+            err.code = nested.code;
+            err.retryable = nested.retryable === true;
+            err.details = nested.details;
+            err.data = ack;
+            err.business = true;
+            throw err;
+        }
+        return {
+            ackKind: response.data.ackKind,
+            ack,
+        };
+    }
+
+    stop() {
+        this.sessionId = '';
+        this.peerUrl = '';
+    }
+}
+
 module.exports = {
     LinkEmbedProcess,
     OneLinkInitiator,
+    OneLinkSyncSession,
     handshakeProof,
     resolveEmbedBin,
     linkEmbedName,

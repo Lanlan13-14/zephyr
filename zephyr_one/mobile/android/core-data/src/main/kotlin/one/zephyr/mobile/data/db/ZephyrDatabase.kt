@@ -41,7 +41,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         TrustedCertificateRow::class,
         SecretMutationJournalRow::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -189,6 +189,15 @@ abstract class ZephyrDatabase : RoomDatabase() {
                 )
             }
         }
+
+        val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE sync_state " +
+                        "ADD COLUMN import_decision_required INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
     }
 }
 
@@ -215,7 +224,11 @@ object DatabaseFactory {
                     }
                 },
             )
-            .addMigrations(ZephyrDatabase.MIGRATION_1_2, ZephyrDatabase.MIGRATION_2_3)
+            .addMigrations(
+                ZephyrDatabase.MIGRATION_1_2,
+                ZephyrDatabase.MIGRATION_2_3,
+                ZephyrDatabase.MIGRATION_3_4,
+            )
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()
 
@@ -232,7 +245,11 @@ object DatabaseFactory {
                     }
                 },
             )
-            .addMigrations(ZephyrDatabase.MIGRATION_1_2, ZephyrDatabase.MIGRATION_2_3)
+            .addMigrations(
+                ZephyrDatabase.MIGRATION_1_2,
+                ZephyrDatabase.MIGRATION_2_3,
+                ZephyrDatabase.MIGRATION_3_4,
+            )
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .build()
     }

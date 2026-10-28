@@ -96,6 +96,26 @@ interface SyncLocalStore {
 
     suspend fun recordFailure(finishedAt: Long, error: MobileError, nextEligibleAt: Long?)
 
+    /**
+     * First-bind import gate. When true, PUSH_PENDING must not call [SyncTransport.push];
+     * bootstrap/pull/ack still run and queued operations stay pending.
+     */
+    suspend fun importDecisionRequired(): Boolean
+
+    suspend fun setImportDecisionRequired(value: Boolean)
+
+    suspend fun clearImportDecisionRequired()
+
+    /** keep_local: clear the gate without treating preexisting rows as dirty. */
+    suspend fun applyImportKeepLocal()
+
+    /**
+     * True when this device already has local owned data that must not be auto-uploaded on first
+     * bind: pending ops, or a non-empty writable mirror (connections/notes and other owned rows).
+     * An empty library is false so a fresh bind can push.
+     */
+    suspend fun hasPreexistingLocalData(): Boolean
+
     // ---- operation queue ----------------------------------------------------------------------
 
     suspend fun pendingOperations(): List<PendingOperation>

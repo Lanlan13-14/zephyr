@@ -1615,6 +1615,217 @@ class SyncActorTest {
     }
 
     @Test
+    fun `importDecisionRequired skips push and keeps pending ops`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.importDecisionRequiredFlag = true
+        store.queue.add(pendingOp("op-1"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 9,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.ACCEPTED,
+                            entityId = "c-1",
+                            revision = 7,
+                            changeSeq = 9,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
+
+        assertTrue(result.succeeded)
+        assertEquals(null, result.error)
+        assertEquals(0, result.pushed)
+        assertEquals(0, transport.pushedBatches.size)
+        assertEquals(listOf("op-1"), store.queue.map { it.opId })
+        assertTrue(store.dispatched.isEmpty())
+        assertTrue(transport.ackedCursors.isEmpty())
+        assertTrue(result.phasesRun.contains(SyncPhase.PUSH_PENDING))
+        assertTrue(result.phasesRun.contains(SyncPhase.PULL_CHANGES))
+        assertEquals(BindingState.IDLE, result.endState)
+    }
+
+    @Test
+    fun `flag false still calls transport push`() = runTest {
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        store.importDecisionRequiredFlag = false
+        store.queue.add(pendingOp("op-1"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 9,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.ACCEPTED,
+                            entityId = "c-1",
+                            revision = 7,
+                            changeSeq = 9,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.MANUAL).single()
+
+        assertEquals(1, transport.pushedBatches.size)
+        assertEquals(1, result.pushed)
+        assertTrue(store.queue.isEmpty())
+    }
+
+    @Test
+    fun `default SyncStateRow flag is false so empty library bind can push`() = runTest {
+        val row = one.zephyr.mobile.data.db.SyncStateRow(
+            bindingKey = "bind-1",
+            bindingState = BindingState.IDLE.name,
+            appliedCursor = 0,
+            ackedCursor = 0,
+            snapshotCursor = 0,
+            lastAttemptAt = null,
+            lastSuccessAt = null,
+            lastErrorCode = null,
+            lastErrorMessage = null,
+            consecutiveFailures = 0,
+            nextEligibleAt = null,
+            registryHash = null,
+        )
+        assertFalse(row.importDecisionRequired)
+
+        val transport = FakeSyncTransport()
+        val store = FakeSyncLocalStore(BindingState.IDLE)
+        assertFalse(store.importDecisionRequiredFlag)
+        store.queue.add(pendingOp("op-1"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 4,
+                    results = listOf(
+                        PushResult(
+                            opId = "op-1",
+                            status = PushStatus.ACCEPTED,
+                            entityId = "c-1",
+                            revision = 2,
+                            changeSeq = 4,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.INTERVAL).single()
+
+        assertEquals(1, transport.pushedBatches.size)
+        assertTrue(result.succeeded)
+    }
+
+    @Test
+    fun `empty library bind complete does not arm the import gate`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.bootstrapPages.add(
+            ApiResult.Success(
+                BootstrapPage("boot-empty", 1, null, complete = true, entities = emptyList()),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.BOUND_NEEDS_BOOTSTRAP)
+        store.preexistingLocalData = false
+        store.queue.add(pendingOp("fresh-op"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 1,
+                    results = listOf(
+                        PushResult(
+                            opId = "fresh-op",
+                            status = PushStatus.ACCEPTED,
+                            entityId = "c-1",
+                            revision = 2,
+                            changeSeq = 2,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.BIND_COMPLETE).single()
+
+        assertFalse(store.importDecisionRequiredFlag)
+        assertEquals(1, transport.pushedBatches.size)
+        assertTrue(result.succeeded)
+    }
+
+    @Test
+    fun `bind complete with preexisting local data arms the gate and skips push`() = runTest {
+        val transport = FakeSyncTransport()
+        transport.bootstrapPages.add(
+            ApiResult.Success(
+                BootstrapPage("boot-import", 10, null, complete = true, entities = emptyList()),
+                null,
+            ),
+        )
+        val store = FakeSyncLocalStore(BindingState.BOUND_NEEDS_BOOTSTRAP)
+        store.preexistingLocalData = true
+        store.queue.add(pendingOp("preexisting-op"))
+        transport.pushResponses.add(
+            ApiResult.Success(
+                PushResponse(
+                    batchId = "batch-fixed",
+                    serverCursor = 10,
+                    results = listOf(
+                        PushResult(
+                            opId = "preexisting-op",
+                            status = PushStatus.ACCEPTED,
+                            entityId = "c-1",
+                            revision = 2,
+                            changeSeq = 11,
+                        ),
+                    ),
+                    changesAvailable = false,
+                ),
+                null,
+            ),
+        )
+
+        val result = actor(transport, store).request(SyncTrigger.BIND_COMPLETE).single()
+
+        assertTrue(store.importDecisionRequiredFlag)
+        assertEquals(0, transport.pushedBatches.size)
+        assertEquals(listOf("preexisting-op"), store.queue.map { it.opId })
+        assertTrue(result.succeeded)
+        assertTrue(result.phasesRun.contains(SyncPhase.BOOTSTRAP_PAGE))
+        assertTrue(result.phasesRun.contains(SyncPhase.PUSH_PENDING))
+        assertTrue(result.phasesRun.contains(SyncPhase.PULL_CHANGES))
+        assertEquals(BindingState.IDLE, result.endState)
+
+        store.applyImportKeepLocal()
+        assertFalse(store.importDecisionRequiredFlag)
+
+        val afterKeepLocal = actor(transport, store).request(SyncTrigger.MANUAL).single()
+        assertEquals(1, transport.pushedBatches.size)
+        assertEquals(1, afterKeepLocal.pushed)
+    }
+
+    @Test
     fun `a non-retryable failure schedules no automatic retry`() = runTest {
         val transport = FakeSyncTransport()
         transport.capabilitiesResult = ApiResult.Failure(MobileError.local("client_revoked", "device gone"))

@@ -388,6 +388,47 @@ function httpError(response, fallback) {
     return err;
 }
 
+const OWNED_SYNC_PATHS = Object.freeze({
+    '/api/mobile/v1/sync/bootstrap': 'bootstrap',
+    '/api/mobile/v1/sync/changes': 'changes',
+    '/api/mobile/v1/sync/push': 'push',
+    '/api/mobile/v1/sync/ack': 'ack',
+});
+
+function ownedSyncOp(pathname) {
+    const pathName = String(pathname || '');
+    if (OWNED_SYNC_PATHS[pathName]) return OWNED_SYNC_PATHS[pathName];
+    if (pathName.endsWith('/bootstrap')) return 'bootstrap';
+    if (pathName.endsWith('/changes')) return 'changes';
+    if (pathName.endsWith('/push')) return 'push';
+    if (pathName.endsWith('/ack')) return 'ack';
+    return null;
+}
+
+function compactDefined(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (item !== undefined) out[key] = item;
+    }
+    return out;
+}
+
+function zslSyncError(error, fallback) {
+    if (error && error.status != null && error.code) return error;
+    return httpError({
+        status: Number(error?.status) || 0,
+        data: {
+            error: {
+                code: error?.code || 'link_unavailable',
+                message: error?.message || fallback || 'Link 同步失败',
+                retryable: error?.retryable === true,
+                details: error?.details,
+            },
+        },
+    }, fallback);
+}
+
 class ZephyrOneLinkSync {
     constructor({
         dataDir,
@@ -401,6 +442,7 @@ class ZephyrOneLinkSync {
         now = nowMs,
         httpRequest = requestJson,
         sleepFn = sleep,
+        linkClient = null,
     } = {}) {
         if (!dataDir) throw new Error('ZephyrOneLinkSync requires dataDir');
         this.dataDir = path.resolve(dataDir);
@@ -415,6 +457,8 @@ class ZephyrOneLinkSync {
         this.now = now;
         this._http = typeof httpRequest === 'function' ? httpRequest : requestJson;
         this._sleep = typeof sleepFn === 'function' ? sleepFn : sleep;
+        this.linkClient = linkClient && typeof linkClient.push === 'function' ? linkClient : null;
+        this._ownedSyncHttpsFallback = false;
         this.bindingPath = path.join(this.dataDir, BINDING_FILE);
         this.keysPath = path.join(this.dataDir, KEYS_FILE);
         this.statePath = path.join(this.dataDir, STATE_FILE);
@@ -908,12 +952,40 @@ class ZephyrOneLinkSync {
         throw err;
     }
 
+    async _ownedSyncOverZsl(op, query, body) {
+        const payload = { op, ...compactDefined(query), ...compactDefined(body) };
+        const { ack } = await this.linkClient.push({ kind: 1, body: payload });
+        if (ack && ack.ok === false) {
+            throw zslSyncError({
+                code: ack.error?.code,
+                message: ack.error?.message,
+                retryable: ack.error?.retryable === true,
+                details: ack.error?.details,
+                data: ack,
+            }, `${op} failed`);
+        }
+        return ack;
+    }
+
     async _authorizedRequest({ method, path: pathname, query, body, timeoutMs, _retried401 = false }) {
         if (!this.binding) {
             const err = new Error('尚未绑定主端');
             err.code = 'unbound';
             err.status = 401;
             throw err;
+        }
+        const zslOp = ownedSyncOp(pathname);
+        if (zslOp && this.linkClient && !this._ownedSyncHttpsFallback) {
+            try {
+                return await this._ownedSyncOverZsl(zslOp, query, body);
+            } catch (err) {
+                if (err && err.code === 'link_embed_missing') {
+                    this._ownedSyncHttpsFallback = true;
+                    this.log('[one-link] link embed missing; owned-sync falling back to HTTPS');
+                } else {
+                    throw zslSyncError(err, `${method} ${pathname} failed`);
+                }
+            }
         }
         await this._ensureAccess();
         const keys = this._ensureKeys();

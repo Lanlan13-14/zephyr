@@ -96,6 +96,15 @@ class SyncEngine(
 
     suspend fun onBindComplete(): List<SyncRoundResult> = run(SyncTrigger.BIND_COMPLETE, respectPolicy = false)
 
+    /** keep_local: drop the first-bind import gate without enqueueing preexisting rows. */
+    suspend fun applyImportKeepLocal() {
+        syncState.applyImportKeepLocal(bindingKey)
+    }
+
+    suspend fun clearImportDecisionRequired() {
+        syncState.clearImportDecisionRequired(bindingKey)
+    }
+
     suspend fun onServerWake(): List<SyncRoundResult> = run(SyncTrigger.SERVER_WAKE, respectPolicy = true)
 
     /** Entry point for the WorkManager worker. */

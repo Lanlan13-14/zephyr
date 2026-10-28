@@ -76,6 +76,16 @@ interface MirrorDao {
     @Query("SELECT COUNT(*) FROM mirror_entities WHERE entityType = :entityType AND ownerUserId = :ownerUserId AND deletedAt IS NULL")
     suspend fun countByType(entityType: String, ownerUserId: String): Int
 
+    /**
+     * Live owned rows that can be uploaded. activityEvent is read-only on the wire, so it must not
+     * arm the first-bind import gate.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM mirror_entities WHERE ownerUserId = :ownerUserId " +
+            "AND deletedAt IS NULL AND entityType <> 'activityEvent'",
+    )
+    suspend fun countLiveWritableOwned(ownerUserId: String): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSearch(row: EntitySearchRow)
 

@@ -358,10 +358,16 @@ protocol MobileBindingEnvironment: Sendable {
 private final class ProductionMobileBindingEnvironment: MobileBindingEnvironment, @unchecked Sendable {
     private let configuration: MobileBindingConfiguration
     private let clock: any MobileBindingClock
+    private let linkChannel: (any LinkChannel)?
 
-    init(configuration: MobileBindingConfiguration, clock: any MobileBindingClock) {
+    init(
+        configuration: MobileBindingConfiguration,
+        clock: any MobileBindingClock,
+        linkChannel: (any LinkChannel)? = nil
+    ) {
         self.configuration = configuration
         self.clock = clock
+        self.linkChannel = linkChannel
     }
 
     func prepare(
@@ -418,6 +424,7 @@ private final class ProductionMobileBindingEnvironment: MobileBindingEnvironment
 
         let configuration = self.configuration
         let clock = self.clock
+        let linkChannel = self.linkChannel
         return MobilePreparedBinding(
             credentials: credentials,
             signingIdentity: signingIdentity,
@@ -489,7 +496,17 @@ private final class ProductionMobileBindingEnvironment: MobileBindingEnvironment
                     expectedRegistryHash: finalRecord.registryHash,
                     clock: clock
                 )
-                let transport = RefreshingSyncTransport(api: api, refresh: refresh)
+                let httpsTransport = RefreshingSyncTransport(api: api, refresh: refresh)
+                let transport: any SyncTransport
+                if let linkChannel {
+                    transport = LinkSyncTransport(
+                        channel: linkChannel,
+                        deviceId: runtimeIdentity.deviceID,
+                        httpFallback: httpsTransport
+                    )
+                } else {
+                    transport = httpsTransport
+                }
                 let engine = SyncEngine(
                     identity: runtimeIdentity,
                     transport: transport,
@@ -583,7 +600,8 @@ public actor MobileBindingCoordinator {
         configuration: MobileBindingConfiguration,
         encryptionIdentity: any MobileEncryptionIdentityManaging,
         tokenLoader: (any MobileBindingTokenLoading)? = nil,
-        clock: any MobileBindingClock = SystemSyncClock()
+        clock: any MobileBindingClock = SystemSyncClock(),
+        linkChannel: (any LinkChannel)? = nil
     ) throws {
         let api = try MobileApiClient(
             baseURL: configuration.baseURL,
@@ -593,7 +611,11 @@ public actor MobileBindingCoordinator {
         self.configuration = configuration
         self.api = api
         self.recordStore = KeychainMobileBindingRecordStore(baseURL: configuration.baseURL)
-        self.environment = ProductionMobileBindingEnvironment(configuration: configuration, clock: clock)
+        self.environment = ProductionMobileBindingEnvironment(
+            configuration: configuration,
+            clock: clock,
+            linkChannel: linkChannel
+        )
         self.encryptionIdentity = encryptionIdentity
         self.tokenLoader = tokenLoader
         self.clock = clock

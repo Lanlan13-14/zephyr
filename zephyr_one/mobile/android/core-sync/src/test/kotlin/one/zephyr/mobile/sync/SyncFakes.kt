@@ -124,6 +124,8 @@ class FakeSyncLocalStore(
     var applyChangesFailure: RuntimeException? = null
     var stageBootstrapFailure: RuntimeException? = null
     var acknowledgementCommitFault: RuntimeException? = null
+    var importDecisionRequiredFlag: Boolean = false
+    var preexistingLocalData: Boolean = false
 
     override suspend fun cursors(): SyncCursors = SyncCursors(
         bindingState = state,
@@ -161,6 +163,22 @@ class FakeSyncLocalStore(
         consecutiveFailures += 1
         this.nextEligibleAt = nextEligibleAt
     }
+
+    override suspend fun importDecisionRequired(): Boolean = importDecisionRequiredFlag
+
+    override suspend fun setImportDecisionRequired(value: Boolean) {
+        importDecisionRequiredFlag = value
+    }
+
+    override suspend fun clearImportDecisionRequired() {
+        importDecisionRequiredFlag = false
+    }
+
+    override suspend fun applyImportKeepLocal() {
+        importDecisionRequiredFlag = false
+    }
+
+    override suspend fun hasPreexistingLocalData(): Boolean = preexistingLocalData
 
     /** Invoked at the start of PUSH_PENDING so a test can re-enter the actor mid-round. */
     var beforePending: suspend () -> Unit = {}

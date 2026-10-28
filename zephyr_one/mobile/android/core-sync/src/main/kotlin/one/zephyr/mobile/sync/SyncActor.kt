@@ -142,6 +142,12 @@ class SyncActor(
         val startedAt = clock()
         store.recordAttempt(startedAt)
 
+        // First bind against a non-empty local library must not auto-upload. Empty libraries stay
+        // unlatched so a fresh device can push. Subsequent triggers never re-arm the gate.
+        if (trigger == SyncTrigger.BIND_COMPLETE && store.hasPreexistingLocalData()) {
+            store.setImportDecisionRequired(true)
+        }
+
         val opening = store.cursors()
         var state = opening.bindingState
         val acc = RoundAccumulator()
@@ -543,6 +549,11 @@ class SyncActor(
         )
 
     private suspend fun pushPending(acc: RoundAccumulator): MobileError? {
+        // D1: skip the wire push while an import decision is outstanding. Bootstrap/pull/ack still
+        // run; queued ops stay pending so keep_local can resume without re-enqueueing them.
+        if (store.importDecisionRequired()) {
+            return null
+        }
         val queued = store.pendingOperations()
         if (queued.isEmpty()) return null
 

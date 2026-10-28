@@ -105,6 +105,26 @@ class RoomSyncLocalStore(
         )
     }
 
+    override suspend fun importDecisionRequired(): Boolean =
+        syncState.importDecisionRequired(bindingKey)
+
+    override suspend fun setImportDecisionRequired(value: Boolean) {
+        syncState.setImportDecisionRequired(bindingKey, value)
+    }
+
+    override suspend fun clearImportDecisionRequired() {
+        syncState.clearImportDecisionRequired(bindingKey)
+    }
+
+    override suspend fun applyImportKeepLocal() {
+        syncState.applyImportKeepLocal(bindingKey)
+    }
+
+    override suspend fun hasPreexistingLocalData(): Boolean {
+        if (db.pendingOperationDao().count() > 0) return true
+        return db.mirrorDao().countLiveWritableOwned(boundUserId) > 0
+    }
+
     // ---- operation queue --------------------------------------------------------------------
 
     override suspend fun pendingOperations(): List<PendingOperation> =

@@ -49,6 +49,25 @@ class SyncStateRepository(private val db: ZephyrDatabase) {
     suspend fun updateState(bindingKey: String, state: BindingState) =
         db.syncStateDao().updateState(bindingKey, state.name)
 
+    suspend fun importDecisionRequired(bindingKey: String): Boolean =
+        state(bindingKey)?.importDecisionRequired == true
+
+    suspend fun setImportDecisionRequired(bindingKey: String, value: Boolean) {
+        ensure(bindingKey)
+        db.syncStateDao().updateImportDecisionRequired(bindingKey, value)
+    }
+
+    suspend fun clearImportDecisionRequired(bindingKey: String) =
+        setImportDecisionRequired(bindingKey, false)
+
+    /**
+     * keep_local: drop the first-bind gate without enqueueing preexisting rows.
+     *
+     * Pending operations already in the queue stay queued; the flag is what blocked push, and
+     * clearing it is the user's explicit decision to resume ordinary sync.
+     */
+    suspend fun applyImportKeepLocal(bindingKey: String) = clearImportDecisionRequired(bindingKey)
+
     /**
      * Composed status.
      *

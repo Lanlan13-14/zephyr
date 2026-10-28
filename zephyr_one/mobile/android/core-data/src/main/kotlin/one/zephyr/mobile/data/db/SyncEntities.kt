@@ -105,6 +105,15 @@ data class SyncStateRow(
     val nextEligibleAt: Long?,
     /** Server registry hash seen at the last successful round; a change forces re-validation. */
     val registryHash: String?,
+    /**
+     * First-bind import gate (D1).
+     *
+     * True when this binding completed against a non-empty local mirror or queue. PUSH_PENDING must
+     * not call transport.push until the user applies a decision (keep_local clears the flag without
+     * enqueueing preexisting rows). Empty-library binds stay false so the first push can proceed.
+     */
+    @ColumnInfo(name = "import_decision_required", defaultValue = "0")
+    val importDecisionRequired: Boolean = false,
 )
 
 /**
