@@ -129,6 +129,21 @@ function createWebDavSyncRouter({
         res.json({ ok: true, result: await service.syncNow(owner(req), { signal: req.webDavAbortSignal }) });
     }));
 
+    router.post('/restore', sensitiveRateLimiter, sensitiveVerification, asyncRoute(async (req, res) => {
+        if (typeof service.restoreFromRemote !== 'function') {
+            throw new WebDavSyncError(400, 'webdav_invalid_config');
+        }
+        const vaultPassword = req.body && typeof req.body.vaultPassword === 'string'
+            ? req.body.vaultPassword
+            : '';
+        if (req.body && typeof req.body === 'object') {
+            delete req.body.vaultPassword;
+            delete req.body.password;
+        }
+        const result = await service.restoreFromRemote(owner(req), { vaultPassword }, { signal: req.webDavAbortSignal });
+        res.json({ ok: true, result });
+    }));
+
     router.use((error, _req, res, _next) => sendWebDavError(res, error));
     return router;
 }

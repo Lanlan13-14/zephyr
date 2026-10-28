@@ -7,8 +7,12 @@ const https = require('https');
 const net = require('net');
 const ipaddr = require('ipaddr.js');
 const defaultSecretCrypto = require('./secret-crypto');
+const { wrapVaultArchive, assertVaultPassword } = require('./webdav-vault-password');
+const { applyUserSnapshot, openVaultPayload } = require('./webdav-vault-restore');
+const { assertBackupMode } = require('./webdav-writer-grade');
 
 const BACKUP_FILE = 'zephyr-backup.bin';
+const BACKUP_TEMP_RE = /^\.zephyr-upload-[0-9a-fA-F-]{36}\.tmp$/;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
 const DEFAULT_MAX_BACKUP_BYTES = 64 * 1024 * 1024;
@@ -42,6 +46,7 @@ const PUBLIC_MESSAGES = Object.freeze({
     webdav_config_changed: 'The WebDAV configuration changed during the backup.',
     webdav_request_aborted: 'The WebDAV request was cancelled.',
     webdav_sync_unknown: 'The WebDAV backup may have completed. Verify the remote backup before retrying.',
+    webdav_multiwriter_requires_B2: 'Multi-writer WebDAV is not enabled in this release.',
 });
 
 class WebDavSyncError extends Error {
@@ -56,6 +61,12 @@ class WebDavSyncError extends Error {
 
 function fail(status, code, retryable = false) {
     throw new WebDavSyncError(status, code, retryable);
+}
+
+function assertBackupRelativePath(relativePath) {
+    const name = String(relativePath || '');
+    if (name === BACKUP_FILE || BACKUP_TEMP_RE.test(name)) return name;
+    fail(400, 'webdav_invalid_config');
 }
 
 function abortError(signal) {
@@ -269,6 +280,8 @@ class WebDavSyncService {
         db,
         secretCrypto = defaultSecretCrypto,
         backupProvider,
+        notesService = null,
+        resourceService = null,
         now = () => Date.now(),
         lookup = (hostname) => dns.promises.lookup(hostname, { all: true, verbatim: true }),
         allowHttpLoopback = false,
@@ -327,6 +340,7 @@ class WebDavSyncService {
         if (!columns.has('credential_origin')) this.db.exec('ALTER TABLE webdav_sync_configs ADD COLUMN credential_origin TEXT');
         if (!columns.has('config_version')) this.db.exec('ALTER TABLE webdav_sync_configs ADD COLUMN config_version INTEGER NOT NULL DEFAULT 1');
         if (!columns.has('config_epoch')) this.db.exec('ALTER TABLE webdav_sync_configs ADD COLUMN config_epoch TEXT');
+        if (!columns.has('vault_password_enc')) this.db.exec('ALTER TABLE webdav_sync_configs ADD COLUMN vault_password_enc TEXT');
         this.db.prepare('UPDATE webdav_sync_configs SET config_version=1 WHERE config_version IS NULL OR config_version < 1').run();
         this.db.prepare("UPDATE webdav_sync_configs SET config_epoch=lower(hex(randomblob(16))) WHERE config_epoch IS NULL OR config_epoch='' ").run();
     }
@@ -371,6 +385,7 @@ class WebDavSyncService {
             lastEtag: normalizeEtag(row.last_etag) || null,
             lastSyncedAt: row.last_synced_at == null ? null : Number(row.last_synced_at),
             lastErrorCode: row.last_error_code || null,
+            hasVaultPassword: !!row.vault_password_enc,
             updatedAt: Number(row.updated_at),
         };
     }
@@ -384,7 +399,8 @@ class WebDavSyncService {
         userNamespace(userId);
         this._assertOperation(operation);
         if (!patch || typeof patch !== 'object' || Array.isArray(patch)) fail(400, 'webdav_invalid_config');
-        const allowed = new Set(['baseUrl', 'remotePath', 'username', 'password', 'enabled']);
+        if (patch.multiWriter === true) fail(400, 'webdav_multiwriter_requires_B2');
+        const allowed = new Set(['baseUrl', 'remotePath', 'username', 'password', 'enabled', 'vaultPassword']);
         if (Object.keys(patch).some((key) => !allowed.has(key))) fail(400, 'webdav_invalid_config');
         const current = this._row(userId);
         const baseUrl = validateBaseUrl(
@@ -411,6 +427,20 @@ class WebDavSyncService {
             passwordEnc = this._encrypt(userId, origin, 'password', password);
         }
         const usernameEnc = this._encrypt(userId, origin, 'username', username);
+        let vaultPasswordEnc = canInheritCredentials ? current?.vault_password_enc || null : null;
+        if (patch.vaultPassword !== undefined) {
+            const vaultPassword = String(patch.vaultPassword || '');
+            if (!vaultPassword) vaultPasswordEnc = null;
+            else {
+                try { assertVaultPassword(vaultPassword); }
+                catch (error) {
+                    fail(400, error?.code === 'webdav_vault_password_required'
+                        ? 'webdav_vault_password_required'
+                        : 'webdav_invalid_config');
+                }
+                vaultPasswordEnc = this._encrypt(userId, origin, 'vaultPassword', vaultPassword);
+            }
+        }
         const enabled = patch.enabled === undefined ? !!current?.enabled : patch.enabled === true;
         const targetChanged = !!current && (current.base_url !== baseUrl || current.remote_path !== remotePath);
         const configVersion = current ? Math.max(1, Number(current.config_version) || 1) + 1 : 1;
@@ -418,19 +448,21 @@ class WebDavSyncService {
         const timestamp = this.now();
         this._assertOperation(operation);
         this.db.prepare(`INSERT INTO webdav_sync_configs
-            (user_id,base_url,remote_path,username_enc,password_enc,credential_origin,enabled,config_version,config_epoch,last_etag,last_synced_at,last_error_code,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            (user_id,base_url,remote_path,username_enc,password_enc,credential_origin,enabled,config_version,config_epoch,last_etag,last_synced_at,last_error_code,vault_password_enc,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(user_id) DO UPDATE SET
                 base_url=excluded.base_url,remote_path=excluded.remote_path,username_enc=excluded.username_enc,
                 password_enc=excluded.password_enc,credential_origin=excluded.credential_origin,
                 enabled=excluded.enabled,config_version=excluded.config_version,config_epoch=excluded.config_epoch,last_etag=excluded.last_etag,
                 last_synced_at=excluded.last_synced_at,last_error_code=excluded.last_error_code,
+                vault_password_enc=excluded.vault_password_enc,
                 updated_at=excluded.updated_at`
         ).run(
             String(userId), baseUrl, remotePath, usernameEnc, passwordEnc, origin, enabled ? 1 : 0, configVersion, configEpoch,
             targetChanged ? null : current?.last_etag || null,
             targetChanged ? null : current?.last_synced_at || null,
             targetChanged ? null : current?.last_error_code || null,
+            vaultPasswordEnc,
             current?.created_at || timestamp, timestamp,
         );
         if (current) this._abortActiveOperations(userId, new WebDavSyncError(409, 'webdav_config_changed'));
@@ -989,6 +1021,10 @@ class WebDavSyncService {
     }
 
     async _syncNow(userId, operation) {
+        /* Single-writer backup this round. Relative names published below are
+         * only zephyr-backup.bin and .zephyr-upload-*.tmp. */
+        assertBackupMode('B1', { multiWriter: false });
+        assertBackupRelativePath(BACKUP_FILE);
         const row = this._row(userId);
         if (!row) fail(400, 'webdav_not_configured');
         if (!row.enabled) fail(409, 'webdav_disabled');
@@ -1001,17 +1037,23 @@ class WebDavSyncService {
         let publishStarted = false;
         try {
             config = this._privateConfig(userId);
+            const vaultPassword = this._vaultPasswordFromRow(row);
             const produced = await this.backupProvider({
                 userId: key,
                 target: 'webdav-backup',
                 signal: operation.signal,
                 deadlineAt: operation.deadlineAt,
+                emit: vaultPassword ? 'zip' : undefined,
             });
             this._assertOperation(operation);
             const bodyValue = produced?.body === undefined ? produced : produced.body;
-            const body = Buffer.isBuffer(bodyValue) ? bodyValue : Buffer.from(bodyValue || '');
+            let body = Buffer.isBuffer(bodyValue) ? bodyValue : Buffer.from(bodyValue || '');
+            let contentType = contentTypeHeader(produced?.contentType || 'application/octet-stream');
+            if (vaultPassword) {
+                body = wrapVaultArchive(body, vaultPassword);
+                contentType = 'application/octet-stream';
+            }
             if (body.length > this.maxBackupBytes) fail(413, 'webdav_backup_too_large');
-            const contentType = contentTypeHeader(produced?.contentType || 'application/octet-stream');
             await this._ensureCollections(config, userId, operation);
             this._assertOperation(operation);
             if (!this._configStillCurrent(userId, configVersion, configEpoch)) fail(409, 'webdav_config_changed');
@@ -1025,7 +1067,7 @@ class WebDavSyncService {
                 this._expect(current.response, [200, 207]);
             }
 
-            tempPath = `.zephyr-upload-${crypto.randomUUID()}.tmp`;
+            tempPath = assertBackupRelativePath(`.zephyr-upload-${crypto.randomUUID()}.tmp`);
             const putResponse = await this.put(userId, tempPath, body, { contentType, createOnly: true, operation });
             this._expect(putResponse, [200, 201, 204]);
             const tempEtag = normalizeEtag(putResponse.headers.etag) || null;
@@ -1090,6 +1132,66 @@ class WebDavSyncService {
             }
             throw finalError;
         }
+    }
+
+    _vaultPasswordFromRow(row) {
+        if (!row?.vault_password_enc) return '';
+        const origin = this._credentialOrigin(row);
+        if (!origin) return '';
+        try {
+            return this._decrypt(row.user_id, origin, 'vaultPassword', row.vault_password_enc);
+        } catch {
+            return '';
+        }
+    }
+
+    async downloadBackup(userId, callerOperation = {}) {
+        userNamespace(userId);
+        return this._withActiveOperation(userId, 'download', async (operation) => {
+            const config = this._privateConfig(userId);
+            const url = this._relativeUrl(config, userId, BACKUP_FILE);
+            const response = await this._request(config, url, 'GET', {
+                maxResponseBytes: this.maxBackupBytes,
+                allowBackupResponse: true,
+                operation,
+            });
+            this._expect(response, [200]);
+            return {
+                body: response.body,
+                etag: normalizeEtag(response.headers.etag) || null,
+                bytes: response.body.length,
+            };
+        }, callerOperation);
+    }
+
+    async restoreFromRemote(userId, { vaultPassword } = {}, callerOperation = {}) {
+        userNamespace(userId);
+        if (!vaultPassword) fail(400, 'webdav_vault_password_required');
+        return this._withActiveOperation(userId, 'restore', async (operation) => {
+            const config = this._privateConfig(userId);
+            const url = this._relativeUrl(config, userId, BACKUP_FILE);
+            const response = await this._request(config, url, 'GET', {
+                maxResponseBytes: this.maxBackupBytes,
+                allowBackupResponse: true,
+                operation,
+            });
+            this._expect(response, [200]);
+            let payload;
+            try {
+                payload = await openVaultPayload(response.body, vaultPassword);
+            } catch (error) {
+                fail(400, error?.code === 'webdav_vault_password_invalid'
+                    ? 'webdav_vault_password_invalid'
+                    : 'webdav_backup_failed');
+            }
+            const user = { userId: String(userId) };
+            const apply = () => applyUserSnapshot(payload, {
+                user,
+                notesService: this.notesService,
+                resourceService: this.resourceService,
+            });
+            return typeof this.db.transaction === 'function' ? this.db.transaction(apply)() : apply();
+        }, callerOperation);
     }
 }
 

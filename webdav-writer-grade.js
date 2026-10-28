@@ -37,6 +37,25 @@ function classifyWebdavWriter(capabilities) {
 }
 
 /**
+ * This round publishes a single-writer backup only.
+ *
+ * B0 / B1 / B2 classification is unchanged (B2 is not relaxed). A future
+ * multi-writer OpLog would still have to prove B2; until that round, any
+ * `multiWriter: true` flag is rejected even if the endpoint classifies as B2.
+ */
+function assertBackupMode(grade, flags) {
+    const mode = object(flags) ? flags : {};
+    if (mode.multiWriter === true) {
+        const error = new Error('webdav_multiwriter_requires_B2');
+        error.code = 'webdav_multiwriter_requires_B2';
+        error.status = 400;
+        throw error;
+    }
+    if (grade === 'B0' || grade === 'B1' || grade === 'B2') return 'backup';
+    return 'backup';
+}
+
+/**
  * Evaluate a concurrent CAS commit vector. Two successful commits against the
  * same epoch, a weak ETag used as a mutex, or an unconditional overwrite are
  * all rejected.
@@ -70,5 +89,6 @@ function webdavConcurrentCommit(input) {
 
 module.exports = {
     classifyWebdavWriter,
+    assertBackupMode,
     webdavConcurrentCommit,
 };

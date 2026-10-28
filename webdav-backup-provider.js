@@ -465,6 +465,33 @@ async function loadZipArchiveConstructor() {
     return zipArchiveConstructorPromise;
 }
 
+async function openPlainArchive(zipBuffer) {
+    const unzipper = require('unzipper');
+    const body = Buffer.isBuffer(zipBuffer) ? zipBuffer : Buffer.from(zipBuffer || []);
+    if (!body.length) throw providerError('webdav_vault_archive_invalid');
+    let zip;
+    try {
+        zip = await unzipper.Open.buffer(body);
+    } catch {
+        throw providerError('webdav_vault_archive_invalid');
+    }
+    const files = new Map((zip.files || []).map((entry) => [String(entry.path || ''), entry]));
+    const payloadEntry = files.get('user-data.json');
+    if (!payloadEntry || typeof payloadEntry.buffer !== 'function') {
+        throw providerError('webdav_vault_archive_invalid');
+    }
+    let payload;
+    try {
+        payload = JSON.parse((await payloadEntry.buffer()).toString('utf8'));
+    } catch {
+        throw providerError('webdav_vault_archive_invalid');
+    }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw providerError('webdav_vault_archive_invalid');
+    }
+    return payload;
+}
+
 async function createArchive(payload, manifest, exportedAt, maxBytes, operation) {
     const ZipArchive = await loadZipArchiveConstructor();
     checkOperation(operation);
@@ -609,6 +636,9 @@ function createWebDavBackupProvider(options = {}) {
             };
             const archive = await createArchive(payload, manifest, exportedAt, maxBackupBytes, operation);
             checkOperation(operation);
+            if (operation.emit === 'zip' || operation.plainZip === true) {
+                return { body: archive, contentType: 'application/zip', payload };
+            }
             const header = {
                 format: BACKUP_FORMAT,
                 version: BACKUP_VERSION,
@@ -673,4 +703,5 @@ module.exports = {
     parseHeader,
     publicBackupError,
     verifyBackup,
+    openPlainArchive,
 };

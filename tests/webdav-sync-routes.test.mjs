@@ -33,6 +33,10 @@ const service = {
     calls.push(['delete', userId]);
     return true;
   },
+  async restoreFromRemote(userId, body) {
+    calls.push(['restore', userId, body]);
+    return { ok: true, restored: { notes: 1, connections: 0, proxies: 0, sshKeys: 0, jumpHosts: 0 } };
+  },
 };
 
 let server;

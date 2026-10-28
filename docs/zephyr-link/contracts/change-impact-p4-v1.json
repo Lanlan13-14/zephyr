@@ -1,0 +1,26 @@
+{
+  "channels": ["owned-sync", "secret"],
+  "platforms": ["server", "desktop", "webdav"],
+  "dataDomains": ["local", "owned"],
+  "states": ["unbound", "bound", "offline", "revoked"],
+  "protocolImpact": ["additive"],
+  "dataImpact": ["secrets", "schema", "none"],
+  "requiredEvidence": ["L0", "L1", "L2", "L3", "L4"],
+  "failureInjections": [
+    "wrong-vault-password-fails-closed",
+    "tampered-ciphertext-fails-closed",
+    "restore-without-primary-env-key",
+    "kill-during-restore-no-partial-canonical-commit",
+    "download-restore-roundtrip-connections-notes-keys"
+  ],
+  "compatibility": ["old-server", "old-client", "new-server", "new-client"],
+  "rollback": [
+    "git revert the P4 commit on zephyr-link-foundation-v1",
+    "WEBDAV_BACKUP_KEY archives remain readable; password-wrapped vaults are additive",
+    "do not enable B2 multi-writer OpLog on this commit"
+  ],
+  "evidenceLinks": [
+    "docs/zephyr-link/TESTING-AND-RELEASE-GATES.md",
+    "docs/zephyr-link/ZEPHYR-LINK-INTERCONNECTION-SPEC.md"
+  ]
+}
