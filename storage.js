@@ -1109,12 +1109,28 @@ function addActivity(activity) {
         target: activity.target || null,
         connectionId: activity.connectionId || null,
     };
-    db.prepare(`INSERT INTO activities
-        (id,time,message,type,userId,sourceIp,durationMs,category,outcome,actor,protocol,target,connectionId)
-        VALUES
-        (@id,@time,@message,@type,@userId,@sourceIp,@durationMs,@category,@outcome,@actor,@protocol,@target,@connectionId)`).run(row);
+    const existing = db.prepare('SELECT id FROM activities WHERE id=?').get(row.id);
+    if (existing) return { inserted: false, id: existing.id || row.id };
+    try {
+        db.prepare(`INSERT INTO activities
+            (id,time,message,type,userId,sourceIp,durationMs,category,outcome,actor,protocol,target,connectionId)
+            VALUES
+            (@id,@time,@message,@type,@userId,@sourceIp,@durationMs,@category,@outcome,@actor,@protocol,@target,@connectionId)`).run(row);
+        return { inserted: true, id: row.id };
+    } catch (error) {
+        const text = String(error && error.message || error || '');
+        if (/UNIQUE|constraint/i.test(text)) return { inserted: false, id: row.id };
+        throw error;
+    }
 }
-function clearActivities() { db.prepare('DELETE FROM activities').run(); }
+function clearActivities() {
+    const owners = db.prepare('SELECT DISTINCT userId FROM activities WHERE userId IS NOT NULL').all()
+        .map((row) => row && row.userId)
+        .filter((id) => id != null && String(id).trim() !== '')
+        .map((id) => String(id));
+    db.prepare('DELETE FROM activities').run();
+    return { owners };
+}
 
 function listProxies() { return db.prepare('SELECT * FROM proxies ORDER BY createdAt DESC').all().map(rowToProxy); }
 function listProxiesRaw() { return db.prepare('SELECT * FROM proxies ORDER BY createdAt DESC').all().map(decryptProxy).filter(Boolean); }

@@ -815,6 +815,12 @@
 
                             <div class="link-bind-status" id="linkBindStatus"></div>
 
+                            <section class="link-group link-enroll" id="linkImportPanel" hidden>
+                                <p class="link-hero-phase" data-i18n="先完成导入决定">先完成导入决定</p>
+                                <div id="linkImportList"></div>
+                                <button type="button" class="btn btn-primary" id="linkImportApplyBtn" data-i18n="应用导入决定">应用导入决定</button>
+                            </section>
+
                             <section class="link-hero" id="linkSyncSettings" hidden>
                                 <div class="link-hero-top">
                                     <span class="link-hero-mark" aria-hidden="true">
@@ -911,6 +917,18 @@
                             <div class="link-shares" id="linkShares" hidden>
                                 <div class="link-share-list" id="linkShareList"></div>
                             </div>
+                            <template id="linkConflictCardTemplate">
+                                <article class="link-conflict-card" data-conflict-id="">
+                                    <p class="link-row-copy">
+                                        <strong class="link-conflict-title"></strong>
+                                        <small class="link-conflict-reason"></small>
+                                    </p>
+                                    <p class="field-hint link-conflict-manual" hidden data-i18n="需手动合并">需手动合并</p>
+                                    <button type="button" class="btn linkConflictKeepLocal" id="linkConflictKeepLocal" data-link-action="keep_local" data-i18n="保留本机">保留本机</button>
+                                    <button type="button" class="btn linkConflictKeepServer" id="linkConflictKeepServer" data-link-action="keep_server" data-i18n="用主端">用主端</button>
+                                    <button type="button" class="btn linkConflictCopy" id="linkConflictCopy" data-link-action="copy" data-i18n="另存副本">另存副本</button>
+                                </article>
+                            </template>
                         </div>
                         <div class="settings-panel" id="settings-data">
                             <div class="data-settings-stack">

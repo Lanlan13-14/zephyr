@@ -26,6 +26,20 @@ function parseJson(text, fallback) {
     }
 }
 
+function unpackImportJson(text) {
+    const parsed = parseJson(text, {});
+    const localOnlyIds = (parsed && typeof parsed.localOnlyIds === 'object' && parsed.localOnlyIds)
+        ? parsed.localOnlyIds
+        : {};
+    return {
+        importDecisionRequired: parsed.importDecisionRequired === true,
+        localOnlyIds,
+        importPreview: (parsed.importPreview && typeof parsed.importPreview === 'object')
+            ? parsed.importPreview
+            : null,
+    };
+}
+
 class OneLinkLocalStore {
     constructor(db) {
         if (!db || typeof db.prepare !== 'function') {
@@ -53,6 +67,7 @@ class OneLinkLocalStore {
                 last_error_code TEXT,
                 last_pushed_json TEXT NOT NULL DEFAULT '{}',
                 confirmed_base_json TEXT NOT NULL DEFAULT '{}',
+                import_json TEXT NOT NULL DEFAULT '{}',
                 automatic_enabled INTEGER NOT NULL DEFAULT 1,
                 interval_sec INTEGER NOT NULL DEFAULT 300,
                 network_policy TEXT NOT NULL DEFAULT 'any',
@@ -120,6 +135,13 @@ class OneLinkLocalStore {
                 PRIMARY KEY(account_key, entity_type, entity_id)
             );
         `);
+        this._ensureColumn('one_link_meta', 'import_json', "TEXT NOT NULL DEFAULT '{}'");
+    }
+
+    _ensureColumn(table, column, ddl) {
+        const rows = this.db.prepare(`PRAGMA table_info(${table})`).all();
+        if (rows.some((row) => row && row.name === column)) return;
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
     }
 
     loadAccount(accountKey) {
@@ -145,8 +167,8 @@ class OneLinkLocalStore {
                 bootstrap_complete, bootstrap_page_token, bootstrap_id,
                 bootstrap_pages_fetched, bootstrap_token_expires_at, registry_hash,
                 last_success_at, last_error, last_error_code, last_pushed_json,
-                confirmed_base_json, automatic_enabled, interval_sec, network_policy, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                confirmed_base_json, import_json, automatic_enabled, interval_sec, network_policy, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_key) DO UPDATE SET
                 applied_cursor = excluded.applied_cursor,
                 acked_cursor = excluded.acked_cursor,
@@ -162,6 +184,7 @@ class OneLinkLocalStore {
                 last_error_code = excluded.last_error_code,
                 last_pushed_json = excluded.last_pushed_json,
                 confirmed_base_json = excluded.confirmed_base_json,
+                import_json = excluded.import_json,
                 automatic_enabled = excluded.automatic_enabled,
                 interval_sec = excluded.interval_sec,
                 network_policy = excluded.network_policy,
@@ -181,6 +204,15 @@ class OneLinkLocalStore {
             state.lastErrorCode || null,
             jsonText(state.lastPushedRevisions || {}, '{}'),
             jsonText(state.confirmedBaseRevisions || {}, '{}'),
+            jsonText({
+                importDecisionRequired: state.importDecisionRequired === true,
+                localOnlyIds: (state.localOnlyIds && typeof state.localOnlyIds === 'object')
+                    ? state.localOnlyIds
+                    : {},
+                importPreview: (state.importPreview && typeof state.importPreview === 'object')
+                    ? state.importPreview
+                    : null,
+            }, '{}'),
             state.automaticEnabled === false ? 0 : 1,
             Number(state.intervalSec) || 300,
             state.networkPolicy === 'wifiOnly' ? 'wifiOnly' : 'any',
@@ -430,6 +462,7 @@ class OneLinkLocalStore {
             lastErrorCode: row.last_error_code || null,
             lastPushedRevisions: parseJson(row.last_pushed_json, {}),
             confirmedBaseRevisions: parseJson(row.confirmed_base_json, {}),
+            ...unpackImportJson(row.import_json),
             automaticEnabled: Number(row.automatic_enabled) !== 0,
             intervalSec: Number(row.interval_sec) || 300,
             networkPolicy: row.network_policy === 'wifiOnly' ? 'wifiOnly' : 'any',

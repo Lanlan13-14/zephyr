@@ -9,6 +9,7 @@
  */
 'use strict';
 
+const crypto = require('crypto');
 const { isDeepStrictEqual } = require('util');
 const { MobileStoreError } = require('./mobile-v1-store');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
@@ -44,7 +45,34 @@ const MOBILE_ACTIVITY_MESSAGES = Object.freeze({
     warning: '活动需要注意',
     error: '活动失败',
     info: '活动已记录',
+    session_start: '会话已开始',
+    session_end: '会话已结束',
+    session_fail: '会话失败',
+    sftp_upload: 'SFTP 上传',
+    sftp_download: 'SFTP 下载',
+    sftp_delete: 'SFTP 删除',
+    sftp_rename: 'SFTP 重命名',
+    ai_tool: 'AI 工具已调用',
 });
+const ACTIVITY_JOURNAL_CLEAR_ID = '__journal_clear__';
+
+function resolveRawClearActivities(storage) {
+    if (!storage || typeof storage.clearActivities !== 'function') return null;
+    const fn = storage.clearActivities;
+    if (typeof fn.__zephyrRawClear === 'function') return fn.__zephyrRawClear;
+    return typeof fn.bind === 'function' ? fn.bind(storage) : fn;
+}
+
+function activityInsertResult(result) {
+    if (result == null || typeof result !== 'object') return { inserted: true, id: null };
+    if (Object.prototype.hasOwnProperty.call(result, 'inserted')) {
+        return { inserted: result.inserted !== false, id: result.id || null };
+    }
+    if (Object.prototype.hasOwnProperty.call(result, 'changes')) {
+        return { inserted: Number(result.changes) > 0, id: result.id || null };
+    }
+    return { inserted: true, id: result.id || null };
+}
 
 const APPEARANCE_COLOR_KEYS = Object.freeze([
     'bgMain', 'bgCard', 'primary', 'primaryHover', 'text', 'textSecondary',
@@ -602,25 +630,90 @@ class CanonicalActivityEventService {
             }
         }
         const canonicalUserId = resolved?.userId || rawOwner;
-        const row = { ...event, userId: canonicalUserId || null };
+        const row = {
+            ...event,
+            id: String(event?.id || crypto.randomUUID()),
+            userId: canonicalUserId || null,
+        };
         return this.db.transaction(() => {
-            this.storage.addActivity(row);
-            if (row.userId) {
+            const write = this.storage.addActivity(row);
+            const { inserted, id } = activityInsertResult(write);
+            if (id) row.id = id;
+            if (inserted && row.userId) {
                 recordActivityEvent(this.changeBridge, {
                     userId: String(row.userId),
                     username: resolved?.username || '',
-                }, row);
+                }, row, { forceChange: true });
             }
-            return row;
+            return { ...row, inserted };
         })();
     }
+
+    _recordJournalClear(ownerUserId) {
+        const owner = String(ownerUserId || '');
+        if (!owner || !this.changeBridge?.recordMutation) return null;
+        return this.changeBridge.recordMutation({
+            entityType: 'activityEvent',
+            entityId: ACTIVITY_JOURNAL_CLEAR_ID,
+            action: 'delete',
+            user: { userId: owner },
+            before: { id: ACTIVITY_JOURNAL_CLEAR_ID, userId: owner },
+            after: null,
+            forceChange: true,
+        });
+    }
+
+    clearAllForUser(userId) {
+        const owner = String(userId || '');
+        if (!owner) return { owners: [] };
+        const keys = this.ownerKeys(owner);
+        return this.db.transaction(() => {
+            if (keys.length) {
+                const placeholders = keys.map(() => '?').join(', ');
+                this.db.prepare(`DELETE FROM activities WHERE userId IN (${placeholders})`).run(...keys);
+            }
+            this._recordJournalClear(owner);
+            return { owners: [owner] };
+        })();
+    }
+
+    clearAll() {
+        const raw = resolveRawClearActivities(this.storage);
+        const run = () => {
+            const result = raw ? raw() : { owners: [] };
+            const owners = [...new Set((Array.isArray(result?.owners) ? result.owners : [])
+                .map((id) => String(id || '').trim())
+                .filter(Boolean))];
+            for (const owner of owners) this._recordJournalClear(owner);
+            return { owners };
+        };
+        return this.db.transaction(run)();
+    }
+}
+
+function wrapStorageClearActivities(storage, activityEvents) {
+    if (!storage || typeof storage.clearActivities !== 'function') return storage;
+    if (storage.clearActivities.__zephyrActivityClearWrapped) return storage;
+    const raw = resolveRawClearActivities(storage);
+    const wrapped = (...args) => {
+        if (activityEvents && typeof activityEvents.clearAll === 'function') {
+            return activityEvents.clearAll();
+        }
+        return raw ? raw(...args) : undefined;
+    };
+    wrapped.__zephyrRawClear = raw;
+    wrapped.__zephyrActivityClearWrapped = true;
+    storage.clearActivities = wrapped;
+    return storage;
 }
 
 function createServerMetadataServices(options = {}) {
     const changeBridge = options.changeBridge || getMobileV1ChangeBridge(options.db);
+    const activityEvents = new CanonicalActivityEventService({ ...options, changeBridge });
+    wrapStorageClearActivities(options.storage, activityEvents);
     return {
         serverSettings: new CanonicalServerSettingsService({ ...options, changeBridge }),
-        activityEvents: new CanonicalActivityEventService({ ...options, changeBridge }),
+        activityEvents,
         /* backupMetadata intentionally absent until a durable job/metadata
          * service exists and the registry status no longer starts requires-. */
         backupMetadata: null,
@@ -763,7 +856,7 @@ function createServerMetadataEntityAdapters({
     return adapters;
 }
 
-function recordActivityEvent(changeBridge, user, event) {
+function recordActivityEvent(changeBridge, user, event, extra = {}) {
     const row = projectActivityEvent(event, user);
     if (!row) throw new TypeError('Activity event must belong to its owner');
     return changeBridge.recordMutation({
@@ -773,10 +866,12 @@ function recordActivityEvent(changeBridge, user, event) {
         user,
         after: row,
         revision: positiveRevision(event.revision || event.time),
+        forceChange: extra.forceChange !== false,
     });
 }
 
 module.exports = {
+    ACTIVITY_JOURNAL_CLEAR_ID,
     CAPABILITIES,
     REQUIRED_SERVICE_CAPABILITIES,
     SERVER_SETTINGS_SECTION,
@@ -790,4 +885,5 @@ module.exports = {
     projectServerSettings,
     recordActivityEvent,
     settingsPatch,
+    wrapStorageClearActivities,
 };

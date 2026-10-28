@@ -1,0 +1,30 @@
+{
+  "channels": ["owned-sync", "secret", "control"],
+  "platforms": ["server", "desktop"],
+  "dataDomains": ["local", "owned"],
+  "states": ["unbound", "bound", "offline", "conflicted", "migrating"],
+  "protocolImpact": ["additive"],
+  "dataImpact": ["cursor", "revision", "tombstone", "secrets", "schema"],
+  "requiredEvidence": ["L0", "L1", "L2", "L3", "L4"],
+  "failureInjections": [
+    "first-bind-does-not-auto-upload-local-rows",
+    "import-preview-keep-local-copy-as-new",
+    "conflict-ui-keep-local-keep-server-copy",
+    "activity-duplicate-eventid-no-second-changeseq",
+    "activity-session-disconnect-recorded",
+    "sftp-upload-complete-recorded",
+    "activity-projection-strips-command-and-secret",
+    "blocked-serverSettings-not-mirrored",
+    "activityEvent-pull-only-never-pushed"
+  ],
+  "compatibility": ["old-server", "old-client", "new-server", "new-client"],
+  "rollback": [
+    "git revert the P2 commit on zephyr-link-foundation-v1",
+    "restore SQLite from pre-change backup; importDecision and activity unique ingest are additive",
+    "desktop JSON one-link-sync-state.json remains readable if sqlite local store is empty"
+  ],
+  "evidenceLinks": [
+    "docs/zephyr-link/TESTING-AND-RELEASE-GATES.md",
+    "docs/zephyr-link/ZEPHYR-LINK-INTERCONNECTION-SPEC.md"
+  ]
+}

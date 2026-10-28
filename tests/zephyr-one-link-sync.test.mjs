@@ -587,7 +587,7 @@ test('rebinding isolates the previous account mirror instead of reusing its curs
         entityByType: new Map([['note', { editableFields: ['title'], secretFields: [] }]]),
     };
     /* Non-mirror types must survive unbind. */
-    sync.mobileV1Api.adapters.set('snippet', localAdapter);
+    sync.mobileV1Api.adapters.set('serverSettings', localAdapter);
     sync.unbind();
     const archivePath = path.join(dir, 'accounts', 'srv-1', 'u1', 'dev-1', 'one-link-sync-state.json');
     const snapshotPath = path.join(dir, 'accounts', 'srv-1', 'u1', 'dev-1', 'mirror-snapshot.json');
@@ -1250,4 +1250,239 @@ test('SYNC-SEC-004 prepared secret journal survives a simulated crash', async (t
     assert.equal(recovered[0].opId, op.opId);
     assert.equal(recovered[0].fieldName, 'password');
     assert.equal(recovered[0].state, 'prepared');
+});
+
+
+function uuidLike(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+test('SYNC-ID-002 local notes stay unpushed until applyImport', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n-local', { id: 'n-local', title: 'keep-offline', revision: 1 }]]);
+    let pushHits = 0;
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp(() => {
+            pushHits += 1;
+            return { ok: true, status: 200, headers: {}, data: { results: [], serverCursor: 1 } };
+        }),
+    });
+    sync.state.importDecisionRequired = true;
+    await sync._pushPending();
+    assert.equal(pushHits, 0);
+    assert.equal((sync.state.outbox || []).length, 0);
+    assert.equal(sync.publicState().importDecisionRequired, true);
+});
+
+test('keep_local protects the local title from a remote upsert of the same id', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local-title', revision: 1 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync.state.importDecisionRequired = true;
+    sync.applyImport({ decisions: { note: 'keep_local' } });
+    assert.equal(sync.state.importDecisionRequired, false);
+    assert.equal(sync.state.localOnlyIds['note:n1'], true);
+    await sync._applyRemoteChange({
+        entityType: 'note',
+        entityId: 'n1',
+        action: 'upsert',
+        revision: 9,
+        fieldMask: ['title'],
+        payload: { title: 'server-title' },
+    });
+    assert.equal(notes.get('n1').title, 'local-title');
+});
+
+test('copy_as_new mints a UUID and enqueues the copy, not id-copy', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local', revision: 2 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync.state.importDecisionRequired = true;
+    sync.applyImport({ decisions: { note: 'copy_as_new' } });
+    const copies = [...notes.keys()].filter((id) => id !== 'n1');
+    assert.equal(copies.length, 1);
+    assert.equal(uuidLike(copies[0]), true);
+    assert.notEqual(copies[0], 'n1-copy');
+    assert.equal(notes.has('n1'), true);
+    assert.equal(sync.state.localOnlyIds['note:n1'], true);
+    const pending = (sync.state.outbox || []).filter((op) => op.status === 'pending');
+    assert.equal(pending.some((op) => op.entityId === copies[0] && op.action === 'upsert'), true);
+    assert.equal(pending.some((op) => op.entityId === 'n1'), false);
+});
+
+test('import with empty remote enqueues the local note at baseRevision 0', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n-new', { id: 'n-new', title: 'fresh', revision: 3 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync.state.importDecisionRequired = true;
+    sync.applyImport({ decisions: { note: 'import' } });
+    const pending = (sync.state.outbox || []).filter((op) => op.status === 'pending' && op.entityId === 'n-new');
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].action, 'upsert');
+    assert.equal(pending[0].baseRevision, 0);
+});
+
+test('import of a bootstrap-confirmed id copies instead of overwriting', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'local', revision: 2 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    sync._rememberConfirmed('note', 'n1', 4);
+    sync.state.importDecisionRequired = true;
+    sync.applyImport({ decisions: { note: 'import' } });
+    const copies = [...notes.keys()].filter((id) => id !== 'n1');
+    assert.equal(copies.length, 1);
+    assert.equal(uuidLike(copies[0]), true);
+    assert.equal(notes.get('n1').title, 'local');
+    const pending = (sync.state.outbox || []).filter((op) => op.status === 'pending');
+    assert.equal(pending.some((op) => op.entityId === copies[0]), true);
+    assert.equal(pending.some((op) => op.entityId === 'n1'), false);
+});
+
+test('activityEvent never enters the outbox', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const events = new Map([['e1', { id: 'e1', type: 'info', revision: 2 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['activityEvent', events]]),
+        specs: { activityEvent: { editableFields: ['type'], secretFields: [], serverAuthorityFields: ['revision'] } },
+    });
+    const queued = sync.recordLocalMutation({
+        entityType: 'activityEvent',
+        entityId: 'e1',
+        action: 'upsert',
+        fieldMask: ['type'],
+    });
+    assert.equal(queued, null);
+    await sync._pushPending();
+    assert.equal((sync.state.outbox || []).length, 0);
+});
+
+test('serverSettings is not a desktop mirror type', (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    assert.equal(mod.MIRROR_TYPES.has('serverSettings'), false);
+    assert.equal(mod.MIRROR_TYPES.has('backupMetadata'), false);
+    assert.equal(mod.MIRROR_TYPES.has('activityEvent'), true);
+    assert.equal(mod.READ_ONLY_MIRROR_TYPES.has('activityEvent'), true);
+});
+
+test('snippet local revision above pushed watermark is enqueued', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const snippets = new Map([['s1', { id: 's1', name: 'clip', revision: 4 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['snippet', snippets]]),
+        specs: { snippet: { editableFields: ['name'], secretFields: [], serverAuthorityFields: ['revision'] } },
+        httpRequest: pushAwareHttp((opts) => ({
+            ok: true, status: 200, headers: {},
+            data: {
+                results: opts.body.operations.map((op) => ({ opId: op.opId, status: 'accepted', revision: 5 })),
+                serverCursor: 2,
+            },
+        })),
+    });
+    sync.state.lastPushedRevisions['snippet:s1'] = 1;
+    await sync._pushPending();
+    const pending = (sync.state.outbox || []).filter((op) => op.entityType === 'snippet');
+    assert.equal(pending.length, 0, 'accepted push should drain the snippet op');
+    assert.equal(sync.state.confirmedBaseRevisions['snippet:s1'], 5);
+});
+
+test('GET /api/one/link/conflicts strips password fields', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const express = require('express');
+    const http = require('node:http');
+    const notes = new Map([['n1', { id: 'n1', title: 'local', password: 'hunter2', revision: 2 }]]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes]]),
+        specs: { note: { editableFields: ['title'], secretFields: ['password'], serverAuthorityFields: ['revision'] } },
+    });
+    sync._recordConflict({
+        entityType: 'note',
+        entityId: 'n1',
+        base: { title: 'base', password: 'old' },
+        local: { title: 'local', password: 'hunter2' },
+        server: { title: 'server', password: 'remote-secret' },
+        reason: 'overlapping_fields',
+        unresolved: true,
+    });
+    const app = express();
+    app.use(express.json());
+    mod.mountZephyrOneLinkRoutes(app, {
+        linkSync: sync,
+        requireUser: (_req, _res, next) => next(),
+    });
+    const server = http.createServer(app);
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    try {
+        const response = await new Promise((resolve, reject) => {
+            http.get({ hostname: '127.0.0.1', port, path: '/api/one/link/conflicts' }, (res) => {
+                const chunks = [];
+                res.on('data', (chunk) => chunks.push(chunk));
+                res.on('end', () => resolve({
+                    status: res.statusCode,
+                    body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+                }));
+            }).on('error', reject);
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.body.ok, true);
+        assert.equal(response.body.conflicts.length, 1);
+        const body = JSON.stringify(response.body);
+        assert.equal(body.includes('hunter2'), false);
+        assert.equal(body.includes('remote-secret'), false);
+        assert.equal(body.includes('"password"'), false);
+        assert.equal(response.body.conflicts[0].local.title, 'local');
+        assert.equal(sync.publicState().conflicts[0].entityId, 'n1');
+        assert.equal(sync.publicState().conflicts[0].local, undefined);
+    } finally {
+        await new Promise((resolve) => server.close(resolve));
+    }
+});
+
+test('previewImport samples id/name/title and omits secrets', async (t) => {
+    const mod = loadLinkSync();
+    if (!mod) { t.skip('@noble/post-quantum is not installed in this worktree'); return; }
+    const notes = new Map([['n1', { id: 'n1', title: 'Alpha', password: 'secret', revision: 1 }]]);
+    const connections = new Map([
+        ['c1', { id: 'c1', name: 'box', password: 'pw', revision: 1 }],
+        ['c-eph', { id: 'c-eph', name: 'temp', ephemeral: true, revision: 1 }],
+    ]);
+    const sync = scriptedSync(mod, {
+        rows: new Map([['note', notes], ['connection', connections]]),
+        specs: {
+            note: { editableFields: ['title'], secretFields: ['password'], serverAuthorityFields: ['revision'] },
+            connection: { editableFields: ['name'], secretFields: ['password'], serverAuthorityFields: ['revision'] },
+        },
+    });
+    const preview = sync.previewImport();
+    assert.equal(preview.ok, true);
+    const byType = Object.fromEntries(preview.types.map((row) => [row.entityType, row]));
+    assert.equal(byType.note.localCount, 1);
+    assert.equal(byType.note.sample[0].id, 'n1');
+    assert.equal(byType.note.sample[0].title, 'Alpha');
+    assert.equal(JSON.stringify(preview).includes('secret'), false);
+    assert.equal(byType.connection.localCount, 1);
+    assert.equal(byType.connection.sample[0].id, 'c1');
 });

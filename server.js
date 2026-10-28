@@ -818,6 +818,7 @@ function destroySshTerminalSession(sessionOrId, reason = 'session-destroy') {
     session.terminalSnapshot = null;
     const protocol = String(session.protocol || 'SSH').toUpperCase();
     const classified = classifyTerminalClose(reason, protocol);
+    addActivity('会话已结束', session.userId || null, activityFromReq(null, { type: 'session_end', protocol, connectionId: session.connectionId || session.connectionConfig?.id || null, outcome: /auth/i.test(String(reason || '')) ? '失败' : (String(reason || '') === 'client-disconnect' ? '断开' : '成功'), durationMs: session.createdAt ? Math.max(0, Date.now() - Number(session.createdAt)) : null, target: session.connectionConfig?.host ? `${session.connectionConfig.host}:${Number(session.connectionConfig.port) || (protocol === 'TELNET' ? 23 : 22)}` : null, category: '会话', actor: session.username || null }));
     broadcastSshSession(session, {
         type: 'close',
         message: classified.message,
@@ -8644,6 +8645,7 @@ app.post('/api/sftp/upload/:token/complete', requireUser, async (req, res) => {
             if (remoteHash !== expectedHash) {
                 destroyUploadSession(token);
                 sftpUploadTokens.delete(token);
+                addActivity('SFTP 上传失败', req.user?.userId || null, activityFromReq(req, { type: 'sftp_upload', protocol: 'SFTP', connectionId: uploadTask.connectionConfig?.id || '', outcome: '失败', target: String(uploadTask.path || ''), category: 'SFTP' }));
                 return res.status(500).json({
                     error: `上传校验失败：SHA-256 不一致（本地 ${expectedHash}，远端 ${remoteHash}）`,
                     remoteHash,
@@ -8666,6 +8668,7 @@ app.post('/api/sftp/upload/:token/complete', requireUser, async (req, res) => {
         destroyUploadSession(token);
         sftpUploadTokens.delete(token);
 
+        addActivity('SFTP 上传完成', req.user?.userId || null, activityFromReq(req, { type: 'sftp_upload', protocol: 'SFTP', connectionId: uploadTask.connectionConfig?.id || '', outcome: '成功', target: String(uploadTask.path || ''), category: 'SFTP' }));
         res.json({ ok: true, uploadId: uploadTask.uploadId || '', path: uploadTask.path, size: remoteSize, sha256: uploadTask.sha256 || '' });
     } catch (err) {
         console.warn('[sftp-upload-complete]', 'stat failed', { path: uploadTask.path, error: err.message });
@@ -8839,6 +8842,7 @@ app.get('/api/sftp/download/:token', requireUser, async (req, res) => {
         download.activeSftp = null;
         download.activeRouted = null;
         sendTransferEvent(download.username, { transferId: download.downloadId || token, direction: 'download', path: download.path, loaded: download.loaded, size, status: 'done' });
+        addActivity('SFTP 下载完成', req.user?.userId || null, activityFromReq(req, { type: 'sftp_download', protocol: 'SFTP', connectionId: download.connectionConfig?.id || session?.connectionId || '', outcome: '成功', target: String(download.path || ''), category: 'SFTP' }));
         stopKeepalive();
         closeDownloadConnection();
         try { if (fileHandle) sftp.close(fileHandle, () => {}); } catch {}
@@ -11383,6 +11387,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     ws._sshTerminalSession = session;
                     ws._sshOutputSequence = 0;
                     sshTerminalSessions.set(session.id, session);
+                    addActivity('会话已开始', session.userId || null, activityFromReq(req, { type: 'session_start', protocol: 'TELNET', connectionId: session.connectionId || '', outcome: '成功', target: `${conn.host}:${Number(conn.port) || 23}`, category: '会话' }));
                     // Ownership has moved from the pre-ready attempt to the
                     // detachable terminal session.
                     pendingTelnetRoute = null;
@@ -11560,6 +11565,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     ws._sshTerminalSession = session;
                     ws._sshOutputSequence = 0;
                     sshTerminalSessions.set(session.id, session);
+                    addActivity('会话已开始', session.userId || null, activityFromReq(req, { type: 'session_start', protocol: 'SSH', connectionId: session.connectionId || '', outcome: '成功', target: `${conn.host}:${Number(conn.port) || 22}`, category: '会话' }));
                     try { terminalHistory.open({ userId: session.userId, sessionId: session.id, connectionId: session.connectionId, cols: initialCols, rows: initialRows }); } catch (err) {
                         console.warn('[TERMINAL-HISTORY] open failed', { sessionId: session.id, error: err.message });
                     }
@@ -11857,6 +11863,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                     try {
                         console.info('[sftp-delete]', 'recursive directory delete requested', { path: targetPath });
                         await execRemoteCommand(sshClient, `rm -rf -- ${shellQuote(targetPath)}`);
+                        addActivity('SFTP 删除完成', req.authSession?.userId || req.user?.userId || null, activityFromReq(req, { type: 'sftp_delete', protocol: 'SFTP', connectionId: attachedSshSession?.connectionId || attachedSshSession?.connectionConfig?.id || '', outcome: '成功', target: targetPath, category: 'SFTP' }));
                         sendJSON({ type: 'sftp-delete', path: targetPath, success: true, error: null });
                     } catch (err2) {
                         console.warn('[sftp-delete]', 'recursive directory delete failed', { path: targetPath, error: err2.message });
@@ -11865,7 +11872,10 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 } else {
                     sftpStream.unlink(targetPath, (err2) => {
                         if (err2) console.warn('[sftp-delete]', 'file delete failed', { path: targetPath, error: err2.message });
-                        else console.info('[sftp-delete]', 'file deleted', { path: targetPath });
+                        else {
+                            console.info('[sftp-delete]', 'file deleted', { path: targetPath });
+                            addActivity('SFTP 删除完成', req.authSession?.userId || req.user?.userId || null, activityFromReq(req, { type: 'sftp_delete', protocol: 'SFTP', connectionId: attachedSshSession?.connectionId || attachedSshSession?.connectionConfig?.id || '', outcome: '成功', target: targetPath, category: 'SFTP' }));
+                        }
                         sendJSON({ type: 'sftp-delete', path: targetPath, success: !err2, error: err2 ? err2.message : null });
                     });
                 }
@@ -11876,6 +11886,7 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
         // 重命名
         if (msg.type === 'sftp-rename') {
             sftpStream.rename(msg.oldPath, msg.newPath, (err) => {
+                if (!err) addActivity('SFTP 重命名完成', req.authSession?.userId || req.user?.userId || null, activityFromReq(req, { type: 'sftp_rename', protocol: 'SFTP', connectionId: attachedSshSession?.connectionId || attachedSshSession?.connectionConfig?.id || '', outcome: '成功', target: String(msg.newPath || msg.oldPath || ''), category: 'SFTP' }));
                 sendJSON({ type: 'sftp-rename', oldPath: msg.oldPath, newPath: msg.newPath, success: !err, error: err ? err.message : null });
             });
             return;

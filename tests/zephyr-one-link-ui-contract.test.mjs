@@ -63,6 +63,67 @@ test('Link motion CSS stays GPU-only with press scale and reduced-motion', () =>
     assert.doesNotMatch(css.slice(css.indexOf('/* Zephyr Link')), /scale\(0\)/);
 });
 
+test('Link conflict center and D1 import preview expose P2 contract hooks', () => {
+    const panel = html.slice(html.indexOf('id="settings-link"'), html.indexOf('id="settings-data"'));
+    assert.match(panel, /id="linkImportPanel"/);
+    assert.match(panel, /id="linkImportApplyBtn"/);
+    assert.match(panel, /id="linkConflictKeepLocal"/);
+    assert.match(panel, /id="linkConflictKeepServer"/);
+    assert.match(panel, /id="linkConflictCopy"/);
+    assert.match(panel, /data-i18n="保留本机"/);
+    assert.match(panel, /data-i18n="用主端"/);
+    assert.match(panel, /data-i18n="另存副本"/);
+    assert.match(panel, /data-i18n="应用导入决定"/);
+    assert.match(panel, /data-i18n="需手动合并"/);
+    assert.match(panel, /class="link-hero"/);
+    assert.match(panel, /id="linkSyncNowBtn"/);
+    assert.match(panel, /id="linkIntervalSelect"/);
+    assert.match(ui, /\/api\/one\/link\/conflicts/);
+    assert.match(ui, /\/api\/one\/link\/conflicts\/' \+ encodeURIComponent\(conflictId\) \+ '\/resolve/);
+    assert.match(ui, /\/api\/one\/link\/conflicts\/' \+ encodeURIComponent\(conflictId\) \+ '\/copy/);
+    assert.match(ui, /\/api\/one\/link\/import-preview/);
+    assert.match(ui, /\/api\/one\/link\/import-apply/);
+    assert.match(ui, /importDecisionRequired/);
+    assert.match(ui, /keep_local/);
+    assert.match(ui, /keep_server/);
+    assert.match(ui, /copy_as_new/);
+    assert.match(ui, /CONFLICT_MARKER = '<<<<<<<'/);
+    assert.match(ui, /'link-import-' \+/);
+    assert.doesNotMatch(ui, /resolution:\s*'manual_merge'/);
+    const zh = JSON.parse(readFileSync(path.join(root, 'public/i18n/locales/zh-CN.json'), 'utf8'));
+    const en = JSON.parse(readFileSync(path.join(root, 'public/i18n/locales/en.json'), 'utf8'));
+    const keys = [
+        '保留本机',
+        '用主端',
+        '另存副本',
+        '导入',
+        '仅保本地',
+        '副本',
+        '应用导入决定',
+        '需手动合并',
+        '先完成导入决定',
+        '没有冲突',
+    ];
+    for (const key of keys) {
+        assert.equal(typeof zh[key], 'string', key);
+        assert.ok(zh[key].length > 0, key);
+        assert.equal(typeof en[key], 'string', key);
+        assert.ok(en[key].length > 0, key);
+        assert.notEqual(en[key], key, key);
+    }
+    assert.equal(zh['保留本机'], '保留本机');
+    assert.equal(en['保留本机'], 'Keep local');
+    assert.equal(en['用主端'], 'Use server');
+    assert.equal(en['另存副本'], 'Save a copy');
+    assert.equal(en['导入'], 'Import');
+    assert.equal(en['仅保本地'], 'Keep on this device');
+    assert.equal(en['副本'], 'Copy as new');
+    assert.equal(en['应用导入决定'], 'Apply import choices');
+    assert.equal(en['需手动合并'], 'Needs manual merge');
+    assert.equal(en['先完成导入决定'], 'Finish import choices first');
+    assert.equal(en['没有冲突'], 'No conflicts');
+});
+
 test('Link interval/network dropdowns are the homepage pill, not a clipped row chip', () => {
     const linkCss = css.slice(css.indexOf('/* Zephyr Link'));
     assert.match(linkCss, /\.link-filter-bar \{/);

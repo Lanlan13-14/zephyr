@@ -52,7 +52,26 @@ const WRITE_DEBOUNCE_MS = 1500;
 const PAGE_SIZE = 100;
 const CHANGE_LIMIT = 200;
 const MAX_OPS_PER_BATCH = 200;
-const PUSH_TYPE_ORDER = ['sshKey', 'proxy', 'jumpHost', 'connection', 'note'];
+const PUSH_TYPE_ORDER = [
+    'clientToken',
+    'sshKey',
+    'proxy',
+    'jumpHost',
+    'aiProvider',
+    'aiEnv',
+    'connection',
+    'snippet',
+    'note',
+    'oneUserSettings',
+    'aiMemory',
+    'aiSkill',
+    'aiTodo',
+    'aiConversation',
+    'aiMessage',
+    'fileSyncConfig',
+    'workspaceState',
+    'resourceAcl',
+];
 /* Android SyncActor.MAX_PAGES_PER_ROUND is 512; desktop stays well under the
  * proof-challenge budget (120 issues / minute). A round that hits this cap
  * persists the page token and continues on the next trigger instead of
@@ -64,7 +83,38 @@ const CAPABILITIES_TTL_MS = 60 * 1000;
 const RATE_LIMIT_DEFAULT_SEC = 5;
 const RATE_LIMIT_MAX_WAIT_MS = 15 * 1000;
 const LINK_TOKEN_ID = 'link-v2-enrollment';
-const MIRROR_TYPES = new Set(['connection', 'proxy', 'sshKey', 'jumpHost', 'note']);
+const WRITABLE_MIRROR_TYPES = [
+    'connection',
+    'proxy',
+    'sshKey',
+    'jumpHost',
+    'note',
+    'snippet',
+    'oneUserSettings',
+    'aiProvider',
+    'aiMemory',
+    'aiSkill',
+    'aiEnv',
+    'aiTodo',
+    'aiConversation',
+    'aiMessage',
+    'fileSyncConfig',
+    'workspaceState',
+    'clientToken',
+    'resourceAcl',
+];
+const READ_ONLY_MIRROR_TYPES = new Set(['activityEvent']);
+const MIRROR_TYPES = new Set([...WRITABLE_MIRROR_TYPES, ...READ_ONLY_MIRROR_TYPES]);
+const SECRET_JSON_FIELDS = new Set([
+    'password',
+    'privateKey',
+    'apiKey',
+    'passphrase',
+    'token',
+    'value',
+]);
+const IMPORT_ACTIONS = new Set(['import', 'keep_local', 'copy_as_new']);
+const IMPORT_SAMPLE_LIMIT = 20;
 
 function diff3Text(base, local, server) {
     const b = String(base ?? '');
@@ -119,6 +169,57 @@ function headerValue(headers, name) {
 
 function pushedKey(entityType, entityId) {
     return `${entityType}:${entityId}`;
+}
+
+function isReadOnlyMirrorType(entityType) {
+    return READ_ONLY_MIRROR_TYPES.has(String(entityType || ''));
+}
+
+function isWritableMirrorType(entityType) {
+    return MIRROR_TYPES.has(String(entityType || '')) && !isReadOnlyMirrorType(entityType);
+}
+
+function isEphemeralRow(entityType, row) {
+    if (!row || String(entityType || '') !== 'connection') return false;
+    return row.ephemeral === true || row.ephemeral === 1 || row.ephemeral === '1';
+}
+
+function rowIdOf(adapter, row) {
+    if (!row) return '';
+    if (adapter && typeof adapter.idOf === 'function') {
+        try { return String(adapter.idOf(row) || ''); } catch { /* fall through */ }
+    }
+    return String(row.id || row.noteId || '');
+}
+
+function stripSecretFields(value) {
+    if (value == null) return value;
+    if (Array.isArray(value)) return value.map((item) => stripSecretFields(item));
+    if (typeof value !== 'object') return value;
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (SECRET_JSON_FIELDS.has(key)) continue;
+        out[key] = stripSecretFields(item);
+    }
+    return out;
+}
+
+function sampleDisplayName(row) {
+    if (!row || typeof row !== 'object') return '';
+    const name = row.name != null ? String(row.name) : '';
+    const title = row.title != null ? String(row.title) : '';
+    return name || title || '';
+}
+
+function conflictSummary(conflict) {
+    if (!conflict) return null;
+    return {
+        conflictId: conflict.conflictId,
+        entityType: conflict.entityType,
+        entityId: conflict.entityId,
+        reason: conflict.reason || 'conflict',
+        unresolved: conflict.unresolved !== false,
+    };
 }
 
 function accountKeyOf(binding) {
@@ -372,6 +473,13 @@ class ZephyrOneLinkSync {
             outbox: Array.isArray(saved.outbox) ? saved.outbox : [],
             conflicts: Array.isArray(saved.conflicts) ? saved.conflicts : [],
             accountKey: saved.accountKey || '',
+            importDecisionRequired: saved.importDecisionRequired === true,
+            localOnlyIds: (saved.localOnlyIds && typeof saved.localOnlyIds === 'object')
+                ? saved.localOnlyIds
+                : {},
+            importPreview: (saved.importPreview && typeof saved.importPreview === 'object')
+                ? saved.importPreview
+                : null,
         };
     }
 
@@ -464,6 +572,9 @@ class ZephyrOneLinkSync {
             snapshotCursor: this.state.snapshotCursor,
             bootstrapComplete: this.state.bootstrapComplete === true,
             bootstrapResume: !!(this.state.bootstrapPageToken && !this.state.bootstrapComplete),
+            importDecisionRequired: this.state.importDecisionRequired === true,
+            conflicts: (this.state.conflicts || []).map(conflictSummary),
+            readOnlyTypes: [...READ_ONLY_MIRROR_TYPES],
             running: this._running,
             enrollment: this._pendingEnrollment
                 ? {
@@ -663,6 +774,9 @@ class ZephyrOneLinkSync {
         this.state.accountKey = accountKeyOf(this.binding);
         this.state.lastError = null;
         this.state.lastErrorCode = null;
+        this.state.localOnlyIds = {};
+        this.state.importPreview = null;
+        this._armImportDecision();
         this._saveBinding();
         this._saveState();
         this._pendingEnrollment = null;
@@ -698,6 +812,9 @@ class ZephyrOneLinkSync {
         this.state.accountKey = '';
         this.state.lastError = null;
         this.state.lastErrorCode = null;
+        this.state.importDecisionRequired = false;
+        this.state.localOnlyIds = {};
+        this.state.importPreview = null;
         this._saveBinding();
         this._saveState();
         this._emit();
@@ -739,8 +856,9 @@ class ZephyrOneLinkSync {
                 snapshot[type] = rows;
                 if (typeof adapter.remove === 'function') {
                     for (const row of rows) {
-                        const id = String(typeof adapter.idOf === 'function' ? adapter.idOf(row) : (row.id || row.noteId || ''));
+                        const id = rowIdOf(adapter, row);
                         if (!id) continue;
+                        if (this._isLocalOnly(type, id)) continue;
                         try { adapter.remove(user, id, { actorDeviceId: deviceId }); } catch { /* already gone */ }
                     }
                 }
@@ -1181,7 +1299,8 @@ class ZephyrOneLinkSync {
         if (remoteMerge === true) return null;
         const type = String(entityType || '');
         const id = String(entityId || '');
-        if (!MIRROR_TYPES.has(type) || !id) return null;
+        if (!isWritableMirrorType(type) || !id) return null;
+        if (this._isLocalOnly(type, id)) return null;
         if (!this.binding) return null;
         const resolvedAction = action === 'delete' ? 'delete' : 'upsert';
         const confirmed = Number.isFinite(Number(baseRevision))
@@ -1217,7 +1336,8 @@ class ZephyrOneLinkSync {
     }
 
     _enqueue({ entityType, entityId, action, baseRevision, fieldMask }) {
-        if (!MIRROR_TYPES.has(entityType)) return null;
+        if (!isWritableMirrorType(entityType)) return null;
+        if (this._isLocalOnly(entityType, entityId)) return null;
         if (!Array.isArray(this.state.outbox)) this.state.outbox = [];
         const id = String(entityId);
         const nextAction = action === 'delete' ? 'delete' : 'upsert';
@@ -1297,13 +1417,16 @@ class ZephyrOneLinkSync {
         const api = this.mobileV1Api;
         if (!api || !user) return;
         for (const type of MIRROR_TYPES) {
+            if (isReadOnlyMirrorType(type)) continue;
             const adapter = api.adapters.get(type);
             if (!adapter || typeof adapter.list !== 'function') continue;
             const rows = adapter.list(user) || [];
             const liveIds = new Set();
             for (const row of rows) {
+                if (isEphemeralRow(type, row)) continue;
                 const id = String(adapter.idOf(row));
                 liveIds.add(id);
+                if (this._isLocalOnly(type, id)) continue;
                 const revision = Number(adapter.revisionOf(row)) || 0;
                 const confirmed = this._confirmedBase(type, id, row);
                 const pushed = Number((this.state.lastPushedRevisions || {})[pushedKey(type, id)] || 0);
@@ -1330,6 +1453,7 @@ class ZephyrOneLinkSync {
                 if (!key.startsWith(prefix)) continue;
                 const id = key.slice(prefix.length);
                 if (!id || liveIds.has(id)) continue;
+                if (this._isLocalOnly(type, id)) continue;
                 const pending = (this.state.outbox || []).find((op) => (
                     op.entityType === type && op.entityId === id && op.status === 'pending'
                 ));
@@ -1342,6 +1466,11 @@ class ZephyrOneLinkSync {
     async _pushPending() {
         const api = this.mobileV1Api;
         if (!api || !this.binding) return;
+        if (this.state.importDecisionRequired === true) {
+            this._refreshPendingCount();
+            this._saveState();
+            return;
+        }
         const user = this._localUser();
         if (!user) return;
         this._captureDirtyRows(user);
@@ -1356,6 +1485,8 @@ class ZephyrOneLinkSync {
         const registryHash = (capabilities && capabilities.registryHash) || this.binding.registryHash;
         const operations = [];
         for (const op of pending) {
+            if (!isWritableMirrorType(op.entityType)) continue;
+            if (this._isLocalOnly(op.entityType, op.entityId)) continue;
             const adapter = api.adapters.get(op.entityType);
             const spec = api.entityByType.get(op.entityType);
             if (!adapter || !spec) continue;
@@ -1650,6 +1781,7 @@ class ZephyrOneLinkSync {
         const spec = api.entityByType.get(entityType);
         if (!adapter || !spec) return;
         const entityId = String(change.entityId || '');
+        if (this._isLocalOnly(entityType, entityId)) return;
         const pending = (this.state.outbox || []).find((op) => (
             op.entityType === entityType && op.entityId === entityId && (op.status === 'pending' || op.status === 'conflict')
         ));
@@ -2023,6 +2155,211 @@ class ZephyrOneLinkSync {
         this._markSecretJournal(opId, 'acked');
     }
 
+
+    _isLocalOnly(entityType, entityId) {
+        const ids = this.state.localOnlyIds;
+        if (!ids || typeof ids !== 'object') return false;
+        return ids[pushedKey(entityType, entityId)] === true;
+    }
+
+    _markLocalOnly(entityType, entityId) {
+        if (!this.state.localOnlyIds || typeof this.state.localOnlyIds !== 'object') {
+            this.state.localOnlyIds = {};
+        }
+        const id = String(entityId || '');
+        if (!id) return;
+        this.state.localOnlyIds[pushedKey(entityType, id)] = true;
+    }
+
+    _writableMirrorTypes() {
+        return WRITABLE_MIRROR_TYPES.slice();
+    }
+
+    _listImportableRows(entityType) {
+        const api = this.mobileV1Api;
+        const user = this._localUser();
+        if (!api || !user) return [];
+        const adapter = api.adapters && api.adapters.get(entityType);
+        if (!adapter || typeof adapter.list !== 'function') return [];
+        let rows = [];
+        try { rows = adapter.list(user) || []; } catch { return []; }
+        const out = [];
+        for (const row of rows) {
+            if (isEphemeralRow(entityType, row)) continue;
+            const id = rowIdOf(adapter, row);
+            if (!id) continue;
+            out.push({ id, row, adapter });
+        }
+        return out;
+    }
+
+    _scanLocalImportPreview() {
+        const types = [];
+        for (const entityType of this._writableMirrorTypes()) {
+            const listed = this._listImportableRows(entityType);
+            const sample = [];
+            for (const item of listed) {
+                if (sample.length >= IMPORT_SAMPLE_LIMIT) break;
+                const entry = { id: item.id };
+                if (item.row && item.row.name != null && String(item.row.name) !== '') {
+                    entry.name = String(item.row.name);
+                }
+                if (item.row && item.row.title != null && String(item.row.title) !== '') {
+                    entry.title = String(item.row.title);
+                }
+                if (!entry.name && !entry.title) {
+                    const fallback = sampleDisplayName(item.row);
+                    if (fallback) entry.name = fallback;
+                }
+                sample.push(entry);
+            }
+            const remoteCount = Object.keys(this.state.confirmedBaseRevisions || {})
+                .filter((key) => key.startsWith(`${entityType}:`)).length;
+            types.push({
+                entityType,
+                localCount: listed.length,
+                remoteCount,
+                sample,
+            });
+        }
+        return types;
+    }
+
+    _armImportDecision() {
+        const types = this._scanLocalImportPreview();
+        const withRows = types.filter((item) => item.localCount > 0);
+        this.state.importDecisionRequired = withRows.length > 0;
+        if (!withRows.length) {
+            this.state.importPreview = null;
+            return false;
+        }
+        const preview = {};
+        for (const item of withRows) {
+            preview[item.entityType] = {
+                localCount: item.localCount,
+                remoteCount: item.remoteCount,
+                defaultAction: 'keep_local',
+            };
+        }
+        this.state.importPreview = preview;
+        return true;
+    }
+
+    _remoteHasEntity(entityType, entityId) {
+        const key = pushedKey(entityType, entityId);
+        const confirmed = Number((this.state.confirmedBaseRevisions || {})[key]);
+        if (Number.isFinite(confirmed) && confirmed > 0) return true;
+        const pushed = Number((this.state.lastPushedRevisions || {})[key]);
+        return Number.isFinite(pushed) && pushed > 0;
+    }
+
+    previewImport() {
+        const scanned = this._scanLocalImportPreview();
+        const types = scanned
+            .filter((item) => item.localCount > 0)
+            .map((item) => ({
+                entityType: item.entityType,
+                localCount: item.localCount,
+                sample: item.sample,
+            }));
+        const preview = {};
+        for (const item of scanned) {
+            if (!item.localCount) continue;
+            preview[item.entityType] = {
+                localCount: item.localCount,
+                remoteCount: item.remoteCount,
+                defaultAction: 'keep_local',
+            };
+        }
+        this.state.importPreview = Object.keys(preview).length ? preview : null;
+        this._saveState();
+        return { ok: true, types };
+    }
+
+    applyImport({ decisions } = {}) {
+        const map = (decisions && typeof decisions === 'object') ? decisions : {};
+        const types = this._scanLocalImportPreview().filter((item) => item.localCount > 0);
+        for (const item of types) {
+            if (!IMPORT_ACTIONS.has(map[item.entityType])) {
+                const err = new Error(`missing import decision for ${item.entityType}`);
+                err.code = 'invalid_request';
+                throw err;
+            }
+        }
+        const api = this.mobileV1Api;
+        for (const item of types) {
+            const action = map[item.entityType];
+            const listed = this._listImportableRows(item.entityType);
+            const spec = api && api.entityByType ? api.entityByType.get(item.entityType) : null;
+            const mask = [...(spec && spec.editableFields ? spec.editableFields : [])];
+            for (const entry of listed) {
+                if (action === 'keep_local') {
+                    this._markLocalOnly(item.entityType, entry.id);
+                    continue;
+                }
+                const copy = action === 'copy_as_new'
+                    || (action === 'import' && this._remoteHasEntity(item.entityType, entry.id));
+                if (copy) {
+                    this._importCopyAsNew(item.entityType, entry, mask);
+                    continue;
+                }
+                this._enqueueUpsert(item.entityType, entry.id, mask, 0);
+            }
+        }
+        this.state.importDecisionRequired = false;
+        this.state.importPreview = null;
+        this._refreshPendingCount();
+        this._saveState();
+        this._emit();
+        return this.publicState();
+    }
+
+    _importCopyAsNew(entityType, entry, fieldMask) {
+        const user = this._localUser();
+        const adapter = entry.adapter;
+        const newId = crypto.randomUUID();
+        const payload = { ...(entry.row || {}) };
+        delete payload.id;
+        delete payload.noteId;
+        if (adapter && user && typeof adapter.create === 'function') {
+            adapter.create(user, newId, payload, {
+                actorDeviceId: this.binding && this.binding.deviceId,
+                remoteMerge: true,
+            });
+        }
+        this._enqueueUpsert(entityType, newId, fieldMask, 0);
+        this._markLocalOnly(entityType, entry.id);
+        return newId;
+    }
+
+    listConflicts() {
+        return (this.state.conflicts || []).map((row) => ({
+            conflictId: row.conflictId,
+            entityType: row.entityType,
+            entityId: row.entityId,
+            base: stripSecretFields(row.base),
+            local: stripSecretFields(row.local),
+            server: stripSecretFields(row.server),
+            mergedPayload: stripSecretFields(row.mergedPayload),
+            baseRevision: Number(row.baseRevision) || 0,
+            serverRevision: Number(row.serverRevision) || 0,
+            reason: row.reason || 'conflict',
+            unresolved: row.unresolved !== false,
+        }));
+    }
+
+    copyConflictById(conflictId) {
+        const conflict = (this.state.conflicts || []).find((row) => row.conflictId === conflictId);
+        if (!conflict) {
+            const err = new Error('conflict not found');
+            err.code = 'not_found';
+            err.status = 404;
+            throw err;
+        }
+        const copyId = this.copyConflictAsNew(conflict.entityType, conflict.entityId);
+        return { ok: true, copyId };
+    }
+
     recoverSecretJournal() {
         if (!this.localStore) return [];
         const key = this._accountKey();
@@ -2143,6 +2480,46 @@ function mountZephyrOneLinkRoutes(app, {
     app.get('/api/one/link/diagnostics', requireUser, (req, res) => {
         res.json(linkSync.diagnostics());
     });
+    app.get('/api/one/link/conflicts', requireUser, (req, res) => {
+        try {
+            res.json({ ok: true, conflicts: linkSync.listConflicts() });
+        } catch (err) {
+            sendErr(res, err);
+        }
+    });
+    app.post('/api/one/link/conflicts/:id/resolve', requireUser, (req, res) => {
+        try {
+            const body = req.body || {};
+            const conflict = linkSync.resolveConflict(req.params.id, {
+                resolution: body.resolution,
+                mergedPayload: body.mergedPayload,
+            });
+            res.json({ ok: true, conflict: stripSecretFields(conflict) });
+        } catch (err) {
+            sendErr(res, err);
+        }
+    });
+    app.post('/api/one/link/conflicts/:id/copy', requireUser, (req, res) => {
+        try {
+            res.json(linkSync.copyConflictById(req.params.id));
+        } catch (err) {
+            sendErr(res, err);
+        }
+    });
+    app.get('/api/one/link/import-preview', requireUser, (req, res) => {
+        try {
+            res.json(linkSync.previewImport());
+        } catch (err) {
+            sendErr(res, err);
+        }
+    });
+    app.post('/api/one/link/import-apply', requireUser, (req, res) => {
+        try {
+            res.json(linkSync.applyImport(req.body || {}));
+        } catch (err) {
+            sendErr(res, err);
+        }
+    });
     app.post('/api/one/link/unbind', requireUser, (req, res) => {
         res.json(linkSync.unbind());
     });
@@ -2162,6 +2539,7 @@ module.exports = {
     applyQuery,
     accountKeyOf,
     MIRROR_TYPES,
+    READ_ONLY_MIRROR_TYPES,
     MAX_OPS_PER_BATCH,
     PUSH_TYPE_ORDER,
     diff3Text,
