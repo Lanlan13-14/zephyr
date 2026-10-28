@@ -73,7 +73,9 @@ test('contract: mobile fork uses xterm FitAddon 1:1 (native scrollToBottom, no p
 });
 
 test('contract: terminal assets use current cache-bust', () => {
-    assert.match(terminalHtml, /terminal\.js\?v=20260919-mobile-input1/);
+    const revision = terminalHtml.match(/terminal\.js\?v=(\d{8}-[a-z0-9-]+)/)?.[1];
+    assert.ok(revision, 'terminal script must have a dated cache revision');
+    assert.match(terminalHtml, new RegExp(`modulepreload" href="terminal\\.js\\?v=${revision}`));
 });
 
 test('surface: pinScroll host is called; no direct scroll without host', () => {

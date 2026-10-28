@@ -5,15 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
   <meta name="color-scheme" content="dark light" />
   <meta name="theme-color" content="#101114" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:*;" />
   <title>Zephyr One</title>
   <link rel="icon" type="image/svg+xml" href="/src/assets/logo/zephyr-one-icon.svg" />
+  <link rel="stylesheet" href="/native-ui.css" />
   <link rel="stylesheet" href="/src/styles/mirror-shell.css" />
   <link rel="stylesheet" href="/src/styles/launch-overlay.css" />
   <style>
-    /* First paint before the overlay stylesheet/module: never sit on a dead black window. */
-    html, body.shell-body { background: #090b0e; margin: 0; min-height: 100%; height: 100%; }
-    #bootGate.launch-gate { min-height: 100dvh; display: grid; place-items: center; background: #090b0e; }
+    /* The launch bundle includes the same theme contract as the product. */
+    html, body.shell-body { background: var(--canvas, #101114); margin: 0; min-height: 100%; height: 100%; }
+    #bootGate.launch-gate { min-height: 100dvh; display: grid; place-items: center; background: var(--canvas, #101114); }
   </style>
+  <script src="/native-ui.js" defer></script>
 </head>
 <body class="shell-body">
   <header class="launch-topbar" id="launchTopbar" aria-label="窗口控制">

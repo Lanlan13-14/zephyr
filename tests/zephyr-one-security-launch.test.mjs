@@ -128,7 +128,8 @@ test('Windows packaged boot shows the overlay before the product window', () => 
     assert.match(MAIN, /dom-ready/);
     assert.match(MAIN, /zephyr-one:shown/);
     assert.match(PRELOAD, /zephyr-one:shown/);
-    assert.match(MAIN, /backgroundColor: '#090b0e'/);
+    assert.match(MAIN, /backgroundColor: windowBackgroundColor\(\)/);
+    assert.match(MAIN, /return appearance\.theme === 'light' \? '#f5f5f7' : '#101114'/);
     const loadAt = MAIN.indexOf('await mainWindow.loadFile');
     const enterAt = MAIN.indexOf('.then(() => enterProduct())');
     assert.ok(loadAt >= 0 && enterAt > loadAt);

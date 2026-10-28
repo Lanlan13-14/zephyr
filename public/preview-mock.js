@@ -1,4 +1,4 @@
-import { t } from './i18n/runtime.js?v=20261018-ui1';
+import { t } from './i18n/runtime.js?v=20261028-ui132';
 
 const previewEnabled = location.protocol === 'http:' && location.hostname === 'localhost' && location.port === '5173';
 

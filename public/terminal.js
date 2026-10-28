@@ -4930,11 +4930,13 @@ function createFileManagerWindow({ path = currentPath } = {}) {
             renameBtn.innerHTML = svgIcon('rename');
             renameBtn.setAttribute('aria-label', t('重命名'));
             renameBtn.title = t('重命名');
-            renameBtn.addEventListener('click', (e) => { e.stopPropagation(); const newName = prompt(t('新名称:'), file.name); if (!newName) return; wsConnection.send(JSON.stringify({ type: 'sftp-rename', oldPath: itemPath, newPath: fullPath(newName) })); });
+            renameBtn.addEventListener('click', async (e) => { e.stopPropagation(); const newName = await window.ZephyrNativeUI.prompt(t('新名称:'), file.name); if (!newName) return; wsConnection.send(JSON.stringify({ type: 'sftp-rename', oldPath: itemPath, newPath: fullPath(newName) })); });
             const deleteBtn = document.createElement('button');
             setZephyrIconButton(deleteBtn, 'delete', t('删除'));
             deleteBtn.title = t('删除');
-            deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); if (confirm(t('确认删除 {name}?', { name: file.name }))) wsConnection.send(JSON.stringify({ type: 'sftp-delete', path: itemPath })); });
+            deleteBtn.addEventListener('click', async (e) => { e.stopPropagation(); if (await window.ZephyrNativeUI.confirm(t('确认删除 {name}?', {
+  name: file.name
+}))) wsConnection.send(JSON.stringify({ type: 'sftp-delete', path: itemPath })); });
             actions.appendChild(renameBtn); actions.appendChild(deleteBtn);
             item.appendChild(nameSpan); item.appendChild(actions); listEl.appendChild(item);
         });
@@ -4954,8 +4956,8 @@ function createFileManagerWindow({ path = currentPath } = {}) {
         updateFileButtonActiveState();
         window.setTimeout(() => panel.remove(), 320);
     }
-    function newFolder() { const name = prompt(t('请输入文件夹名称:')); if (name) wsConnection.send(JSON.stringify({ type: 'sftp-mkdir', path: fullPath(name) })); }
-    function newFile() { const name = prompt(t('请输入文件名:')); if (name) wsConnection.send(JSON.stringify({ type: 'sftp-touch', path: fullPath(name) })); }
+    async function newFolder() { const name = await window.ZephyrNativeUI.prompt(t('请输入文件夹名称:')); if (name) wsConnection.send(JSON.stringify({ type: 'sftp-mkdir', path: fullPath(name) })); }
+    async function newFile() { const name = await window.ZephyrNativeUI.prompt(t('请输入文件名:')); if (name) wsConnection.send(JSON.stringify({ type: 'sftp-touch', path: fullPath(name) })); }
     function uploadLocalFiles(fileList) {
         const previous = currentPath;
         currentPath = state.currentPath;
@@ -4972,7 +4974,7 @@ function createFileManagerWindow({ path = currentPath } = {}) {
     newFolderBtn?.addEventListener('click', newFolder);
     newFileBtn?.addEventListener('click', newFile);
     selectBtn?.addEventListener('click', (e) => { e.preventDefault(); state.mobileSelectMode = !state.mobileSelectMode; if (!state.mobileSelectMode) clearSelection(); updateMobileActions(); });
-    pasteBtn?.addEventListener('click', (e) => { e.preventDefault(); syncGlobalFileContext(); if (consumePendingSharedFiles()) return; handleFileMenuAction('paste'); });
+    pasteBtn?.addEventListener('click', async (e) => { e.preventDefault(); syncGlobalFileContext(); if (consumePendingSharedFiles()) return; await handleFileMenuAction('paste'); });
     transferBtn?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (transferPopover?.classList.contains('open')) hideTransferPopover(true); else showTransferPopover(); });
     uploadInput?.addEventListener('change', (e) => { uploadLocalFiles(e.target.files); uploadInput.value = ''; });
     listEl?.addEventListener('click', (e) => { if (e.target.closest('.fm-item-actions') || fileContextMenu?.classList.contains('show')) return; const item = e.target.closest('.fm-item'); if (!item) { clearSelection(); return; } const filePath = item.dataset.filePath; if (!filePath) return; if (!isTouchLikeDevice() && (e.ctrlKey || e.metaKey)) toggleSelection(filePath); else if (isTouchLikeDevice() && state.mobileSelectMode) toggleSelection(filePath); else selectSingle(filePath); });
@@ -5057,8 +5059,10 @@ function handleExtraFileManagerListMessage(msg) {
                 const renameBtn = document.createElement('button');
                 renameBtn.innerHTML = svgIcon('rename');
                 renameBtn.setAttribute('aria-label', t('重命名'));
-                renameBtn.title = t('重命名'); renameBtn.addEventListener('click', (e) => { e.stopPropagation(); const newName = prompt(t('新名称:'), file.name); if (newName) wsConnection.send(JSON.stringify({ type: 'sftp-rename', oldPath: itemPath, newPath: state.currentPath.replace(/\/+$/, '') + '/' + newName })); });
-                const deleteBtn = document.createElement('button'); setZephyrIconButton(deleteBtn, 'delete', t('删除')); deleteBtn.title = t('删除'); deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); if (confirm(t('确认删除 {name}?', { name: file.name }))) wsConnection.send(JSON.stringify({ type: 'sftp-delete', path: itemPath })); });
+                renameBtn.title = t('重命名'); renameBtn.addEventListener('click', async (e) => { e.stopPropagation(); const newName = await window.ZephyrNativeUI.prompt(t('新名称:'), file.name); if (newName) wsConnection.send(JSON.stringify({ type: 'sftp-rename', oldPath: itemPath, newPath: state.currentPath.replace(/\/+$/, '') + '/' + newName })); });
+                const deleteBtn = document.createElement('button'); setZephyrIconButton(deleteBtn, 'delete', t('删除')); deleteBtn.title = t('删除'); deleteBtn.addEventListener('click', async (e) => { e.stopPropagation(); if (await window.ZephyrNativeUI.confirm(t('确认删除 {name}?', {
+  name: file.name
+}))) wsConnection.send(JSON.stringify({ type: 'sftp-delete', path: itemPath })); });
                 actions.appendChild(renameBtn); actions.appendChild(deleteBtn); item.appendChild(nameSpan); item.appendChild(actions); listEl.appendChild(item);
             });
         }
@@ -5374,10 +5378,10 @@ fmSelectBtn?.addEventListener('click', (e) => {
     if (!mobileFileSelectMode) clearFileSelection();
     updateMobileFileActions();
 });
-fmPasteBtn?.addEventListener('click', (e) => {
+fmPasteBtn?.addEventListener('click', async (e) => {
     e.preventDefault();
     if (consumePendingSharedFiles()) return;
-    handleFileMenuAction('paste');
+    await handleFileMenuAction('paste');
 });
 window.addEventListener('resize', updateMobileFileActions);
 fmList.addEventListener('click', (e) => {
@@ -5451,12 +5455,12 @@ function ensureFileContextMenu() {
     document.body.appendChild(fileContextOverlay);
     document.body.appendChild(fileContextMenu);
     fileContextOverlay.addEventListener('click', hideFileContextMenu);
-    fileContextMenu.addEventListener('click', (e) => {
+    fileContextMenu.addEventListener('click', async (e) => {
         const btn = e.target.closest('[data-action]');
         if (!btn) return;
         const action = btn.dataset.action;
         hideFileContextMenu();
-        handleFileMenuAction(action);
+        await handleFileMenuAction(action);
     });
 }
 function hideFileContextMenu() {
@@ -5519,9 +5523,11 @@ function withArchiveExtension(name, ext) {
     if (current) text = text.slice(0, -current.length);
     return `${text}${ext || '.tar.gz'}`;
 }
-function chooseArchiveTargetPath(defaultName) {
+async function chooseArchiveTargetPath(defaultName) {
     const extList = SFTP_ARCHIVE_EXTENSIONS.join(' / ');
-    const input = prompt(t('压缩到（支持 {extensions}）：', { extensions: extList }), fullFilePath(defaultName));
+    const input = await window.ZephyrNativeUI.prompt(t('压缩到（支持 {extensions}）：', {
+  extensions: extList
+}), fullFilePath(defaultName));
     if (!input) return '';
     if (archiveExtensionOf(input)) return input;
     return withArchiveExtension(input, '.tar.gz');
@@ -5617,7 +5623,7 @@ function ensureFilePropertiesModal() {
     document.body.appendChild(filePropertiesOverlay);
     document.body.appendChild(filePropertiesModal);
     filePropertiesOverlay.addEventListener('click', hideFilePropertiesModal);
-    filePropertiesModal.addEventListener('click', (e) => {
+    filePropertiesModal.addEventListener('click', async (e) => {
         const closeBtn = e.target.closest('[data-props-close]');
         if (closeBtn) { hideFilePropertiesModal(); return; }
         const copyBtn = e.target.closest('[data-props-copy-path]');
@@ -5637,7 +5643,7 @@ function ensureFilePropertiesModal() {
         if (chmodBtn) {
             const targetPath = chmodBtn.dataset.path || '';
             const currentMode = chmodBtn.dataset.mode || '';
-            const mode = prompt(t('输入权限模式（例如 644 / 755）:'), currentMode || '644');
+            const mode = await window.ZephyrNativeUI.prompt(t('输入权限模式（例如 644 / 755）:'), currentMode || '644');
             if (!mode) return;
             if (!/^[0-7]{3,4}$/.test(mode.trim())) { showToast('权限格式不正确，请输入 644 或 0755', 'error'); return; }
             wsConnection.send(JSON.stringify({ type: 'sftp-chmod', path: targetPath, mode: mode.trim() }));
@@ -5709,7 +5715,7 @@ function requestDownload(file) {
     showTransferPopover({ autoHide: true });
     wsConnection.send(JSON.stringify({ type: 'sftp-download', path: file.path, downloadId }));
 }
-function handleFileMenuAction(action) {
+async function handleFileMenuAction(action) {
     const selected = getSelectedFiles();
     const single = selected[0];
     if (action === 'refresh') return refreshFileList();
@@ -5735,20 +5741,22 @@ function handleFileMenuAction(action) {
         return;
     }
     if (action === 'rename' && single) {
-        const newName = prompt(t('新名称:'), single.name);
+        const newName = await window.ZephyrNativeUI.prompt(t('新名称:'), single.name);
         if (!newName) return;
         wsConnection.send(JSON.stringify({ type: 'sftp-rename', oldPath: single.path, newPath: fullFilePath(newName) }));
         return;
     }
     if (action === 'delete') {
-        if (!selected.length || !confirm(t('确认删除选中的 {count} 项?', { count: selected.length }))) return;
+        if (!selected.length || !await window.ZephyrNativeUI.confirm(t('确认删除选中的 {count} 项?', {
+  count: selected.length
+}))) return;
         selected.forEach((file) => wsConnection.send(JSON.stringify({ type: 'sftp-delete', path: file.path })));
         return;
     }
     if (action === 'compress') {
         if (!selected.length) return;
         const defaultName = selected.length === 1 ? `${selected[0].name}.zip` : `archive-${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12)}.zip`;
-        const targetPath = chooseArchiveTargetPath(defaultName);
+        const targetPath = await chooseArchiveTargetPath(defaultName);
         if (!targetPath) return;
         const transferId = `archive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         markDownloadProgress(transferId, { name: `压缩: ${targetPath.split('/').pop() || t('压缩包')}`, path: targetPath, direction: 'archive', phase: 'prepare', size: 0, loaded: 0, status: 'pending', cancellable: true });
@@ -5758,7 +5766,7 @@ function handleFileMenuAction(action) {
         return;
     }
     if (action === 'extract' && single) {
-        const targetDir = prompt(t('解压到:'), currentPath);
+        const targetDir = await window.ZephyrNativeUI.prompt(t('解压到:'), currentPath);
         if (!targetDir) return;
         const transferId = `archive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         markDownloadProgress(transferId, { name: `解压: ${single.name || t('压缩包')}`, path: single.path, direction: 'archive', phase: 'prepare', size: 0, loaded: 0, status: 'pending', cancellable: true });
@@ -5797,17 +5805,17 @@ function isFileManagerShortcutBlocked(e) {
     return isEditable(target) || isEditable(active) || !!document.querySelector('.fm-editor-modal.open .cm-focused');
 }
 
-document.addEventListener('keydown', (e) => {
+document.addEventListener('keydown', async (e) => {
     if (!fileManager?.classList.contains('open')) return;
     if (isFileManagerShortcutBlocked(e)) return;
     const mac = getShortcutPlatform() === 'mac';
     const mod = mac ? e.metaKey : e.ctrlKey;
-    if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); handleFileMenuAction('copy'); }
-    else if (mod && e.key.toLowerCase() === 'x') { e.preventDefault(); handleFileMenuAction('cut'); }
-    else if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); if (consumePendingSharedFiles()) return; handleFileMenuAction('paste'); }
-    else if (e.key === 'F2') { e.preventDefault(); handleFileMenuAction('rename'); }
-    else if (e.key === 'Delete' || e.key === 'Backspace') { if (selectedFilePaths.size) { e.preventDefault(); handleFileMenuAction('delete'); } }
-    else if (mod && e.key.toLowerCase() === 'i') { e.preventDefault(); handleFileMenuAction('properties'); }
+    if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); await handleFileMenuAction('copy'); }
+    else if (mod && e.key.toLowerCase() === 'x') { e.preventDefault(); await handleFileMenuAction('cut'); }
+    else if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); if (consumePendingSharedFiles()) return; await handleFileMenuAction('paste'); }
+    else if (e.key === 'F2') { e.preventDefault(); await handleFileMenuAction('rename'); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') { if (selectedFilePaths.size) { e.preventDefault(); await handleFileMenuAction('delete'); } }
+    else if (mod && e.key.toLowerCase() === 'i') { e.preventDefault(); await handleFileMenuAction('properties'); }
 });
 
 function renderFileList(files) {
@@ -5856,9 +5864,9 @@ function renderFileList(files) {
         renameBtn.innerHTML = svgIcon('rename');
         renameBtn.setAttribute('aria-label', t('重命名'));
         renameBtn.title = t('重命名');
-        renameBtn.addEventListener('click', (e) => {
+        renameBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
-            const newName = prompt(t('新名称:'), file.name);
+            const newName = await window.ZephyrNativeUI.prompt(t('新名称:'), file.name);
             if (!newName) return;
             const oldPath = currentPath.replace(/\/+$/, '') + '/' + file.name;
             const newPath = currentPath.replace(/\/+$/, '') + '/' + newName;
@@ -5868,9 +5876,11 @@ function renderFileList(files) {
         const deleteBtn = document.createElement('button');
         setZephyrIconButton(deleteBtn, 'delete', t('删除'));
         deleteBtn.title = t('删除');
-        deleteBtn.addEventListener('click', (e) => {
+        deleteBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
-            if (confirm(t('确认删除 {name}?', { name: file.name }))) {
+            if (await window.ZephyrNativeUI.confirm(t('确认删除 {name}?', {
+  name: file.name
+}))) {
                 wsConnection.send(JSON.stringify({
                     type: 'sftp-delete',
                     path: currentPath.replace(/\/+$/, '') + '/' + file.name
@@ -5908,14 +5918,14 @@ function renderFileList(files) {
 }
 
 // 新建文件夹
-fmNewFolderBtn.addEventListener('click', () => {
-    const name = prompt(t('请输入文件夹名称:'));
+fmNewFolderBtn.addEventListener('click', async () => {
+    const name = await window.ZephyrNativeUI.prompt(t('请输入文件夹名称:'));
     if (!name) return;
     wsConnection.send(JSON.stringify({ type: 'sftp-mkdir', path: currentPath.replace(/\/+$/, '') + '/' + name }));
 });
 // 新建文件
-fmNewFileBtn.addEventListener('click', () => {
-    const name = prompt(t('请输入文件名:'));
+fmNewFileBtn.addEventListener('click', async () => {
+    const name = await window.ZephyrNativeUI.prompt(t('请输入文件名:'));
     if (!name) return;
     wsConnection.send(JSON.stringify({ type: 'sftp-touch', path: currentPath.replace(/\/+$/, '') + '/' + name }));
 });
@@ -7439,12 +7449,12 @@ async function openMediaPreview(filePath) {
     preview.open(filePath);
 }
 
-function promptRemoteSubtitlePath(mediaPath = '') {
+async function promptRemoteSubtitlePath(mediaPath = '') {
     const mediaDir = String(mediaPath || currentPath).replace(/\/[^/]*$/, '') || currentPath || '.';
     const mediaBase = String(mediaPath || '').split('/').pop()?.replace(/\.[^.]+$/, '') || '';
     const selected = getSelectedFiles().find((file) => file.type !== 'd' && /\.(vtt|srt|ass|ssa|sub)$/i.test(file.name || file.path || ''));
     const guess = selected?.path || (mediaBase ? `${mediaDir.replace(/\/+$/, '')}/${mediaBase}.srt` : mediaDir);
-    return prompt(t('输入远程字幕路径（也可以先在文件列表选中字幕文件）:'), guess);
+    return await window.ZephyrNativeUI.prompt(t('输入远程字幕路径（也可以先在文件列表选中字幕文件）:'), guess);
 }
 
 function readRemoteSubtitleFile(filePath) {
@@ -7469,7 +7479,7 @@ function readRemoteSubtitleFile(filePath) {
 }
 
 async function pickRemoteSubtitleForMedia(mediaPath = '') {
-    const filePath = promptRemoteSubtitlePath(mediaPath);
+    const filePath = await promptRemoteSubtitlePath(mediaPath);
     if (!filePath) return null;
     return readRemoteSubtitleFile(filePath.trim());
 }
@@ -7805,13 +7815,13 @@ if (window.ResizeObserver && fmEditorMain) {
 }
 
 // ---------- SFTP 消息处理 ----------
-function handleSFTPMessage(msg) {
+async function handleSFTPMessage(msg) {
     switch (msg.type) {
         case 'sftp-ready': sftpReady = true; refreshAllOpenFileManagers(); flushPendingUploads(); break;
         case 'sftp-list':
             if (handleExtraFileManagerListMessage(msg)) break;
             if (isAgentVfsPath(currentPath) && !isAgentVfsPath(msg.path)) break;
-            if (msg.error) alert(`${t('列出目录失败:')} ${msg.error}`);
+            if (msg.error) await window.ZephyrNativeUI.alert(`${t('列出目录失败:')} ${msg.error}`);
             else { selectedFilePaths.clear(); renderFileList(msg.files); currentPath = msg.path; fmPathInput.value = currentPath; updateMobileFileActions(); }
             break;
         case 'sftp-mkdir': case 'sftp-touch': case 'sftp-delete': case 'sftp-rename': case 'sftp-upload': case 'sftp-chmod':
@@ -7872,15 +7882,15 @@ function handleSFTPMessage(msg) {
         }
         case 'sftp-download':
             if (msg.downloadId) markDownloadProgress(msg.downloadId, { status: 'error' });
-            if (msg.error) alert(`${t('下载失败:')} ${msg.error}`);
+            if (msg.error) await window.ZephyrNativeUI.alert(`${t('下载失败:')} ${msg.error}`);
             break;
         case 'sftp-download-ready': {
             if (msg.error) {
-                alert(`${t('下载失败:')} ${msg.error}`);
+                await window.ZephyrNativeUI.alert(`${t('下载失败:')} ${msg.error}`);
                 break;
             }
             if (!msg.url) {
-                alert(t('下载失败: 缺少下载地址'));
+                await window.ZephyrNativeUI.alert(t('下载失败: 缺少下载地址'));
                 break;
             }
             const downloadId = msg.downloadId || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -7917,7 +7927,7 @@ function handleSFTPMessage(msg) {
             } else {
                 sftpClipboardAvailable = false;
                 updateMobileFileActions();
-                alert(`${t('剪贴板操作失败:')} ${msg.error || t('未知错误')}`);
+                await window.ZephyrNativeUI.alert(`${t('剪贴板操作失败:')} ${msg.error || t('未知错误')}`);
             }
             break;
         case 'sftp-properties': {
@@ -7937,7 +7947,7 @@ function handleSFTPMessage(msg) {
         }
         case 'sftp-clipboard-paste':
             if (msg.success) { showToast('粘贴完成', 'success'); refreshAllOpenFileManagers(); }
-            else alert(`${t('粘贴失败:')} ${msg.error || t('未知错误')}`);
+            else await window.ZephyrNativeUI.alert(`${t('粘贴失败:')} ${msg.error || t('未知错误')}`);
             break;
         case 'sftp-compress':
             if (msg.transferId) {
@@ -7948,7 +7958,7 @@ function handleSFTPMessage(msg) {
             }
             if (msg.success) { showToast('压缩完成', 'success'); refreshAllOpenFileManagers(); }
             else if (msg.cancelled) showToast('压缩已取消', 'info');
-            else alert(`${t('压缩失败:')} ${msg.error || t('未知错误')}`);
+            else await window.ZephyrNativeUI.alert(`${t('压缩失败:')} ${msg.error || t('未知错误')}`);
             break;
         case 'sftp-extract':
             if (msg.transferId) {
@@ -7959,7 +7969,7 @@ function handleSFTPMessage(msg) {
             }
             if (msg.success) { showToast('解压完成', 'success'); refreshAllOpenFileManagers(); }
             else if (msg.cancelled) showToast('解压已取消', 'info');
-            else alert(`${t('解压失败:')} ${msg.error || t('未知错误')}`);
+            else await window.ZephyrNativeUI.alert(`${t('解压失败:')} ${msg.error || t('未知错误')}`);
             break;
         case 'sftp-readfile': {
             const pendingSubtitle = msg.requestId ? pendingRemoteSubtitleReads.get(msg.requestId) : null;
@@ -8031,7 +8041,7 @@ function handleSFTPMessage(msg) {
             showEditorSidepanel(host, 'search', msg.matches || [], { query: msg.query, filesScanned: msg.filesScanned });
             break;
         }
-        case 'sftp-error': alert(`${t('SFTP 错误:')} ${msg.message}`); sftpReady = false; break;
+        case 'sftp-error': await window.ZephyrNativeUI.alert(`${t('SFTP 错误:')} ${msg.message}`); sftpReady = false; break;
     }
 }
 
@@ -8224,9 +8234,11 @@ function renderDockerContainers(containers = []) {
             btn.className = `tool-btn docker-action-btn ${action === 'remove' ? 'danger-text' : ''}`;
             btn.innerHTML = `${dockerActionGlyph(action, label)}<span>${escapeHtml(label)}</span>`;
             btn.disabled = (action === 'start' && running) || (action === 'stop' && !running);
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 if (action === 'logs') return openDockerLogs(target, container.name);
-                if (action === 'remove' && !confirm(t('确认删除容器 {name}?', { name: container.name }))) return;
+                if (action === 'remove' && !await window.ZephyrNativeUI.confirm(t('确认删除容器 {name}?', {
+  name: container.name
+}))) return;
                 setDockerStatus(t('正在执行容器{action}操作...', { action: label }), true);
                 dockerSend({ type: 'docker-container-action', action, id: target });
             });
@@ -8269,16 +8281,20 @@ function renderDockerImages(images = []) {
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'tool-btn docker-action-btn danger-text';
         deleteBtn.innerHTML = `${dockerActionGlyph('remove', t('删除'))}<span>${t('删除')}</span>`;
-        deleteBtn.addEventListener('click', () => {
-            if (!confirm(t('确认删除镜像 {image}?', { image: imageRef }))) return;
+        deleteBtn.addEventListener('click', async () => {
+            if (!await window.ZephyrNativeUI.confirm(t('确认删除镜像 {image}?', {
+  image: imageRef
+}))) return;
             setDockerStatus(t('正在检查镜像使用情况...'), true);
             dockerSend({ type: 'docker-delete-image', image: imageRef, id: image.id });
         });
         const tagBtn = document.createElement('button');
         tagBtn.className = 'tool-btn docker-action-btn';
         tagBtn.innerHTML = `${dockerActionGlyph('restart', t('标签'))}<span>${t('标签')}</span>`;
-        tagBtn.addEventListener('click', () => {
-            const target = prompt(t('为 {image} 添加新标签（如 myrepo/xx:v1）', { image: imageRef }), imageRef);
+        tagBtn.addEventListener('click', async () => {
+            const target = await window.ZephyrNativeUI.prompt(t('为 {image} 添加新标签（如 myrepo/xx:v1）', {
+  image: imageRef
+}), imageRef);
             if (!target || !target.trim() || target.trim() === imageRef) return;
             setDockerStatus(t('正在打标签...'), true);
             dockerSend({ type: 'docker-image-tag', source: imageRef, target: target.trim() });
@@ -8319,8 +8335,10 @@ function renderDockerVolumes(volumes = []) {
         const removeBtn = document.createElement('button');
         removeBtn.className = 'tool-btn docker-action-btn danger-text';
         removeBtn.innerHTML = `${dockerActionGlyph('remove', t('删除'))}<span>${t('删除')}</span>`;
-        removeBtn.addEventListener('click', () => {
-            if (!confirm(t('确认删除存储卷 {name}? 数据将丢失。', { name: volume.name }))) return;
+        removeBtn.addEventListener('click', async () => {
+            if (!await window.ZephyrNativeUI.confirm(t('确认删除存储卷 {name}? 数据将丢失。', {
+  name: volume.name
+}))) return;
             setDockerStatus(t('正在删除存储卷...'), true);
             dockerSend({ type: 'docker-volume-action', action: 'remove', name: volume.name });
         });
@@ -8375,8 +8393,10 @@ function renderDockerNetworks(networks = []) {
         removeBtn.innerHTML = `${dockerActionGlyph('remove', t('删除'))}<span>${t('删除')}</span>`;
         removeBtn.disabled = builtin.has(network.name);
         removeBtn.title = builtin.has(network.name) ? t('内置网络不可删除') : '';
-        removeBtn.addEventListener('click', () => {
-            if (!confirm(t('确认删除网络 {name}?', { name: network.name }))) return;
+        removeBtn.addEventListener('click', async () => {
+            if (!await window.ZephyrNativeUI.confirm(t('确认删除网络 {name}?', {
+  name: network.name
+}))) return;
             setDockerStatus(t('正在删除网络...'), true);
             dockerSend({ type: 'docker-network-action', action: 'remove', id: network.name });
         });
@@ -8443,7 +8463,7 @@ function closeDockerLogs() {
     dockerLogDrawer.style.display = 'none';
 }
 
-function handleDockerMessage(msg) {
+async function handleDockerMessage(msg) {
     switch (msg.type) {
         case 'docker-status':
             dockerChecked = true;
@@ -8559,7 +8579,9 @@ function handleDockerMessage(msg) {
             break;
         case 'docker-image-delete':
             if (msg.requiresForce) {
-                const ok = confirm(t('该镜像正在被以下容器使用：\n{containers}\n\n是否强制删除？', { containers: msg.usedBy }));
+                const ok = await window.ZephyrNativeUI.confirm(t('该镜像正在被以下容器使用：\n{containers}\n\n是否强制删除？', {
+  containers: msg.usedBy
+}));
                 if (ok) dockerSend({ type: 'docker-delete-image', image: msg.image, force: true });
                 else setDockerStatus(t('已取消删除镜像'), false);
                 return;
@@ -8647,8 +8669,8 @@ dockerBtn?.addEventListener('click', () => {
 });
 dockerCloseBtn?.addEventListener('click', hideDockerPanel);
 dockerRefreshBtn?.addEventListener('click', () => checkDockerStatus({ force: true }));
-dockerRestartBtn?.addEventListener('click', () => {
-    if (!confirm(t('确认重启目标主机 Docker 服务？运行中的容器通常会继续运行，但 Docker API 会短暂不可用。'))) return;
+dockerRestartBtn?.addEventListener('click', async () => {
+    if (!await window.ZephyrNativeUI.confirm(t('确认重启目标主机 Docker 服务？运行中的容器通常会继续运行，但 Docker API 会短暂不可用。'))) return;
     setDockerStatus(t('正在重启 Docker 服务...'), true);
     dockerSend({ type: 'docker-restart-service' });
 });
@@ -8704,18 +8726,18 @@ dockerLogDownloadBtn?.addEventListener('click', () => {
 });
 
 dockerShowAll?.addEventListener('change', () => renderDockerContainers(dockerContainersCache));
-dockerPruneBtn?.addEventListener('click', () => {
-    if (!confirm(t('确认清理所有停止的容器、悬空镜像与未使用网络？'))) return;
+dockerPruneBtn?.addEventListener('click', async () => {
+    if (!await window.ZephyrNativeUI.confirm(t('确认清理所有停止的容器、悬空镜像与未使用网络？'))) return;
     setDockerStatus(t('正在清理系统...'), true);
     dockerSend({ type: 'docker-prune', kind: 'system' });
 });
-dockerPruneImagesBtn?.addEventListener('click', () => {
-    if (!confirm(t('确认清理所有未使用的镜像？'))) return;
+dockerPruneImagesBtn?.addEventListener('click', async () => {
+    if (!await window.ZephyrNativeUI.confirm(t('确认清理所有未使用的镜像？'))) return;
     setDockerStatus(t('正在清理镜像...'), true);
     dockerSend({ type: 'docker-prune', kind: 'images' });
 });
-dockerPruneNetworksBtn?.addEventListener('click', () => {
-    if (!confirm(t('确认清理所有未使用的网络？'))) return;
+dockerPruneNetworksBtn?.addEventListener('click', async () => {
+    if (!await window.ZephyrNativeUI.confirm(t('确认清理所有未使用的网络？'))) return;
     setDockerStatus(t('正在清理网络...'), true);
     dockerSend({ type: 'docker-prune', kind: 'networks' });
 });
@@ -8751,8 +8773,8 @@ dockerVolumeCreateBtn?.addEventListener('click', () => {
     dockerSend({ type: 'docker-volume-action', action: 'create', name });
 });
 dockerVolumeCreateInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') dockerVolumeCreateBtn?.click(); });
-dockerPruneVolumesBtn?.addEventListener('click', () => {
-    if (!confirm(t('确认清理所有未使用的存储卷？数据将丢失。'))) return;
+dockerPruneVolumesBtn?.addEventListener('click', async () => {
+    if (!await window.ZephyrNativeUI.confirm(t('确认清理所有未使用的存储卷？数据将丢失。'))) return;
     setDockerStatus(t('正在清理存储卷...'), true);
     dockerSend({ type: 'docker-prune', kind: 'volumes' });
 });
@@ -11338,11 +11360,13 @@ function bindProcessPageEvents() {
     $('#processSearch')?.addEventListener('input', (event) => { processSearch = event.target.value || ''; renderStats(latestStatsData); });
     $('#processSort')?.addEventListener('change', (event) => { processSort = event.target.value || 'cpu'; renderStats(latestStatsData); });
     $('#processRefreshBtn')?.addEventListener('click', () => wsConnection?.send?.(JSON.stringify({ type: 'stats-request' })));
-    $$('.process-row [data-process-signal]').forEach((btn) => btn.addEventListener('click', () => {
+    $$('.process-row [data-process-signal]').forEach((btn) => btn.addEventListener('click', async () => {
         const pid = Number(btn.dataset.pid);
         const signal = btn.dataset.processSignal || 'TERM';
         if (!pid) return;
-        if (signal === 'KILL' && !confirm(t('确定强制结束进程 {pid}？', { pid }))) return;
+        if (signal === 'KILL' && !await window.ZephyrNativeUI.confirm(t('确定强制结束进程 {pid}？', {
+  pid
+}))) return;
         processBusyPid = pid;
         renderStats(latestStatsData);
         wsConnection?.send?.(JSON.stringify({ type: 'process-signal', pid, signal }));
@@ -13074,19 +13098,32 @@ function updateTerminalWebLinks() {
     });
 }
 
-wtermWrapper.addEventListener('contextmenu', async (e) => {
-    const selection = window.getSelection();
-    if (selection?.toString?.().length > 0) return;
-    // 移动端长按需要留给系统文本选择/复制；自动读剪贴板粘贴会和选区手势冲突。
-    // 桌面端仍保留右键粘贴。
-    if (isTouchKeyboardDevice()) return;
+wtermWrapper.addEventListener('contextmenu', (e) => {
     if (terminalMouseTrackingEnabled()) {
+        e.preventDefault();
+        e.stopPropagation();
         sendTerminalMouseEvent(e, 'press');
         return;
     }
-    e.preventDefault();
-    const ok = await pasteClipboardIntoTerminal('terminal-right-click-paste');
-    if (!ok) console.info('[terminal-paste]', t('右键粘贴需要浏览器剪贴板权限或非空文本剪贴板'));
+    if (isTouchKeyboardDevice()) return;
+});
+wtermWrapper.addEventListener('zephyr:native-paste', (event) => {
+    event.stopPropagation();
+    const value = String(event.detail?.text || '');
+    if (!value) return;
+    sendData(prepareTerminalPastePayload(value), { source: 'zephyr-native-menu-paste', forceFollow: true, applyModifiers: false });
+    try { term?.focus?.(); } catch {}
+});
+wtermWrapper.addEventListener('zephyr:native-select-all', (event) => {
+    event.stopPropagation();
+    if (typeof term?.selectAll === 'function') term.selectAll();
+    else {
+        const range = document.createRange();
+        range.selectNodeContents(wtermWrapper);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+    }
 });
  // 粘贴交给 @wterm/dom 官方 InputHandler 处理：
  // - 支持 bracketed paste；
@@ -13726,7 +13763,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
             }));
         });
 
-        ws.addEventListener('message', (event) => {
+        ws.addEventListener('message', async (event) => {
             if (connectionToken !== activeConnectionToken) return;
             try {
                 const msg = JSON.parse(event.data);
@@ -13758,10 +13795,10 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                         ? (imagePreviewPanelsByPath.get(msg.path) || Array.from(imagePreviewPanelsByPath.values()).find((instance) => instance?.currentPath === msg.path || instance?.pending?.has?.(msg.path)))
                         : activeImagePreview;
                     if (imagePanel?.handleMessage?.(msg)) return;
-                    handleSFTPMessage(msg);
+                    await handleSFTPMessage(msg);
                     return;
                 }
-                if (msg.type?.startsWith('docker-')) { handleDockerMessage(msg); return; }
+                if (msg.type?.startsWith('docker-')) { await handleDockerMessage(msg); return; }
                 switch (msg.type) {
                     case 'ready':
                         if (msg.sessionId) {

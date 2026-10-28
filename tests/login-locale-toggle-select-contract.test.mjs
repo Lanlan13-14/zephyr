@@ -17,7 +17,7 @@ test('login locale selects become toggle-selects with motion open/close', () => 
     assert.match(js, /preset: 'mac',/);
     assert.match(js, /\{ preset: 'macClose' \}/);
     assert.match(js, /Motion\.setOriginFromAnchor\?\.\(menu, trigger\)/);
-    assert.match(js, /shell\.className = 'ui-toggle-select login-locale-select';/);
+    assert.match(read('public/native-select.js'), /className === 'login-locale-select'/);
     /* All four login-page cards get enhanced at boot. */
     assert.match(js, /enhanceLoginLocaleSelects\(\);/);
     /* Engine is warmed at idle so the FIRST open animates identically to
@@ -31,15 +31,16 @@ test('login locale selects become toggle-selects with motion open/close', () => 
 
 test('login toggle re-click closes, outside click and Escape close too', () => {
     const js = read('public/client.js');
-    /* Trigger handler toggles: willOpen false → closeToggleSelectMenu path. */
-    assert.match(js, /const willOpen = !shell\.classList\.contains\('open'\);/);
-    assert.match(js, /if \(willOpen\) openLoginToggleMenu\(shell\);\s*else closeLoginToggleMenu\(shell\);/);
-    assert.match(js, /if \(!e\.target\.closest\?\.\('\.login-locale-select\.ui-toggle-select'\)\) closeAllLoginToggleSelects\(\);/);
-    assert.match(js, /if \(e\.key === 'Escape'\) closeAllLoginToggleSelects\(\);/);
+    const shared = read('public/native-select.js');
+    /* Shared trigger toggles and calls the page's Motion adapter. */
+    assert.match(shared, /const willOpen = !shell\.classList\.contains\('open'\);/);
+    assert.match(shared, /if \(!willOpen\) \{ shell\._zephyrCloseMenu\?\.\(\); return; \}/);
+    assert.match(shared, /if \(!event\.target\.closest\('\.ui-toggle-select'\)\) close\(\);/);
+    assert.match(shared, /event\.key === 'Escape'/);
     /* Programmatic locale sync must refresh the custom face too. */
     assert.match(js, /syncLoginToggleFace\(el\);/);
     /* Selecting an option still drives the native select + change event. */
-    assert.match(js, /select\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/);
+    assert.match(shared, /select\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\)/);
 });
 
 test('login toggle reuses the global trigger/menu styles (no custom pill look)', () => {

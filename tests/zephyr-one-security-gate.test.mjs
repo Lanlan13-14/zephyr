@@ -591,7 +591,7 @@ test('the browser product keeps its password prompt', () => {
     assert.match(APP_JS, /window\.__zephyrOneUnlock/);
     const fn = APP_JS.slice(APP_JS.indexOf('async function requestSensitiveSecret('));
     const body = fn.slice(0, fn.indexOf('\n}\n'));
-    assert.match(body, /prompt\(message\)/, 'the browser path must still prompt');
+    assert.match(body, /ZephyrNativeUI\.prompt\(message, '', \{ password: true \}\)/, 'the browser path must still prompt in a masked Zephyr dialog');
     assert.match(body, /securityStatus\.user\?\.totpEnabled/);
     assert.match(SERVER_JS, /app\.get\('\/zephyr-one-security-ui\.js'/);
     assert.match(SERVER_JS, /if \(!ZEPHYR_ONE_EMBEDDED\) return next\(\);/);

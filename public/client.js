@@ -349,21 +349,6 @@ const loginSelectMotion = {
 
 function escLoginHtml(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-function syncLoginToggleFace(select) {
-    const shell = select?.closest?.('.ui-toggle-select');
-    if (!shell) return;
-    const trigger = shell.querySelector('.ui-toggle-select-trigger');
-    const menu = shell.querySelector('.ui-toggle-select-menu');
-    if (!trigger || !menu) return;
-    const opts = Array.from(select.options || []);
-    const current = opts.find((o) => o.value === select.value) || opts[0];
-    trigger.textContent = current ? (current.textContent || current.value || '') : '';
-    menu.innerHTML = opts.map((o) => {
-        const selected = o.value === select.value;
-        return `<button type="button" class="ui-toggle-select-option${selected ? ' is-selected' : ''}" role="option" data-value="${escLoginHtml(o.value)}" aria-selected="${selected ? 'true' : 'false'}">${escLoginHtml(o.textContent || o.value || '')}</button>`;
-    }).join('');
-}
-
 async function openLoginToggleMenu(shell) {
     const trigger = shell.querySelector('.ui-toggle-select-trigger');
     const menu = shell.querySelector('.ui-toggle-select-menu');
@@ -432,72 +417,30 @@ function closeAllLoginToggleSelects(exceptShell = null) {
     });
 }
 
+let _loginToggleDocBound = false;
+function syncLoginToggleFace(select) {
+    window.ZephyrNativeSelect?.sync(select);
+}
+
 function enhanceLoginToggleSelect(select) {
-    if (!select || select.tagName !== 'SELECT' || select.dataset.toggleSelect === '1') return null;
-    const shell = document.createElement('div');
-    shell.className = 'ui-toggle-select login-locale-select';
-    shell.dataset.selectId = select.id || '';
-    select.parentNode.insertBefore(shell, select);
-    shell.appendChild(select);
-    select.classList.add('ui-toggle-select-native');
-    select.dataset.toggleSelect = '1';
-    select.tabIndex = -1;
-    select.setAttribute('aria-hidden', 'true');
-
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.className = 'ui-toggle-select-trigger';
-    trigger.setAttribute('aria-haspopup', 'listbox');
-    trigger.setAttribute('aria-expanded', 'false');
-    if (select.id) trigger.id = `${select.id}ToggleTrigger`;
-    if (select.getAttribute('aria-label')) trigger.setAttribute('aria-label', select.getAttribute('aria-label'));
-
-    const menu = document.createElement('div');
-    menu.className = 'ui-toggle-select-menu';
-    menu.setAttribute('role', 'listbox');
-
-    shell.appendChild(trigger);
-    shell.appendChild(menu);
-    syncLoginToggleFace(select);
-
-    trigger.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const willOpen = !shell.classList.contains('open');
-        closeAllLoginToggleSelects(willOpen ? shell : null);
-        if (willOpen) openLoginToggleMenu(shell);
-        else closeLoginToggleMenu(shell);
-    });
-    menu.addEventListener('click', (e) => {
-        const opt = e.target.closest?.('.ui-toggle-select-option');
-        if (!opt) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const value = opt.getAttribute('data-value') ?? '';
-        if (select.value !== value) {
-            select.value = value;
-            select.dispatchEvent(new Event('change', { bubbles: true }));
-            select.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        syncLoginToggleFace(select);
-        closeLoginToggleMenu(shell);
-    });
-    select.addEventListener('change', () => syncLoginToggleFace(select));
+    if (window.ZephyrNativeSelectMotion !== loginSelectMotion) {
+        window.ZephyrNativeSelectMotion = {
+            open: (shell) => openLoginToggleMenu(shell),
+        };
+    }
+    const shell=window.ZephyrNativeSelect?.enhance(select) || null;
+    if(shell){
+        shell._zephyrOpenMenu=()=>openLoginToggleMenu(shell);
+        shell._zephyrCloseMenu=()=>closeLoginToggleMenu(shell);
+    }
     return shell;
 }
 
-let _loginToggleDocBound = false;
 function enhanceLoginLocaleSelects() {
-    ['#localeSelectLogin', '#localeSelectTotp', '#localeSelectForgot', '#localeSelectChange'].forEach((sel) => {
-        const el = $(sel);
-        if (el) enhanceLoginToggleSelect(el);
+    window.ZephyrNativeSelectMotion = { open: (shell) => openLoginToggleMenu(shell) };
+    ['#localeSelectLogin', '#localeSelectTotp', '#localeSelectForgot', '#localeSelectChange'].forEach((selector)=>{
+        enhanceLoginToggleSelect(document.querySelector(selector));
     });
-    if (_loginToggleDocBound) return;
-    _loginToggleDocBound = true;
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest?.('.login-locale-select.ui-toggle-select')) closeAllLoginToggleSelects();
-    });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllLoginToggleSelects(); });
 }
 
 function syncLocaleSelects(locale = getLocale()) {

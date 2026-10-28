@@ -1,12 +1,8 @@
 /* ===== 基础变量（深色默认） ===== */
 :root {
     color-scheme: dark;
-    --bg: #101114;
-    --surface: #1b1c20;
+    /* Canvas/surface/text/accent are defined in native-ui.css, shared with One. */
     --border: #303237;
-    --text: #f4f4f6;
-    --text-secondary: #9a9ca3;
-    --accent: #2483eb;
     --accent-hover: #469cf3;
     --bg-main: var(--bg);
     --bg-card: var(--surface);
@@ -147,12 +143,7 @@
 
 :root[data-theme="light"] {
     color-scheme: light;
-    --bg: #f5f5f7;
-    --surface: #ffffff;
     --border: #dedee3;
-    --text: #1d1d1f;
-    --text-secondary: #6e6e73;
-    --accent: #1a73e8;
     --accent-hover: #1562bf;
     --bg-main: var(--bg);
     --bg-card: var(--surface);

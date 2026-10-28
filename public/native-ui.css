@@ -1,0 +1,114 @@
+/* Shared theme contracts: launch shell and product UI must consume the same values. */
+:root {
+  --bg: #101114;
+  --surface: #1b1c20;
+  --text: #f4f4f6;
+  --text-secondary: #9a9ca3;
+  --accent: #2483eb;
+}
+:root[data-theme="light"] {
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --text: #1d1d1f;
+  --text-secondary: #6e6e73;
+  --accent: #1a73e8;
+}
+
+.zephyr-native-menu {
+  position: fixed;
+  z-index: 2147483000;
+  display: grid;
+  min-width: 216px;
+  max-width: min(340px, calc(100vw - 16px));
+  max-height: min(440px, calc(100vh - 16px));
+  padding: 6px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--border, #303237) 85%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface, #1b1c20) 94%, transparent);
+  color: var(--text, #f4f4f6);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .30), 0 2px 10px rgba(0, 0, 0, .18);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  user-select: none;
+  animation: zephyr-native-menu-in 120ms cubic-bezier(.22, 1, .36, 1);
+}
+.zephyr-native-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: 13px/1.35 var(--font-sans, system-ui, sans-serif);
+  text-align: left;
+  cursor: default;
+}
+.zephyr-native-menu-item:hover,
+.zephyr-native-menu-item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--accent, #2483eb) 16%, transparent);
+}
+.zephyr-native-menu-item:active:not(:disabled) { transform: scale(.985); }
+.zephyr-native-menu-item:disabled { opacity: .36; }
+.zephyr-native-menu-item kbd {
+  color: var(--text-secondary, #9a9ca3);
+  font: 11px/1.3 var(--font-sans, system-ui, sans-serif);
+  white-space: nowrap;
+}
+.zephyr-native-menu-separator {
+  height: 1px;
+  margin: 5px 7px;
+  background: color-mix(in srgb, var(--border, #303237) 72%, transparent);
+}
+.zephyr-native-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483001;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, .42);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.zephyr-native-dialog {
+  display: grid;
+  gap: 16px;
+  width: min(440px, 100%);
+  max-height: calc(100dvh - 48px);
+  padding: 22px;
+  overflow: auto;
+  border: 1px solid var(--border, #303237);
+  border-radius: 16px;
+  background: var(--surface, #1b1c20);
+  color: var(--text, #f4f4f6);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .36);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  animation: zephyr-native-menu-in 160ms cubic-bezier(.22, 1, .36, 1);
+}
+.zephyr-native-dialog h2 { margin: 0; font-size: 17px; line-height: 1.35; }
+.zephyr-native-dialog p { margin: 0; color: var(--text-secondary, #9a9ca3); font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.zephyr-native-dialog > input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--border, #303237);
+  border-radius: 9px;
+  outline: none;
+  background: var(--bg, #101114);
+  color: var(--text, #f4f4f6);
+  font: 14px/1.4 var(--font-sans, system-ui, sans-serif);
+}
+.zephyr-native-dialog > input:focus { border-color: var(--accent, #2483eb); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #2483eb) 18%, transparent); }
+.zephyr-native-dialog-actions { display: flex; justify-content: flex-end; gap: 9px; }
+.zephyr-native-dialog-actions .btn { min-width: 76px; min-height: 34px; padding: 7px 14px; border: 1px solid var(--border, #303237); border-radius: 9px; background: transparent; color: inherit; cursor: pointer; }
+.zephyr-native-dialog-actions .btn-primary { border-color: var(--accent, #2483eb); background: var(--accent, #2483eb); color: #fff; }
+.zephyr-native-dialog-actions .btn.danger { border-color: var(--danger, #ff453a); background: var(--danger, #ff453a); }
+@keyframes zephyr-native-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .zephyr-native-menu, .zephyr-native-dialog { animation: none; } }

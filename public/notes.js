@@ -6,7 +6,7 @@ import { extractSecretSpans } from './vendor/zephyr-pro/app-continuity-guard-pro
  */
 
 import { renderMarkdown as renderMarkdownFull, escapeHtml as mdEscapeHtml } from './markdown.js?v=20260720-notes-md1';
-import { t } from './i18n/runtime.js?v=20261018-ui1';
+import { t } from './i18n/runtime.js?v=20261028-ui132';
 
 const NOTES_DEBOUNCE_MS = 800;
 const NOTES_SEARCH_MS = 180;

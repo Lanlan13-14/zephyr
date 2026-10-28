@@ -7,16 +7,19 @@
     <title>Zephyr</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20261018-ui1">
-    <link rel="modulepreload" href="app.js?v=20261019-ui130">
-    <link rel="modulepreload" href="floating-panel.js?v=20261018-ui1">
-    <link rel="stylesheet" href="style.css?v=20261019-ui130">
-    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261019-ui130">
-    <script src="liquid-glass-renderer.js?v=20261019-ui130" defer></script>
-    <script src="liquid-glass-tab-layout.js?v=20261019-ui130" defer></script>
-    <script src="liquid-glass-nav.js?v=20261019-ui130" defer></script>
-    <script src="liquid-glass-slider.js?v=20261019-ui130" defer></script>
-    <link rel="stylesheet" href="panel-pin.css?v=20261019-ui130">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20261028-ui132">
+    <link rel="modulepreload" href="app.js?v=20261028-ui132">
+    <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
+    <link rel="stylesheet" href="native-ui.css?v=20261026-native1">
+    <link rel="stylesheet" href="style.css?v=20261028-ui132">
+    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261028-ui132">
+    <script src="liquid-glass-renderer.js?v=20261028-ui132" defer></script>
+    <script src="liquid-glass-tab-layout.js?v=20261028-ui132" defer></script>
+    <script src="liquid-glass-nav.js?v=20261028-ui132" defer></script>
+    <script src="liquid-glass-slider.js?v=20261028-ui132" defer></script>
+    <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
+    <script src="native-ui.js?v=20261026-native1" defer></script>
+    <script src="native-select.js?v=20261026-native1" defer></script>
 </head>
 <body class="app-body">
     <div class="app-shell">
@@ -1718,9 +1721,9 @@
     </div>
 
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
-<script src="preview-mock.js?v=20261004-dashboard-fit1" type="module"></script>
+<script src="preview-mock.js?v=20261028-ui132" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20261019-ui130" type="module"></script>
+<script src="app.js?v=20261028-ui132" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

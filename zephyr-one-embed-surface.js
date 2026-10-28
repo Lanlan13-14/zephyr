@@ -467,6 +467,11 @@ function applyEmbeddedSurface(source) {
     else skipped.push('add-window-controls');
     html = withControls.html;
 
+    /* The preload creates window.zephyrOne before any page module, so this
+     * bootstrap can persist the product theme before app.js resolves its
+     * server-side appearance. It also survives the loopback port changing. */
+    const oneThemeBootstrap = '<script>(async()=>{try{const a=await window.zephyrOne?.invoke?.("get_launch_appearance");if(a?.theme==="light"||a?.theme==="dark")document.documentElement.dataset.theme=a.theme;}catch{}})();</script>';
+    if (!html.includes('get_launch_appearance')) html = html.replace('</head>', `${oneThemeBootstrap}\n</head>`);
     return {
         /* Two overlays, injected in dependency order. The security script
          * installs `window.__zephyrOneUnlock`, which app.js consults on every

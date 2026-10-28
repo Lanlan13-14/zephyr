@@ -129,7 +129,7 @@ async function fetchCatalog(locale) {
         }
     } catch {}
     const url = new URL(`./locales/${loc}.json`, import.meta.url);
-    url.searchParams.set('v', '20261019-ui124');
+    url.searchParams.set('v', '20261028-ui132');
     const res = await fetch(url.href, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`i18n catalog ${loc} HTTP ${res.status}`);
     const dict = await res.json();

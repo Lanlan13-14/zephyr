@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appJs = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const styleCss = readFileSync(path.join(root, 'public/style.css'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
+const read = (file) => readFileSync(path.join(root, file), 'utf8');
 
 function extractFn(src, name) {
     const re = new RegExp(`function ${name}\\s*\\(`);
@@ -81,12 +82,16 @@ test('close uses setOriginFromAnchor + macClose scale-down fade (demo §3 parity
     assert.match(closeFn, /menu\.style\.transform = ''/);
 });
 
-test('trigger/menu click routes through open/close helpers; no direct classList.toggle', () => {
-    assert.match(appJs, /if \(willOpen\) openToggleSelectMenu\(shell\);\s*else closeToggleSelectMenu\(shell\);/);
-    assert.match(appJs, /syncToggleSelectFace\(select\);\s*closeToggleSelectMenu\(shell\);/);
-    const triggerBlock = appJs.match(/trigger\.addEventListener\('click'[\s\S]*?\}\);/);
+test('trigger/menu click routes through the shared open/close helpers; no direct classList.toggle', () => {
+    const shared = read('public/native-select.js');
+    assert.match(shared, /const willOpen = !shell\.classList\.contains\('open'\);/);
+    assert.match(shared, /shell\._zephyrOpenMenu\(\)/);
+    assert.match(shared, /shell\._zephyrCloseMenu\?\.\(\)/);
+    assert.match(shared, /sync\(select\);\s*close\(shell\);/);
+    const triggerBlock = shared.match(/trigger\.addEventListener\('click'[\s\S]*?\}\);/);
     assert.ok(triggerBlock, 'trigger click handler present');
     assert.doesNotMatch(triggerBlock[0], /classList\.toggle\('open'/);
+    assert.match(appJs, /shell\._zephyrCloseMenu = \(\) => closeToggleSelectMenu\(shell\)/);
 });
 
 test('non-motion shells keep instant behavior via isMotionFilterShell guard', () => {
@@ -117,7 +122,7 @@ test('jump-host chain rows reuse the dashboard filter toggle + motion id', () =>
     assert.match(renderFn, /data-jump-route-select/);
     assert.match(renderFn, /enhanceToggleSelect\(el\)/);
     assert.match(renderFn, /shell\.dataset\.selectId = 'jumpRouteSelect'/);
-    assert.match(appJs, /nativeId\.startsWith\('jumpRouteSelect-'\) \? 'jumpRouteSelect'/);
+    assert.match(read('public/native-select.js'), /startsWith\('jumpRouteSelect-'\) \? 'jumpRouteSelect'/);
     assert.match(styleCss, /\.jump-route-row\s*\{[\s\S]*?border:\s*0/);
     assert.match(styleCss, /\.jump-route-row \.ui-toggle-select/);
     assert.doesNotMatch(styleCss, /\.jump-route-row select\s*\{/);

@@ -1,12 +1,12 @@
-import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261019-ui130';
+import { ZephyrHaptics, resolveActiveSurfaceMode, isPadLandscapeSurface, ensurePadFloatingModifierCapsule, parseSshConfigAndAutoLink, SecretVaultRehydrator, scanIncomingServerOutputForInjection, IPV4_OR_IPV6_RE, isIpProtectionEnabled, scrubIpLiterals, scrubIpWhenProtected, formatProtectedName, applyIpProtectionState } from './vendor/zephyr-pro/app-continuity-guard-pro.js?v=20261028-ui132';
 export { resolveActiveSurfaceMode, isPadLandscapeSurface, parseSshConfigAndAutoLink };
 import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723-sync2';
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
-import { createNotesController } from './notes.js?v=20261019-ui118';
+import { createNotesController } from './notes.js?v=20261028-ui132';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261004-dashboard-fit1';
-import { localizeActivityMessage } from './activity-i18n.js?v=20261004-dashboard-fit1';
-import { attachDesktopPanelPin } from './panel-pin.js?v=20261019-ui130';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261028-ui132';
+import { localizeActivityMessage } from './activity-i18n.js?v=20261028-ui132';
+import { attachDesktopPanelPin } from './panel-pin.js?v=20261028-ui132';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261019-ui130');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -1192,6 +1192,18 @@ function playPixelCircularThemeWave(cx, cy, maxR, nextTheme) {
     }
 }
 
+function syncOneLaunchAppearance(appearance = getAppearance()) {
+    if (!window.zephyrOne?.invoke) return;
+    const autoTheme = appearance?.autoThemeEnabled !== false || appearance?.theme === 'auto';
+    const palette = ['frost', 'lava', 'asagi', 'cyber'].includes(appearance?.colorScheme)
+        ? appearance.colorScheme : 'frost';
+    window.zephyrOne.invoke('launch_appearance_changed', {
+        palette,
+        theme: autoTheme ? getSystemTheme() : (appearance?.theme === 'light' ? 'light' : 'dark'),
+        autoTheme,
+    }).catch(() => {});
+}
+
 function applyThemeCoreMutations(theme, { persist = false, deferWebglRefresh = false } = {}) {
     const root = document.documentElement;
     try {
@@ -1319,6 +1331,7 @@ async function toggleTheme(originEl = null) {
     console.debug('[appearance-client]', 'manual theme selected', { theme: nextTheme, colorScheme: updatedAppearance.colorScheme, autoThemeEnabled: false });
     savePersonalSettings({ appearance: updatedAppearance }).then((saved) => {
         if (saved) settings = saved;
+        syncOneLaunchAppearance(updatedAppearance);
     }).catch((err) => {
         toast(err.message);
     });
@@ -1648,6 +1661,7 @@ async function saveAppearance(e) {
     applyAppearance(settings.appearance || appearance);
     applyTheme(getPreferredTheme());
     console.info('[appearance-client]', 'appearance saved', { brandName: appearance.brandName, customIcon: appearance.brandIcon !== DEFAULT_BRAND_ICON, autoThemeEnabled, theme });
+    syncOneLaunchAppearance(appearance);
     toast(t('个性化设置已保存'));
 }
 async function resetAppearance() {
@@ -2248,7 +2262,7 @@ async function requestSensitiveSecret(actionText = t('查看已保存敏感信�
     const message = usingTotp
         ? `${actionText}\n请输入 6 位 TOTP 动态验证码：`
         : `${actionText}\n请输入当前登录密码：`;
-    const secret = prompt(message);
+    const secret = await window.ZephyrNativeUI.prompt(message, '', { password: true });
     if (secret === null) throw new Error(t('已取消验证'));
     if (!String(secret).trim()) throw new Error(usingTotp ? t('请输入动态验证码') : t('请输入当前登录密码'));
     console.debug('[secret-open]', 'sensitive reveal requested', { actionText, authType: usingTotp ? 'totp' : 'password' });
@@ -2667,7 +2681,7 @@ async function syncWebDavNow() {
 
 async function deleteWebDavSettings() {
     if (!webDavUiState.config?.configured) return;
-    if (!confirm(t('删除 WebDAV 设置会移除 Zephyr 保存的凭据，但不会删除远程备份文件。继续？'))) return;
+    if (!await window.ZephyrNativeUI.confirm(t('删除 WebDAV 设置会移除 Zephyr 保存的凭据，但不会删除远程备份文件。继续？'))) return;
     const retry = () => deleteWebDavSettings();
     const outcome = await runWebDavOperation('delete', '正在删除 WebDAV 设置', async (signal) => {
         const secret = await requestWebDavVerification('删除 WebDAV 设置');
@@ -3982,71 +3996,35 @@ function bufferToBase64url(buffer) { return btoa(String.fromCharCode(...new Uint
 function allTags() { return [...new Set(connections.flatMap((c) => c.tags || []))].sort(); }
 const CONNECTION_FILTER_KEY = 'zephyr.connection.filters.v1';
 
-/**
- * Custom single-select that toggles closed when the trigger is clicked again.
- * Native <select> on mobile cannot be dismissed by re-tapping the control.
- * Keeps the original <select> as the value source of truth (forms/filters unchanged).
- */
+/* All single-select popups use the same Zephyr-owned implementation.
+ * Only this page's existing motion engine is supplied as an optional hook. */
 const TOGGLE_SELECT_IDS = [
-    // Dashboard filters
-    'protocolFilter', 'tagFilter', 'sortSelect',
-    // Settings / appearance / terminal prefs (same UI pattern)
-    'captchaProvider', 'colorSchemeSelect', 'themeModeSelect',
-    'globalBgSource', 'globalBgFit', 'terminalBgSource', 'terminalBgFit', 'terminalMaxWindows',
-    'terminalSmartbarOrder', 'terminalShortcutPlatform',
-    // Settings → 语言（与其它设置同源 toggle-select）
-    'languageSelect',
-    // 设置 → 语言（与其它设置同源 toggle-select）
-    'languageSelect',
-    // AI 助理设置 / 供应商弹窗（与 CAPTCHA 同源 toggle-select）
-    'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
-    // AI 页面待办优先级（与首页筛选同源 toggle-select）
-    'aiTodoPriority',
-    // Proxy modal
-    'proxyType',
-    // Connection modal / RDP (when opened)
+    'protocolFilter', 'tagFilter', 'sortSelect', 'captchaProvider',
+    'colorSchemeSelect', 'themeModeSelect', 'globalBgSource', 'globalBgFit',
+    'terminalBgSource', 'terminalBgFit', 'terminalMaxWindows',
+    'terminalSmartbarOrder', 'terminalShortcutPlatform', 'languageSelect',
+    'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode',
+    'aiProviderReasoningEffort', 'aiTodoPriority', 'proxyType',
     'connProtocol', 'connSshKey', 'connEncoding', 'connRoute', 'connIcon',
     'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
-    // 多用户 → 添加用户 → 角色（与首页「全部协议」同源 toggle-select）
-    'adminUserRole',
-    // Zephyr Link 同步间隔 / 网络策略：与首页「全部协议」同源 toggle-select
-    'linkIntervalSelect', 'linkNetworkPolicySelect',
+    'adminUserRole', 'linkIntervalSelect', 'linkNetworkPolicySelect',
 ];
-let _toggleSelectDocBound = false;
-
-/* 首页三个筛选（全部协议 / 全部标签 / 按创建时间）接 zephyr-motion：
-   与演示页 motion-feel.html §3 同一套“从按钮向下 FLIP 展开菜单”；
-   打开 Motion.morph（preset 'mac'），关闭 setOriginFromAnchor + macClose
-   缩回淡出。引擎不可用时退回原 instant class 路径。 */
 const MOTION_FILTER_SELECT_IDS = [
-    // 首页筛选
-    'protocolFilter', 'tagFilter', 'sortSelect',
-    // 设置 → 安全 → CAPTCHA
-    'captchaProvider',
-    // 设置 → 个性化
+    'protocolFilter', 'tagFilter', 'sortSelect', 'captchaProvider',
     'colorSchemeSelect', 'themeModeSelect', 'terminalBgSource', 'terminalBgFit',
-    // 设置 → 终端工作台
     'terminalMaxWindows', 'terminalSmartbarOrder', 'terminalShortcutPlatform',
-    // 连接弹窗：协议 / SSH 密钥 / Telnet 编码 / 代理选择与首页筛选同款菜单动画
     'connProtocol', 'connSshKey', 'connEncoding', 'connRoute', 'connIcon',
     'rdpSoundMode', 'rdpResolution', 'rdpQuality', 'rdpFps', 'rdpTouchMode',
-    // AI 助理 / 供应商弹窗（与 CAPTCHA 完全同一套 open/close 动画）
     'aiDefaultProvider', 'aiProviderType', 'aiProviderApiMode', 'aiProviderReasoningEffort',
-    // AI 页面待办优先级：图一控件复用图二下拉的 Motion FLIP 动画
-    'aiTodoPriority',
-    // 设置 → 语言 与 代理弹窗 → 类型（与首页筛选同一套 FLIP 展开/收起）
-    'languageSelect', 'proxyType',
-    // 多用户 → 添加用户 → 角色：与「全部协议」同一套 Motion.morph(mac) / macClose
-    'adminUserRole',
-    // 连接编辑器 → 跳板机链：每行下拉与首页「全部协议」同一套 FLIP
-    'jumpRouteSelect',
-    // Zephyr Link：同步间隔 / 网络策略与首页筛选同一套 Motion.morph(mac) / macClose
-    'linkIntervalSelect', 'linkNetworkPolicySelect',
+    'aiTodoPriority', 'languageSelect', 'proxyType', 'adminUserRole',
+    'jumpRouteSelect', 'linkIntervalSelect', 'linkNetworkPolicySelect',
 ];
 function isMotionFilterShell(shell) {
-    return !!shell && (MOTION_FILTER_SELECT_IDS.includes(shell.dataset?.selectId || '') || shell.dataset?.selectId === 'globalBgSource' || shell.dataset?.selectId === 'globalBgFit');
+    return !!shell && MOTION_FILTER_SELECT_IDS.includes(shell.dataset?.selectId || '');
 }
-
+window.ZephyrNativeSelectMotion = Object.freeze({
+    open(shell) { openToggleSelectMenu(shell); },
+});
 async function openToggleSelectMenu(shell) {
     const trigger = shell.querySelector('.ui-toggle-select-trigger');
     const menu = shell.querySelector('.ui-toggle-select-menu');
@@ -4054,39 +4032,24 @@ async function openToggleSelectMenu(shell) {
     shell.classList.remove('menu-closing');
     shell.classList.add('open');
     trigger.setAttribute('aria-expanded', 'true');
-    if (!isMotionFilterShell(shell)) {
-        try { menu.scrollTop = 0; } catch (_) {}
-        return;
-    }
+    if (!isMotionFilterShell(shell)) return;
     const Motion = await sshKeyMotion._ensure();
-    if (!Motion) { try { menu.scrollTop = 0; } catch (_) {} return; }
+    if (!Motion) return;
     const token = (shell._menuToken = (shell._menuToken || 0) + 1);
-    const midFlight = Motion.isAnimating(menu); // 必须先查；morph 自身处理飞行中重定向
-    // display:grid 已由 .open 生效；飞行中重开不藏（防闪），冷启动先藏再 reflow 防终态闪一帧。
-    if (!midFlight) {
-        menu.style.visibility = 'hidden';
-        void menu.offsetWidth;
-    }
+    const midFlight = Motion.isAnimating(menu);
+    if (!midFlight) { menu.style.visibility = 'hidden'; void menu.offsetWidth; }
     const from = trigger.getBoundingClientRect();
     menu.style.visibility = 'visible';
-    try { menu.scrollTop = 0; } catch (_) {}
-    const radiusFrom = parseFloat(getComputedStyle(trigger)?.borderRadius) || 12;
+    try { menu.scrollTop = 0; } catch {}
     try {
         await Motion.morph(menu, from, {
-            preset: 'mac',
-            radiusFrom,
-            radiusTo: 14,
-            radiusCompensate: true,
-            opacityFrom: 0.92,
-            opacityTo: 1,
-            forceFrom: !midFlight,
+            preset: 'mac', radiusFrom: parseFloat(getComputedStyle(trigger)?.borderRadius) || 12,
+            radiusTo: 14, radiusCompensate: true, opacityFrom: 0.92,
+            opacityTo: 1, forceFrom: !midFlight,
         });
-    } catch (err) {
-        console.debug('[filter-menu]', 'open morph failed', err?.message || err);
-    }
+    } catch (error) { console.debug('[filter-menu]', error?.message || error); }
     if (token !== shell._menuToken) return;
 }
-
 function closeToggleSelectMenu(shell) {
     const trigger = shell.querySelector('.ui-toggle-select-trigger');
     const menu = shell.querySelector('.ui-toggle-select-menu');
@@ -4095,15 +4058,13 @@ function closeToggleSelectMenu(shell) {
     shell.classList.remove('open');
     trigger.setAttribute('aria-expanded', 'false');
     if (!wasOpen || !isMotionFilterShell(shell)) return;
-    const Motion = sshKeyMotion.engine; // close 不懒加载引擎；没加载过就 instant
+    const Motion = sshKeyMotion.engine;
     if (!Motion || sshKeyMotion.failed) return;
     const token = (shell._menuToken = (shell._menuToken || 0) + 1);
-    shell.classList.add('menu-closing'); // 动画期间保持 display:grid
+    shell.classList.add('menu-closing');
     Motion.setOriginFromAnchor?.(menu, trigger);
-    Promise.resolve()
-        .then(() => Motion.to(menu, { opacity: 0, scale: 0.94, y: -8, x: 0, blur: 0 }, { preset: 'macClose' }))
-        .catch(() => {})
-        .then(() => {
+    Promise.resolve().then(() => Motion.to(menu, { opacity: 0, scale: 0.94, y: -8, x: 0, blur: 0 }, { preset: 'macClose' }))
+        .catch(() => {}).then(() => {
             if (token !== shell._menuToken) return;
             shell.classList.remove('menu-closing');
             Motion.stop(menu);
@@ -4112,136 +4073,24 @@ function closeToggleSelectMenu(shell) {
             menu.style.opacity = '';
         });
 }
-
-function closeAllToggleSelects(exceptShell = null) {
-    document.querySelectorAll('.ui-toggle-select.open').forEach((shell) => {
-        if (exceptShell && shell === exceptShell) return;
-        closeToggleSelectMenu(shell);
-    });
-}
-
 function syncToggleSelectFace(select) {
-    if (!select?.closest) return;
-    const shell = select.closest('.ui-toggle-select');
-    if (!shell) return;
-    const trigger = shell.querySelector('.ui-toggle-select-trigger');
-    const menu = shell.querySelector('.ui-toggle-select-menu');
-    if (!trigger || !menu) return;
-    const opts = Array.from(select.options || []);
-    const current = opts.find((o) => o.value === select.value) || opts[0];
-    trigger.textContent = current ? (current.textContent || current.value || '') : '';
-    menu.innerHTML = opts.map((o) => {
-        const selected = o.value === select.value;
-        return `<button type="button" class="ui-toggle-select-option${selected ? ' is-selected' : ''}" role="option" data-value="${escapeAttr(o.value)}" aria-selected="${selected ? 'true' : 'false'}">${escapeHtml(o.textContent || o.value || '')}</button>`;
-    }).join('');
+    if (!window.ZephyrNativeSelect) throw new Error('Shared Zephyr select is not loaded');
+    return window.ZephyrNativeSelect.sync(select);
 }
-
 function enhanceToggleSelect(select) {
-    if (!select || select.tagName !== 'SELECT' || select.multiple || select.dataset.toggleSelect === '1') return null;
-    if (select.disabled) return null;
-    // Already wrapped
-    if (select.parentElement?.classList?.contains('ui-toggle-select')) {
-        select.dataset.toggleSelect = '1';
-        const nativeId = String(select.id || '');
-        if (nativeId.startsWith('jumpRouteSelect-')) {
-            select.parentElement.dataset.selectId = 'jumpRouteSelect';
-        }
-        syncToggleSelectFace(select);
-        return select.parentElement;
+    if (!window.ZephyrNativeSelect) throw new Error('Shared Zephyr select is not loaded');
+    const shell = window.ZephyrNativeSelect.enhance(select);
+    if (shell) {
+        shell._zephyrCloseMenu = () => closeToggleSelectMenu(shell);
+        if (String(select?.id || '').startsWith('jumpRouteSelect-')) shell.dataset.selectId = 'jumpRouteSelect';
     }
-    const shell = document.createElement('div');
-    shell.className = 'ui-toggle-select';
-    // Jump-chain rows share one motion id. Per-row native ids are
-    // `jumpRouteSelect-0`, `jumpRouteSelect-1`, … — collapse them so the
-    // FLIP opt-in list can name the control once.
-    const nativeId = String(select.id || '');
-    shell.dataset.selectId = nativeId.startsWith('jumpRouteSelect-') ? 'jumpRouteSelect' : nativeId;
-    select.parentNode.insertBefore(shell, select);
-    shell.appendChild(select);
-    select.classList.add('ui-toggle-select-native');
-    select.dataset.toggleSelect = '1';
-    select.tabIndex = -1;
-    select.setAttribute('aria-hidden', 'true');
-
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.className = 'ui-toggle-select-trigger';
-    trigger.setAttribute('aria-haspopup', 'listbox');
-    trigger.setAttribute('aria-expanded', 'false');
-    if (select.id) trigger.id = `${select.id}ToggleTrigger`;
-
-    const menu = document.createElement('div');
-    menu.className = 'ui-toggle-select-menu';
-    menu.setAttribute('role', 'listbox');
-    menu.hidden = false;
-
-    shell.appendChild(trigger);
-    shell.appendChild(menu);
-    syncToggleSelectFace(select);
-
-    trigger.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const willOpen = !shell.classList.contains('open');
-        closeAllToggleSelects(willOpen ? shell : null);
-        if (willOpen) openToggleSelectMenu(shell);
-        else closeToggleSelectMenu(shell);
-    });
-
-    menu.addEventListener('click', (e) => {
-        const opt = e.target.closest?.('.ui-toggle-select-option');
-        if (!opt) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const value = opt.getAttribute('data-value') ?? '';
-        if (select.value !== value) {
-            select.value = value;
-            select.dispatchEvent(new Event('change', { bubbles: true }));
-            select.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        syncToggleSelectFace(select);
-        closeToggleSelectMenu(shell);
-    });
-
-    select.addEventListener('change', () => syncToggleSelectFace(select));
     return shell;
 }
-if (typeof window !== 'undefined') {
-    window.enhanceToggleSelect = enhanceToggleSelect;
-    window.syncToggleSelectFace = syncToggleSelectFace;
-}
-
 function enhanceAllToggleSelects() {
-    TOGGLE_SELECT_IDS.forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) enhanceToggleSelect(el);
-    });
-    // Settings / dashboard / modals: wrap remaining single selects with toggle UX
-    document.querySelectorAll(
-        '.action-bar select:not([multiple]), .settings-form select:not([multiple]), .appearance-form select:not([multiple]), .connection-modal select:not([multiple]), .proxy-modal select:not([multiple]), #proxyForm select:not([multiple]), #connectionForm select:not([multiple])',
-    ).forEach((el) => {
-        enhanceToggleSelect(el);
-    });
-    if (!_toggleSelectDocBound) {
-        _toggleSelectDocBound = true;
-        document.addEventListener('click', (e) => {
-            if (e.target.closest?.('.ui-toggle-select')) return;
-            closeAllToggleSelects();
-        }, true);
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeAllToggleSelects();
-        });
-        // Re-sync when options mutate (tag filter rebuild).
-        const mo = new MutationObserver((mutations) => {
-            for (const m of mutations) {
-                if (m.type === 'childList' && m.target?.tagName === 'SELECT' && m.target.dataset.toggleSelect === '1') {
-                    syncToggleSelectFace(m.target);
-                }
-            }
-        });
-        mo.observe(document.documentElement, { childList: true, subtree: true });
-    }
+    window.ZephyrNativeSelect?.scan();
 }
+window.enhanceToggleSelect = enhanceToggleSelect;
+window.syncToggleSelectFace = syncToggleSelectFace;
 
 function readConnectionFilters() {
     try { return JSON.parse(localStorage.getItem(CONNECTION_FILTER_KEY) || '{}') || {}; } catch { return {}; }
@@ -6585,12 +6434,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&v=20261018-ui1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&v=20261028-ui132&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&v=20261018-ui1&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&v=20261028-ui132&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui130`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261019-ui130`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261028-ui132`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261028-ui132`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -11004,7 +10853,7 @@ function bindAiTodoPanel() {
         else if (hold) await patchAiTodo(hold, { status: 'pending' });
         else if (reopen) await patchAiTodo(reopen, { status: 'pending' });
         else if (del) {
-            if (!confirm(t('删除这条待办？删除后不可恢复。'))) return;
+            if (!await window.ZephyrNativeUI.confirm(t('删除这条待办？删除后不可恢复。'))) return;
             try {
                 await api(`/api/ai/todos/${encodeURIComponent(del)}`, { method: 'DELETE' });
                 aiTodos = aiTodos.filter((x) => x.todoId !== del);
@@ -15913,7 +15762,7 @@ function setupSnippetSettings() {
             openSnippetModal(item, e.target.closest('[data-edit-snippet]'));
         }
         if (deleteId) {
-            if (!confirm(t('删除该代码片段？'))) return;
+            if (!await window.ZephyrNativeUI.confirm(t('删除该代码片段？'))) return;
             await waitForMiniItemExit(e.target.closest('.mini-item'), deleteId);
             try {
                 await persistSnippets(snippets.filter((x) => x.id !== deleteId));
@@ -16288,7 +16137,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261019-ui130')
+        return import('./vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -16680,7 +16529,7 @@ function bindEvents() {
         }
         const edit = e.target.closest?.('[data-edit]')?.dataset.edit, del = e.target.closest?.('[data-delete]')?.dataset.delete, connect = e.target.closest?.('[data-connect]')?.dataset.connect;
         if (edit) openModal(connections.find((c) => c.id === edit), e.target.closest?.('[data-edit]'));
-        if (del && confirm(t('确定删除该连接？'))) {
+        if (del && await window.ZephyrNativeUI.confirm(t('确定删除该连接？'))) {
             const card = e.target.closest?.('.connection-card');
             try {
                 await waitForConnectionCardExit(card, del);
@@ -17096,8 +16945,8 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
     $('#brandIconFile').addEventListener('change', async (e) => { try { const dataUrl = await readImageAsDataUrl(e.target.files?.[0]); if (!dataUrl) return; pendingBrandIcon = dataUrl; $('#brandIconPreview').innerHTML = iconHtml(dataUrl); console.debug('[appearance-client]', 'brand icon file loaded', { size: e.target.files?.[0]?.size || 0, type: e.target.files?.[0]?.type || '' }); } catch (err) { e.target.value = ''; toast(err.message); } });
     setupAppearanceControls();
     $('#resetAppearanceBtn').addEventListener('click', () => resetAppearance().catch((err) => toast(err.message)));
-    $('#proxyList').addEventListener('click', async (e) => { const id = e.target.dataset.editProxy || e.target.dataset.openProxy || e.target.dataset.delProxy; if (!id) return; const p = proxies.find((x) => x.id === id); if (e.target.dataset.editProxy) openProxyModal(p, e.target); else if (e.target.dataset.openProxy) { await openProxySecret(id, e.target); } else if (confirm(t('删除代理？'))) { await waitForMiniItemExit(e.target.closest('.mini-item'), id); await api(`/api/proxies/${id}`, { method: 'DELETE' }); await loadNetwork(); toast(t('代理已删除')); } });
-    $('#sshKeyList').addEventListener('click', async (e) => { const editId = e.target.dataset.editSshKey, openId = e.target.dataset.openSshKey, delId = e.target.dataset.delSshKey; if (editId) { const k = sshKeys.find((x) => x.id === editId); if (k) openSshKeyModal(k, e.target); return; } if (openId) { await openSshKeySecret(openId, e.target); return; } if (delId && confirm(t('删除该 SSH 密钥？已选择它的连接将无法再使用该密钥。'))) { await waitForMiniItemExit(e.target.closest('.mini-item'), delId); await api(`/api/ssh-keys/${delId}`, { method: 'DELETE' }); await loadNetwork(); toast(t('SSH 密钥已删除')); } });
+    $('#proxyList').addEventListener('click', async (e) => { const id = e.target.dataset.editProxy || e.target.dataset.openProxy || e.target.dataset.delProxy; if (!id) return; const p = proxies.find((x) => x.id === id); if (e.target.dataset.editProxy) openProxyModal(p, e.target); else if (e.target.dataset.openProxy) { await openProxySecret(id, e.target); } else if (await window.ZephyrNativeUI.confirm(t('删除代理？'))) { await waitForMiniItemExit(e.target.closest('.mini-item'), id); await api(`/api/proxies/${id}`, { method: 'DELETE' }); await loadNetwork(); toast(t('代理已删除')); } });
+    $('#sshKeyList').addEventListener('click', async (e) => { const editId = e.target.dataset.editSshKey, openId = e.target.dataset.openSshKey, delId = e.target.dataset.delSshKey; if (editId) { const k = sshKeys.find((x) => x.id === editId); if (k) openSshKeyModal(k, e.target); return; } if (openId) { await openSshKeySecret(openId, e.target); return; } if (delId && await window.ZephyrNativeUI.confirm(t('删除该 SSH 密钥？已选择它的连接将无法再使用该密钥。'))) { await waitForMiniItemExit(e.target.closest('.mini-item'), delId); await api(`/api/ssh-keys/${delId}`, { method: 'DELETE' }); await loadNetwork(); toast(t('SSH 密钥已删除')); } });
     $('#passwordForm')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const currentPassword = $('#settingsCurrentPassword').value;
@@ -17164,9 +17013,9 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
     });
     $('#totpAction')?.addEventListener('click', (e) => { if (e.target.id === 'setupTotpBtn') setupTotp().catch((err) => toast(err.message)); });
     $('#totpEnableForm')?.addEventListener('submit', async (e) => { e.preventDefault(); await api('/api/security/totp/enable', { method: 'POST', body: JSON.stringify({ code: $('#totpEnableCode').value }) }); toast(t('TOTP 已开启')); $('#totpEnableForm').classList.add('force-hidden'); await loadSecurityStatus(); });
-    $('#totpDisableForm')?.addEventListener('submit', async (e) => { e.preventDefault(); if (!confirm(t('确定关闭 TOTP？'))) return; await api('/api/security/totp/disable', { method: 'POST', body: JSON.stringify({ currentPassword: $('#totpDisablePassword').value, code: $('#totpDisableCode').value }) }); e.target.reset(); toast(t('TOTP 已关闭')); await loadSecurityStatus(); });
+    $('#totpDisableForm')?.addEventListener('submit', async (e) => { e.preventDefault(); if (!await window.ZephyrNativeUI.confirm(t('确定关闭 TOTP？'))) return; await api('/api/security/totp/disable', { method: 'POST', body: JSON.stringify({ currentPassword: $('#totpDisablePassword').value, code: $('#totpDisableCode').value }) }); e.target.reset(); toast(t('TOTP 已关闭')); await loadSecurityStatus(); });
     $('#addPasskeyBtn')?.addEventListener('click', () => registerPasskey().catch((err) => toast(err.message)));
-    $('#passkeyList')?.addEventListener('click', async (e) => { const id = e.target.dataset.delPasskey; if (id && confirm(t('删除该 Passkey？'))) { await api(`/api/passkeys/${id}`, { method: 'DELETE' }); await loadSecurityStatus(); } });
+    $('#passkeyList')?.addEventListener('click', async (e) => { const id = e.target.dataset.delPasskey; if (id && await window.ZephyrNativeUI.confirm(t('删除该 Passkey？'))) { await api(`/api/passkeys/${id}`, { method: 'DELETE' }); await loadSecurityStatus(); } });
     $('#ipBanList')?.addEventListener('click', async (e) => { const ip = e.target.dataset.unban; if (ip) { await api(`/api/security/ip-bans/${encodeURIComponent(ip)}`, { method: 'DELETE' }); await loadSecurityLists(); toast(t('已解除封禁')); } });
     $('#toggleCaptchaSecret')?.addEventListener('click', () => { const el = $('#captchaSecretKey'); el.type = el.type === 'password' ? 'text' : 'password'; applyPasswordRevealIcon($('#toggleCaptchaSecret'), el.type === 'text'); });
     $('#revealCaptchaSecret')?.addEventListener('click', () => revealCaptchaSecret().catch((err) => toast(err.message || '读取 CAPTCHA 密钥失败')));
@@ -17174,8 +17023,8 @@ $('#sshKeyModalScrim')?.addEventListener('click', () => { if ($('#sshKeyModal')?
     $('#revealMailPass').addEventListener('click', () => revealMailPass().catch((err) => toast(err.message || '读取 SMTP 密码失败')));
     $('#testMailBtn').addEventListener('click', () => testMail());
     $('#exportDataBtn').addEventListener('click', () => { location.href = '/api/data/export'; });
-    $('#clearActivityBtn').addEventListener('click', async () => { if (!confirm(t('确定清理活动日志？'))) return; await api('/api/activities', { method: 'DELETE' }); await loadActivities(); toast(t('活动日志已清理')); });
-    $('#clearLoginEventsBtn')?.addEventListener('click', async () => { if (!confirm(t('确定清理登录事件日志？'))) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast(t('登录事件已清理')); });
+    $('#clearActivityBtn').addEventListener('click', async () => { if (!await window.ZephyrNativeUI.confirm(t('确定清理活动日志？'))) return; await api('/api/activities', { method: 'DELETE' }); await loadActivities(); toast(t('活动日志已清理')); });
+    $('#clearLoginEventsBtn')?.addEventListener('click', async () => { if (!await window.ZephyrNativeUI.confirm(t('确定清理登录事件日志？'))) return; await api('/api/security/login-events', { method: 'DELETE' }); await loadSecurityLists(); toast(t('登录事件已清理')); });
     setupBackupImportUi();
 }
 function automaticWorkspaceId() {
@@ -17921,31 +17770,31 @@ async function saveAdminUser(e) {
 async function handleAdminAction(action, userId) {
     try {
         if (action === 'suspend') {
-            if (!confirm(t('确定停用此用户？停用后该用户无法登录。'))) return;
+            if (!await window.ZephyrNativeUI.confirm(t('确定停用此用户？停用后该用户无法登录。'))) return;
             await api(`/api/admin/users/${userId}/suspend`, { method: 'POST' });
         } else if (action === 'reactivate') {
             await api(`/api/admin/users/${userId}/reactivate`, { method: 'POST' });
         } else if (action === 'reset-pw') {
-            const pw = prompt(t('输入新密码：'));
+            const pw = await window.ZephyrNativeUI.prompt(t('输入新密码：'), '', { password: true });
             if (!pw) return;
             await api(`/api/admin/users/${userId}/force-password-reset`, { method: 'POST', body: JSON.stringify({ newPassword: pw }) });
         } else if (action === 'revoke-sessions') {
             await api(`/api/admin/users/${userId}/revoke-sessions`, { method: 'POST' });
             toast(t('已强制下线'));
         } else if (action === 'promote') {
-            if (!confirm(t('确定授予此用户管理员角色？'))) return;
+            if (!await window.ZephyrNativeUI.confirm(t('确定授予此用户管理员角色？'))) return;
             await api(`/api/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ role: 'admin' }) });
         } else if (action === 'demote') {
-            if (!confirm(t('确定撤销此用户的管理员角色？'))) return;
+            if (!await window.ZephyrNativeUI.confirm(t('确定撤销此用户的管理员角色？'))) return;
             await api(`/api/admin/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ role: 'user' }) });
         } else if (action === 'transfer-super') {
-            if (!confirm(t('确定将超级管理员转移给此用户？\n转移后你将变为普通管理员。此操作不可撤销。'))) return;
+            if (!await window.ZephyrNativeUI.confirm(t('确定将超级管理员转移给此用户？\n转移后你将变为普通管理员。此操作不可撤销。'))) return;
             await api(`/api/admin/users/${userId}/transfer-super-admin`, { method: 'POST' });
             toast(t('超级管理员已转移，请重新登录'));
             setTimeout(() => location.href = '/', 1500);
             return;
         } else if (action === 'delete') {
-            if (!confirm(t('确定删除此用户？其资源将转移给管理员。此操作不可撤销。'))) return;
+            if (!await window.ZephyrNativeUI.confirm(t('确定删除此用户？其资源将转移给管理员。此操作不可撤销。'))) return;
             await api(`/api/admin/users/${userId}`, { method: 'DELETE', body: JSON.stringify({ resourcePolicy: 'transfer-to-admin' }) });
         }
         toast(t('操作成功'));
@@ -18243,7 +18092,7 @@ async function refreshAgentTokensKeeping(tokenRecord) {
 }
 
 async function createAgentToken() {
-    const name = prompt(t('Token 名称，例如：我的手机 / 办公室 Windows / Pad'), 'Zephyr Client Token');
+    const name = await window.ZephyrNativeUI.prompt(t('Token 名称，例如：我的手机 / 办公室 Windows / Pad'), 'Zephyr Client Token');
     if (name === null) return;
     const data = await api('/api/rdp/file-agent-tokens', { method: 'POST', body: JSON.stringify({ name, length: currentAgentTokenLength() }) });
     const tokenRecord = data.token;
@@ -18254,7 +18103,7 @@ async function createAgentToken() {
 
 async function renameAgentToken(id) {
     const item = document.querySelector(`[data-token-id="${CSS.escape(id)}"] .agent-token-title strong`);
-    const name = prompt(t('新的 Token 名称'), item?.textContent || 'Zephyr Client Token');
+    const name = await window.ZephyrNativeUI.prompt(t('新的 Token 名称'), item?.textContent || 'Zephyr Client Token');
     if (name === null) return;
     await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
     await loadAgentTokens();
@@ -18262,7 +18111,7 @@ async function renameAgentToken(id) {
 }
 
 async function regenerateAgentToken(id) {
-    if (!confirm(t('重新生成后，使用旧 Token 的 Agent / One 会断开，需要重新填写新 Token。继续？'))) return;
+    if (!await window.ZephyrNativeUI.confirm(t('重新生成后，使用旧 Token 的 Agent / One 会断开，需要重新填写新 Token。继续？'))) return;
     const secret = await requestSensitiveSecret(t('重新生成 Zephyr Client Token'));
     if (secret == null || secret === '') throw new Error(t('已取消'));
     const data = await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/regenerate`, {
@@ -18276,7 +18125,7 @@ async function regenerateAgentToken(id) {
 }
 
 async function deleteAgentToken(id) {
-    if (!confirm(t('删除后，使用此 Token 的 Agent / One 会断开。删除需验证密码或两步验证码。继续？'))) return;
+    if (!await window.ZephyrNativeUI.confirm(t('删除后，使用此 Token 的 Agent / One 会断开。删除需验证密码或两步验证码。继续？'))) return;
     const secret = await requestSensitiveSecret(t('删除 Zephyr Client Token'));
     if (secret == null || secret === '') throw new Error(t('已取消'));
     await api(`/api/rdp/file-agent-tokens/${encodeURIComponent(id)}/delete`, {
@@ -18315,10 +18164,10 @@ async function copyAgentToken(id) {
 }
 
 async function resetAllAgentTokens() {
-    if (!confirm(t('这会删除当前账号所有 Client Token，并断开所有已连接 Agent / One。继续？'))) return;
+    if (!await window.ZephyrNativeUI.confirm(t('这会删除当前账号所有 Client Token，并断开所有已连接 Agent / One。继续？'))) return;
     const secret = await requestSensitiveSecret(t('重置全部 Zephyr Client Token'));
     if (secret == null || secret === '') throw new Error(t('已取消'));
-    const name = prompt(t('新 Token 名称'), t('默认 Token'));
+    const name = await window.ZephyrNativeUI.prompt(t('新 Token 名称'), t('默认 Token'));
     if (name === null) return;
     const data = await api('/api/rdp/file-agent-tokens/reset-all', {
         method: 'POST',
@@ -18396,7 +18245,7 @@ function renderOneClients(clients) {
 }
 
 async function deleteOneClient(clientId) {
-    if (!confirm(t('删除后该 Zephyr One 将无法同步，需重新登录绑定。删除需密码或两步验证码。继续？'))) return;
+    if (!await window.ZephyrNativeUI.confirm(t('删除后该 Zephyr One 将无法同步，需重新登录绑定。删除需密码或两步验证码。继续？'))) return;
     const secret = await requestSensitiveSecret(t('删除 Zephyr One 客户端'));
     if (secret == null || secret === '') throw new Error(t('已取消'));
     await api(`/api/one/clients/${encodeURIComponent(clientId)}/revoke`, {

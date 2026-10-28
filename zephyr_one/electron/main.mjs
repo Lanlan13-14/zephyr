@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { capabilities, unlock, unlockReason, unlockWindows } from './auth.mjs';
@@ -63,6 +63,16 @@ function preloadPath() {
   return path.join(here, 'preload.cjs');
 }
 
+function windowBackgroundColor() {
+  const appearance = readLaunchAppearance(app.getPath('userData'));
+  return appearance.theme === 'light' ? '#f5f5f7' : '#101114';
+}
+
+function syncWindowBackground(window) {
+  if (!window || window.isDestroyed()) return;
+  try { window.setBackgroundColor(windowBackgroundColor()); } catch { /* window is closing */ }
+}
+
 function createMainWindow() {
   const mac = process.platform === 'darwin';
   const window = new BrowserWindow({
@@ -73,7 +83,7 @@ function createMainWindow() {
     title: 'Zephyr One',
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#090b0e',
+    backgroundColor: windowBackgroundColor(),
     icon: path.join(oneRoot, 'src-tauri', 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     frame: mac,
     titleBarStyle: mac ? 'hiddenInset' : 'default',
@@ -114,7 +124,7 @@ function createProductWindow() {
     title: 'Zephyr One',
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#101114',
+    backgroundColor: windowBackgroundColor(),
     icon: path.join(oneRoot, 'src-tauri', 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     frame: mac,
     titleBarStyle: mac ? 'hiddenInset' : 'default',
@@ -446,9 +456,15 @@ function wireIpc() {
     return unlock(unlockReason(payload));
   });
   ipcMain.handle('get_launch_appearance', () => readLaunchAppearance(app.getPath('userData')));
-  ipcMain.handle('set_launch_appearance', (_event, appearance) => (
-    writeLaunchAppearance(app.getPath('userData'), appearance)
-  ));
+  function setLaunchAppearance(appearance) {
+    const next = writeLaunchAppearance(app.getPath('userData'), appearance);
+    nativeTheme.themeSource = next.autoTheme ? 'system' : next.theme;
+    syncWindowBackground(mainWindow);
+    syncWindowBackground(productWindow);
+    return next;
+  }
+  ipcMain.handle('set_launch_appearance', (_event, appearance) => setLaunchAppearance(appearance));
+  ipcMain.handle('launch_appearance_changed', (_event, appearance) => setLaunchAppearance(appearance));
   ipcMain.handle('set_theme_icon', (_event, theme) => (
     applyThemeIcon([mainWindow, productWindow].filter(Boolean), iconsDir(), theme)
   ));
@@ -477,6 +493,11 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    /* Match Chromium's preferred scheme with the saved Zephyr appearance
+     * before either renderer queries it. Do not let OS dark/light override a
+     * manually selected product theme. */
+    const appearance = readLaunchAppearance(app.getPath('userData'));
+    nativeTheme.themeSource = appearance.autoTheme ? 'system' : appearance.theme;
     wireIpc();
     /* Default-deny permission requests from loaded content. The loopback
      * product never needs device permissions; the shell grants none, so a

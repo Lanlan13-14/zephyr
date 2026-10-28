@@ -218,7 +218,8 @@ function coreCutMask(maskId) {
 }
 
 function zephyrWindSvg({ gradientId = 'zephyr-brand-gradient', maskId = 'zephyr-core-cut', title = 'Zephyr' } = {}) {
-    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #e0f2fe)"/><stop offset="var(--zephyr-icon-grad-mid-offset, 60%)" stop-color="var(--zephyr-icon-grad-mid, #93c5fd)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #60a5fa)"/></linearGradient>${coreCutMask(maskId)}</defs><path class="wind-path-main" d="${PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${PATH_MID}" stroke="url(#${gradientId})" mask="url(#${maskId})"/><path class="wind-path-tail" d="${PATH_TAIL}" stroke="url(#${gradientId})"/><circle cx="145" cy="115" r="4.5" fill="var(--zephyr-icon-dot-a, #60a5fa)" opacity="0.9"/></svg>`;
+    const midOffset = paletteForScheme().midOffset || '60%';
+    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #e0f2fe)"/><stop offset="${midOffset}" stop-color="var(--zephyr-icon-grad-mid, #93c5fd)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #60a5fa)"/></linearGradient>${coreCutMask(maskId)}</defs><path class="wind-path-main" d="${PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${PATH_MID}" stroke="url(#${gradientId})" mask="url(#${maskId})"/><path class="wind-path-tail" d="${PATH_TAIL}" stroke="url(#${gradientId})"/><circle cx="145" cy="115" r="4.5" fill="var(--zephyr-icon-dot-a, #60a5fa)" opacity="0.9"/></svg>`;
 }
 
 /* Zephyr One's mark: the same wind strokes carrying an "One" wordmark.
@@ -246,7 +247,8 @@ function oneWordmark(fill) {
 }
 
 function zephyrOneWindSvg({ gradientId = 'zephyr-one-gradient', maskId = 'zephyr-one-cut', title = 'Zephyr One' } = {}) {
-    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #eef2f7)"/><stop offset="var(--zephyr-icon-grad-mid-offset, 58%)" stop-color="var(--zephyr-icon-grad-mid, #a8b5c3)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #6e7b88)"/></linearGradient>${oneCutMask(maskId)}</defs><path class="wind-path-main" d="${ONE_PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${ONE_PATH_MID}" stroke="url(#${gradientId})" mask="url(#${maskId})"/><path class="wind-path-tail" d="${ONE_PATH_TAIL}" stroke="url(#${gradientId})"/>${oneWordmark('var(--zephyr-icon-title, #0a84ff)')}</svg>`;
+    const midOffset = paletteForScheme().midOffset || '58%';
+    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #eef2f7)"/><stop offset="${midOffset}" stop-color="var(--zephyr-icon-grad-mid, #a8b5c3)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #6e7b88)"/></linearGradient>${oneCutMask(maskId)}</defs><path class="wind-path-main" d="${ONE_PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${ONE_PATH_MID}" stroke="url(#${gradientId})" mask="url(#${maskId})"/><path class="wind-path-tail" d="${ONE_PATH_TAIL}" stroke="url(#${gradientId})"/>${oneWordmark('var(--zephyr-icon-title, #0a84ff)')}</svg>`;
 }
 
 /** True when this document is the Zephyr One shell rather than Zephyr proper. */
@@ -314,12 +316,13 @@ export function zephyrResolveBrandName(stored) {
  * wind geometry used by Zephyr Core, keeping the brand spark (dot-a) crisp.
  */
 function zephyrOneCompactSvg({ gradientId = 'zephyr-one-gradient', title = 'Zephyr One' } = {}) {
+    const midOffset = paletteForScheme().midOffset || '58%';
     /* Optical sizing (Apple HIG): below the size the wordmark can be read at,
      * strip it AND the mask that punches its hole — a bare bite out of the
      * mid stroke reads worse than the smudge the mask was meant to fix. The
      * focus dot (dot-a) sits on top of the crossing, restoring the pristine
      * single-focal-point geometry of Zephyr Core. */
-    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #eef2f7)"/><stop offset="var(--zephyr-icon-grad-mid-offset, 58%)" stop-color="var(--zephyr-icon-grad-mid, #a8b5c3)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #6e7b88)"/></linearGradient></defs><path class="wind-path-main" d="${ONE_PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${ONE_PATH_MID}" stroke="url(#${gradientId})"/><path class="wind-path-tail" d="${ONE_PATH_TAIL}" stroke="url(#${gradientId})"/><circle cx="145" cy="115" r="4.5" fill="var(--zephyr-icon-dot-a, #0a84ff)" opacity="0.9"/></svg>`;
+    return `<svg class="zephyr-brand-svg" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" focusable="false"><title>${escapeHtml(title)}</title><defs><linearGradient id="${gradientId}" x1="15%" y1="15%" x2="85%" y2="85%"><stop offset="0%" stop-color="var(--zephyr-icon-grad-start, #eef2f7)"/><stop offset="${midOffset}" stop-color="var(--zephyr-icon-grad-mid, #a8b5c3)"/><stop offset="100%" stop-color="var(--zephyr-icon-grad-end, #6e7b88)"/></linearGradient></defs><path class="wind-path-main" d="${ONE_PATH_MAIN}" stroke="url(#${gradientId})"/><path class="wind-path-mid" d="${ONE_PATH_MID}" stroke="url(#${gradientId})"/><path class="wind-path-tail" d="${ONE_PATH_TAIL}" stroke="url(#${gradientId})"/><circle cx="145" cy="115" r="4.5" fill="var(--zephyr-icon-dot-a, #0a84ff)" opacity="0.9"/></svg>`;
 }
 
 /**

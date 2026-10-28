@@ -67,6 +67,13 @@ function loadWebDavHarness({
     t: tImpl,
     formatDateTime: (value) => `time:${value}`,
     requestSensitiveSecret: async () => 'verified-secret',
+    window: {
+      ZephyrNativeUI: {
+        confirm: async () => true,
+        prompt: async () => 'verified-secret',
+        alert: async () => undefined,
+      },
+    },
     confirm: () => true,
   };
   vm.runInNewContext(`${webDavSource}\n;globalThis.webDavExports = {
