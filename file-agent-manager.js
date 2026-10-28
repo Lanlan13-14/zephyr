@@ -16,6 +16,8 @@ const path = require('path');
 const WebSocket = require('ws');
 const ipaddr = require('ipaddr.js');
 const { AgentTokenStore, TokenStoreError, canonicalLinkJwk } = require('./file-agent-token-store');
+const { resolveUnderShare } = require('./agent-path-jail');
+const { evaluateAgentPolicy } = require('./agent-policy-engine');
 const {
     OP: ZFT2_OP,
     FLAG_ERROR: ZFT2_FLAG_ERROR,
@@ -650,6 +652,48 @@ class AgentError extends Error {
     }
 }
 
+const FILE_OP_TO_POLICY = Object.freeze({
+    list: 'list',
+    stat: 'stat',
+    read: 'read',
+    write: 'write',
+    mkdir: 'mkdir',
+    delete: 'delete',
+    rename: 'rename',
+    truncate: 'truncate',
+    writeBinary: 'write',
+    readBinary: 'read',
+    open: 'read',
+    close: 'read',
+});
+
+function shareRootOf(conn) {
+    const share = conn && conn.share;
+    if (!share) return '';
+    if (typeof share.root === 'string' && share.root.trim()) return share.root;
+    if (typeof share.path === 'string' && share.path.trim()) return share.path;
+    if (typeof share.name === 'string' && share.name.trim()) {
+        return path.resolve('/tmp/zephyr-agent-shares', share.name);
+    }
+    return '';
+}
+
+function jailFileParams(conn, params) {
+    if (!params || typeof params !== 'object') return params;
+    const root = shareRootOf(conn);
+    if (!root) return params;
+    const next = { ...params };
+    for (const key of ['path', 'from', 'to', 'relativePath']) {
+        if (next[key] == null || next[key] === '') continue;
+        const resolved = resolveUnderShare(root, String(next[key]));
+        if (!resolved.ok) {
+            throw new AgentError('path_escape', 'path escapes the Agent share root');
+        }
+        next[key] = resolved.relative === '.' ? '' : resolved.relative;
+    }
+    return next;
+}
+
 class FileAgentManager {
     constructor(options = {}) {
         /** @type {Map<string, FileAgentConnection>} agentId → connection */
@@ -700,6 +744,9 @@ class FileAgentManager {
         this.resolveDeviceAccess = typeof options.resolveDeviceAccess === 'function' ? options.resolveDeviceAccess : null;
         /** Optional: persist last-seen for an enrolled device (hello / ping). */
         this.onAgentSeen = typeof options.onAgentSeen === 'function' ? options.onAgentSeen : null;
+        this.evaluatePolicy = typeof options.evaluatePolicy === 'function'
+            ? options.evaluatePolicy
+            : require('./agent-policy-engine').evaluateAgentPolicy;
 
         this._loadTokens();
         this._restoreLinkIdentities();
@@ -1606,6 +1653,23 @@ class FileAgentManager {
 
     // ─── File RPC Forwarding ─────────────────────────────────────────
 
+    _assertFilePolicy(conn, method) {
+        if (method === 'ping') return;
+        const operation = FILE_OP_TO_POLICY[method];
+        if (!operation) return;
+        const context = conn && conn.policyContext;
+        if (!context || typeof context !== 'object') return;
+        const result = this.evaluatePolicy({
+            ...context,
+            operation,
+            channel: 'file-bridge',
+            share: conn.share?.name,
+        });
+        if (result !== 'allow') {
+            throw new AgentError(result, 'Agent local policy denied this file operation');
+        }
+    }
+
     /** Forward a file RPC call to the specified Agent. */
     async callAgent(agentId, method, params, timeoutMs) {
         const conn = this.agents.get(agentId);
@@ -1623,6 +1687,8 @@ class FileAgentManager {
         if (['delete', 'mkdir', 'rename', 'truncate'].includes(method) && conn.share.readOnly) {
             throw new AgentError('read_only', 'Agent share is read-only');
         }
+        this._assertFilePolicy(conn, method);
+        params = jailFileParams(conn, params);
 
         const timeout = method === 'read' || method === 'write'
             ? (timeoutMs || RPC_READ_TIMEOUT_MS)
@@ -1860,6 +1926,12 @@ class FileAgentManager {
         const mutating = ['writeBinary', 'mkdir', 'delete', 'rename', 'truncate'];
         if (mutating.includes(method) && conn.share.readOnly) {
             return { promise: Promise.reject(new AgentError('read_only', 'Agent share is read-only')), cancel() {} };
+        }
+        try {
+            this._assertFilePolicy(conn, method);
+            params = jailFileParams(conn, params);
+        } catch (error) {
+            return { promise: Promise.reject(error), cancel() {} };
         }
         const map = {
             open: ZFT2_OP.OPEN, readBinary: ZFT2_OP.READ, writeBinary: ZFT2_OP.WRITE,
