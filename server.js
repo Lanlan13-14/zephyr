@@ -11389,6 +11389,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         dockerLogStreams,
                         sftpUploadStreams,
                         closed: false,
+                        sessionEpoch: 1,
+                        ownerDeviceId: sessionUser.deviceId || '',
                     };
                     attachedSshSession = session;
                     ws._sshTerminalSession = session;
@@ -11567,6 +11569,8 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                         dockerLogStreams,
                         sftpUploadStreams,
                         closed: false,
+                        sessionEpoch: 1,
+                        ownerDeviceId: sessionUser.deviceId || '',
                     };
                     attachedSshSession = session;
                     ws._sshTerminalSession = session;

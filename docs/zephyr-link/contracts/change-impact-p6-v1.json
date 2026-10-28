@@ -1,0 +1,27 @@
+{
+  "channels": ["control", "ai", "shared-terminal"],
+  "platforms": ["server", "desktop", "agent"],
+  "dataDomains": ["local", "owned"],
+  "states": ["bound", "offline", "revoked"],
+  "protocolImpact": ["additive"],
+  "dataImpact": ["none"],
+  "requiredEvidence": ["L0", "L1", "L2", "L3", "L4"],
+  "failureInjections": [
+    "stale-handoff-epoch-input-rejected",
+    "concurrent-handoff-single-winner",
+    "ai-retry-same-runid-no-double-execute",
+    "ai-stale-approval-after-input-hash-change",
+    "cell-command-not-on-allowlist-rejected",
+    "kind-ai-echo-is-not-execution"
+  ],
+  "compatibility": ["old-server", "old-client", "new-server", "new-client"],
+  "rollback": [
+    "git revert the P6 commit on zephyr-link-foundation-v1",
+    "KindAI builtin echo remains until a real broker is registered",
+    "sessionEpoch fields on SSH sessions are additive"
+  ],
+  "evidenceLinks": [
+    "docs/zephyr-link/TESTING-AND-RELEASE-GATES.md",
+    "docs/zephyr-link/ZEPHYR-LINK-INTERCONNECTION-SPEC.md"
+  ]
+}
