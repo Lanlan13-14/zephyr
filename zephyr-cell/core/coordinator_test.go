@@ -124,9 +124,9 @@ func TestSession_ExecSerialization(t *testing.T) {
 		execFn: func(_ context.Context, _, cmd string, _ engine.ExecLimits) (*engine.ExecResult, error) {
 			mu.Lock()
 			switch cmd {
-			case "cmd1":
+			case "echo":
 				execOrder = append(execOrder, 1)
-			case "cmd2":
+			case "ls":
 				execOrder = append(execOrder, 2)
 			}
 			mu.Unlock()
@@ -143,12 +143,12 @@ func TestSession_ExecSerialization(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		sess.Exec(context.Background(), "cmd1", engine.ExecLimits{WallClockSeconds: 60, MaxOutputBytes: 102400})
+		sess.Exec(context.Background(), "echo", engine.ExecLimits{WallClockSeconds: 60, MaxOutputBytes: 102400})
 	}()
 	go func() {
 		defer wg.Done()
 		time.Sleep(1 * time.Millisecond) // slight delay so cmd1 goes first
-		sess.Exec(context.Background(), "cmd2", engine.ExecLimits{WallClockSeconds: 60, MaxOutputBytes: 102400})
+		sess.Exec(context.Background(), "ls", engine.ExecLimits{WallClockSeconds: 60, MaxOutputBytes: 102400})
 	}()
 	wg.Wait()
 
@@ -178,7 +178,7 @@ func TestSession_OutputTruncation(t *testing.T) {
 	tpl := cell.Template{Limits: cell.DefaultLimits()} // 100KB max
 	sess, _ := coord.SpawnSession(context.Background(), tpl, "trunc")
 
-	result, err := sess.Exec(context.Background(), "big", engine.ExecLimits{WallClockSeconds: 60, MaxOutputBytes: 100 * 1024})
+	result, err := sess.Exec(context.Background(), "cat", engine.ExecLimits{WallClockSeconds: 60, MaxOutputBytes: 100 * 1024})
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
 	}

@@ -15,3 +15,11 @@ test('Cell command allowlist source defaults deny and keeps rm off the list', ()
   assert.match(tests, /rm must be denied/);
   assert.match(tests, /empty list must deny everything/);
 });
+
+test('Cell Session.Exec consults the allowlist before the engine', () => {
+  const coordinator = fs.readFileSync(path.resolve('zephyr-cell/core/coordinator.go'), 'utf8');
+  assert.match(coordinator, /defaultCellCommands\.Allow\(cmd\)/);
+  assert.match(coordinator, /ErrCodePermissionDenied/);
+  const exec = coordinator.slice(coordinator.indexOf('func (s *Session) Exec'), coordinator.indexOf('s.Engine.Exec'));
+  assert.match(exec, /Allow\(cmd\)/);
+});

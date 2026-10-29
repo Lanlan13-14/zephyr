@@ -2,9 +2,11 @@
 
 const Ajv = require('ajv');
 const { executionPolicyForTool } = require('./ai-capabilities');
+const { createAiRunRegistry } = require('./ai-run-idempotency');
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 const validators = new Map();
+const defaultRunRegistry = createAiRunRegistry();
 
 function validatorFor(toolId, schema) {
     const key = String(toolId || '');
@@ -63,6 +65,20 @@ async function executeCanonicalTool({ toolId, schema, args, ctx, authorize, exec
     }
 
     const startedAt = Date.now();
+    const runId = ctx && ctx.runId;
+    const runRegistry = (ctx && ctx.runRegistry) || defaultRunRegistry;
+    if (runId && runRegistry && typeof runRegistry.dispatch === 'function') {
+        const dispatched = await runRegistry.dispatch({
+            runId: String(runId),
+            tool: String(toolId),
+            input,
+            execute: async () => {
+                const value = await execute();
+                return toToolResult(toolId, policy, value, Date.now() - startedAt);
+            },
+        });
+        return dispatched.result;
+    }
     const value = await execute();
     return toToolResult(toolId, policy, value, Date.now() - startedAt);
 }

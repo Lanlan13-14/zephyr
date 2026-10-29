@@ -76,14 +76,18 @@ class AiRunRegistry {
 
         const result = execute(input);
         this.executions += 1;
-        this.runs.set(runId, { tool, inputHash, result });
-        return {
-            ok: true,
-            replayed: false,
-            runId,
-            result,
-            executions: this.executions,
-        };
+        const record = { tool, inputHash, result };
+        this.runs.set(runId, record);
+        return Promise.resolve(result).then((resolved) => {
+            record.result = resolved;
+            return {
+                ok: true,
+                replayed: false,
+                runId,
+                result: resolved,
+                executions: this.executions,
+            };
+        });
     }
 
     lookup(runId) {

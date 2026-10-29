@@ -22,8 +22,11 @@ import (
 
 	cell "github.com/Lanlan13-14/zephyr-ssh/zephyr-cell"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-cell/engine"
+	"github.com/Lanlan13-14/zephyr-ssh/zephyr-cell/security"
 	"github.com/google/uuid"
 )
+
+var defaultCellCommands = security.NewCommandAllowlist(security.DefaultCellCommands)
 
 // Session represents a single Cell session managed by the coordinator.
 // Each session has its own mutex (§4.5.2: per-session mutex, not global FIFO).
@@ -362,6 +365,10 @@ func (s *Session) Exec(ctx context.Context, cmd string, limits engine.ExecLimits
 	// Per-session mutex: same-cell Exec calls serialized (§6.2 rule 1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if !defaultCellCommands.Allow(cmd) {
+		return nil, cell.NewError(cell.ErrCodePermissionDenied, "command is not on the Cell allowlist", nil)
+	}
 
 	s.touchActivity()
 

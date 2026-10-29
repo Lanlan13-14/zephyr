@@ -29,6 +29,24 @@ function fail(code, message) {
     throw new LinkHandoffError(code, message);
 }
 
+/**
+ * Gate a live SSH/Telnet input/resize against the session's current epoch.
+ * Sessions without an epoch (pre-P6) stay open so existing clients keep working.
+ */
+function assertLiveSessionEpoch(session, msg = {}) {
+    if (!session || typeof session !== 'object') return true;
+    if (!Number.isInteger(session.sessionEpoch) || session.sessionEpoch < 1) return true;
+    if (msg.sessionEpoch == null && !msg.deviceId) return true;
+    const claimedEpoch = msg.sessionEpoch == null ? session.sessionEpoch : Number(msg.sessionEpoch);
+    if (claimedEpoch !== session.sessionEpoch) {
+        fail('stale_epoch', 'input belongs to a previous handoff epoch');
+    }
+    if (session.ownerDeviceId && msg.deviceId && String(msg.deviceId) !== String(session.ownerDeviceId)) {
+        fail('stale_owner', 'device is not the current session owner');
+    }
+    return true;
+}
+
 function nonEmpty(value, max = 160) {
     return typeof value === 'string' && value.trim().length > 0 && value.length <= max;
 }
@@ -145,5 +163,6 @@ module.exports = {
     LinkHandoffError,
     LinkHandoffRegistry,
     createLinkHandoffRegistry,
+    assertLiveSessionEpoch,
     OPERATIONS,
 };

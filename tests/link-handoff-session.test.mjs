@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { createLinkHandoffRegistry } = require('../link-handoff-session.js');
+const { createLinkHandoffRegistry, assertLiveSessionEpoch } = require('../link-handoff-session.js');
 
 function registry() {
   const handoff = createLinkHandoffRegistry();
@@ -86,4 +86,15 @@ test('Smartbar still refuses to pretend Handoff protocol exists', () => {
   const app = fs.readFileSync('public/app.js', 'utf8');
   assert.match(app, /跨端接管协议尚未实现/);
   assert.match(app, /data-handoff-device/);
+});
+
+test('live SSH session input without epoch stays compatible; stale epoch is rejected', () => {
+  const session = { sessionEpoch: 2, ownerDeviceId: 'dev-b' };
+  assert.equal(assertLiveSessionEpoch(session, {}), true);
+  assert.throws(
+    () => assertLiveSessionEpoch(session, { sessionEpoch: 1, deviceId: 'dev-b' }),
+    (err) => err.code === 'stale_epoch',
+  );
+  const server = fs.readFileSync('server.js', 'utf8');
+  assert.match(server, /assertLiveSessionEpoch\(attachedSshSession, msg\)/);
 });

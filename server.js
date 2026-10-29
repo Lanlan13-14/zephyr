@@ -11631,6 +11631,13 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
         // 输入
         if (msg.type === 'input') {
+            try {
+                assertLiveSessionEpoch(attachedSshSession, msg);
+            } catch (err) {
+                const code = err instanceof LinkHandoffError ? err.code : 'stale_epoch';
+                sendJSON({ type: 'error', code, message: err.message || '会话 epoch 已失效' });
+                return;
+            }
             const liveTelnet = (attachedSshSession?.telnetSocket && !attachedSshSession.telnetSocket.destroyed)
                 ? attachedSshSession.telnetSocket
                 : (telnetSocket && !telnetSocket.destroyed ? telnetSocket : null);
@@ -11652,6 +11659,13 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
 
         // 窗口大小调整
         if (msg.type === 'resize') {
+            try {
+                assertLiveSessionEpoch(attachedSshSession, msg);
+            } catch (err) {
+                const code = err instanceof LinkHandoffError ? err.code : 'stale_epoch';
+                sendJSON({ type: 'error', code, message: err.message || '会话 epoch 已失效' });
+                return;
+            }
             const rows = Math.floor(Number(msg.rows));
             const cols = Math.floor(Number(msg.cols));
             if (!Number.isFinite(rows) || !Number.isFinite(cols) || rows < 2 || cols < 20 || rows > 200 || cols > 500) {

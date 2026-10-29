@@ -110,3 +110,33 @@ func TestKindAIHasBuiltinHandler(t *testing.T) {
 		t.Fatalf("ai ack %+v", m)
 	}
 }
+
+func TestKindAIUnknownOpIsUnsupported(t *testing.T) {
+	n := NewNode()
+	packed, err := codec.Pack(codec.KindAI, map[string]any{"op": "tool.exec"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fr, err := codec.Unpack(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, body, _, err := n.Dispatcher().Dispatch(&FrameContext{SessionID: "sess-ai"}, fr)
+	if err != nil {
+		t.Fatalf("KindAI unknown op must still dispatch: %v", err)
+	}
+	if kind != codec.KindAI {
+		t.Fatalf("ack kind=%d", kind)
+	}
+	m, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("body type %T", body)
+	}
+	if m["ok"] != false {
+		t.Fatalf("unknown AI op must not be ok: %+v", m)
+	}
+	errObj, _ := m["error"].(map[string]any)
+	if errObj["code"] != "unsupported_operation" {
+		t.Fatalf("want unsupported_operation, got %+v", m)
+	}
+}

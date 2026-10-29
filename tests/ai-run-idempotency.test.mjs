@@ -7,15 +7,15 @@ const { createAiRunRegistry } = require('../ai-run-idempotency.js');
 const fs = require('fs');
 const path = require('path');
 
-test('retrying the same runId does not execute the tool twice', () => {
+test('retrying the same runId does not execute the tool twice', async () => {
   const runs = createAiRunRegistry();
   let calls = 0;
   const execute = () => {
     calls += 1;
     return { value: calls };
   };
-  const first = runs.dispatch({ runId: 'run-1', tool: 'pwd', input: { cwd: '/' }, execute });
-  const second = runs.dispatch({ runId: 'run-1', tool: 'pwd', input: { cwd: '/' }, execute });
+  const first = await runs.dispatch({ runId: 'run-1', tool: 'pwd', input: { cwd: '/' }, execute });
+  const second = await runs.dispatch({ runId: 'run-1', tool: 'pwd', input: { cwd: '/' }, execute });
   assert.equal(first.replayed, false);
   assert.equal(second.replayed, true);
   assert.equal(calls, 1);
@@ -62,8 +62,9 @@ test('KindAI builtin echo is not registered as execution', () => {
   assert.match(node, /Acknowledge here; the embedding host may replace/);
   assert.doesNotMatch(node, /executeCanonicalAiTool/);
   const start = node.indexOf('n.dispatch.Register(codec.KindAI');
-  const echoBlock = node.slice(start, start + 900);
-  assert.match(echoBlock, /"ok":\s+true/);
-  assert.match(echoBlock, /"op":\s+op/);
+  const echoBlock = node.slice(start, start + 1600);
+  assert.match(echoBlock, /unsupported_operation/);
+  assert.match(echoBlock, /does not execute tools/);
   assert.doesNotMatch(echoBlock, /ai-agent-service/);
+  assert.doesNotMatch(echoBlock, /executeCanonicalAiTool/);
 });

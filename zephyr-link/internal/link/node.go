@@ -217,6 +217,17 @@ func (n *Node) registerBuiltinHandlers() {
 			}
 		}
 		op, _ := body["op"].(string)
+		if op != "" && op != "status" {
+			return codec.KindAI, map[string]any{
+				"ok": false,
+				"op": op,
+				"error": map[string]any{
+					"code":      "unsupported_operation",
+					"message":   "KindAI builtin handler does not execute tools",
+					"retryable": false,
+				},
+			}, false, nil
+		}
 		return codec.KindAI, map[string]any{
 			"ok":      true,
 			"op":      op,
