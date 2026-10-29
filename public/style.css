@@ -16928,6 +16928,13 @@ body.settings-subpage-open {
     contain: strict;
     isolation: isolate;
 }
+/* The promoted select menu is a direct modal child, so it cannot rely on
+ * the `.ui-toggle-select.open` descendant display rule. */
+#connectionModal > .ui-toggle-select-menu {
+    display: grid;
+    position: fixed;
+    z-index: 10300;
+}
 #connectionModal #connectionForm {
     opacity: 1;
     transform: none !important;

@@ -6,6 +6,7 @@
 
   const close = (shell = openShell) => {
     if (!shell) return;
+    if (shell._zephyrRestoreMenu) shell._zephyrRestoreMenu();
     if (typeof shell._zephyrCloseMenu === 'function') shell._zephyrCloseMenu();
     else {
       shell.classList.remove('open');
@@ -81,6 +82,7 @@
         shell.classList.add('open');
         trigger.setAttribute('aria-expanded', 'true');
       }
+      positionMenu(shell);
       openShell = shell;
       requestAnimationFrame(() => {
         const selected = menu.querySelector('.is-selected') || menu.querySelector('button:not(:disabled)');
@@ -125,9 +127,35 @@
     return shell;
   }
 
-  function scan(root = document) {
-    if (root instanceof HTMLSelectElement) enhance(root);
-    root.querySelectorAll?.('select:not([multiple])').forEach(enhance);
+  function positionMenu(shell) {
+    const menu = shell.querySelector('.ui-toggle-select-menu');
+    const trigger = shell.querySelector('.ui-toggle-select-trigger');
+    const layer = shell.closest('#connectionModal');
+    if (!menu || !trigger || !layer) return;
+    if (!shell._zephyrRestoreMenu) {
+      const parent = menu.parentElement;
+      const next = menu.nextSibling;
+      shell._zephyrRestoreMenu = () => { parent.insertBefore(menu, next); menu.style.cssText = ''; };
+    }
+    layer.appendChild(menu);
+    const bounds = trigger.getBoundingClientRect();
+    menu.style.position = 'fixed';
+    menu.style.left = `${bounds.left}px`;
+    menu.style.top = `${bounds.bottom + 6}px`;
+    menu.style.width = `${bounds.width}px`;
+    menu.style.right = 'auto';
+    menu.style.zIndex = '10300';
+    menu.style.maxHeight = `${Math.max(120, window.innerHeight - bounds.bottom - 18)}px`;
+  }
+
+  function scan(root = document, adapt = null) {
+    const attach = (select) => {
+      const shell = enhance(select);
+      if (shell && typeof adapt === 'function') adapt(shell, select);
+      return shell;
+    };
+    if (root instanceof HTMLSelectElement) attach(root);
+    root.querySelectorAll?.('select:not([multiple])').forEach(attach);
   }
 
   const observer = new MutationObserver((records) => {
@@ -144,12 +172,18 @@
         }
       }
       record.addedNodes.forEach((node) => {
-        if (node.nodeType === 1) scan(node);
+        if (node.nodeType === 1) scan(node, (shell, select) => {
+          if (typeof window.ZephyrNativeSelectAdapt === 'function') window.ZephyrNativeSelectAdapt(shell, select);
+        });
       });
     }
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['value', 'disabled', 'selected'] });
-  document.addEventListener('pointerdown', (event) => { if (!event.target.closest('.ui-toggle-select')) close(); }, true);
+  document.addEventListener('pointerdown', (event) => {
+    /* A promoted modal menu lives outside its shell; clicking it is still
+     * clicking the select, not an outside dismissal gesture. */
+    if (!event.target.closest('.ui-toggle-select, .ui-toggle-select-menu')) close();
+  }, true);
   window.addEventListener('resize', () => close());
   document.addEventListener('scroll', (event) => { if (!event.target?.closest?.('.ui-toggle-select-menu')) close(); }, true);
   window.ZephyrNativeSelect = Object.freeze({ enhance, sync, scan, close });

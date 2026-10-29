@@ -7,6 +7,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const js = readFileSync(path.join(root, 'public/app.js'), 'utf8');
 const html = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const css = readFileSync(path.join(root, 'public/style.css'), 'utf8');
+const styleCssForMenu = css;
+const readNativeSelect = readFileSync(path.join(root, 'public/native-select.js'), 'utf8');
 function fn(name) {
   const i=js.indexOf(`function ${name}(`); assert.ok(i>=0, `${name} missing`);
   const sigEnd=js.indexOf(') {',i); const b=js.indexOf('{',sigEnd); let d=0;
@@ -72,6 +74,19 @@ test('connection form fully expands and backdrop owns the only scroll', () => {
   assert.match(css, /#connectionModal\.connection1[\s\S]*?overflow-y:\s*auto/);
   assert.match(fn('openModal'), /card\.style\.overflow = 'visible'/);
   assert.match(fn('openModal'), /card\.style\.maxHeight = 'none'/);
+});
+test('modal cleanup closes shared selects without an undefined compatibility helper', () => {
+  const close = fn('closeAllToggleSelects');
+  assert.match(close, /querySelectorAll\('\.ui-toggle-select\.open'\)/);
+  assert.match(close, /closeToggleSelectMenu\(shell\)/);
+  assert.match(fn('closeModal'), /closeAllToggleSelects\(\);/);
+  assert.doesNotMatch(fn('closeModal'), /closeAllToggleSelects\(\);\s*connectionScrimSet[\s\S]*ReferenceError/);
+});
+test('promoted modal select menus remain visible above later form fields', () => {
+  assert.match(styleCssForMenu, /#connectionModal > \.ui-toggle-select-menu \{[\s\S]*?display:\s*grid/);
+  assert.match(readNativeSelect, /layer\.appendChild\(menu\)/);
+  assert.match(readNativeSelect, /menu\.style\.position = 'fixed'/);
+  assert.match(readNativeSelect, /_zephyrRestoreMenu/);
 });
 test('blank backdrop and scrim clicks interrupt opening via closeModal', () => {
   assert.match(js, /\$\('#connectionModal'\)\?\.addEventListener\('click',[\s\S]*?e\.target\.id === 'connectionModal'[\s\S]*?closeModal\(\)/);

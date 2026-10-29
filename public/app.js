@@ -4073,6 +4073,14 @@ function closeToggleSelectMenu(shell) {
             menu.style.opacity = '';
         });
 }
+function closeAllToggleSelects(exceptShell = null) {
+    /* Compatibility for modal close/reset paths after the shared-select move.
+     * Closing must never abort the modal's own scrim and focus cleanup. */
+    document.querySelectorAll('.ui-toggle-select.open').forEach((shell) => {
+        if (exceptShell && shell === exceptShell) return;
+        closeToggleSelectMenu(shell);
+    });
+}
 function syncToggleSelectFace(select) {
     if (!window.ZephyrNativeSelect) throw new Error('Shared Zephyr select is not loaded');
     return window.ZephyrNativeSelect.sync(select);
@@ -4087,10 +4095,15 @@ function enhanceToggleSelect(select) {
     return shell;
 }
 function enhanceAllToggleSelects() {
-    window.ZephyrNativeSelect?.scan();
+    window.ZephyrNativeSelectAdapt = (shell, select) => {
+        shell._zephyrCloseMenu = () => closeToggleSelectMenu(shell);
+        if (String(select?.id || '').startsWith('jumpRouteSelect-')) shell.dataset.selectId = 'jumpRouteSelect';
+    };
+    window.ZephyrNativeSelect?.scan(document, window.ZephyrNativeSelectAdapt);
 }
 window.enhanceToggleSelect = enhanceToggleSelect;
 window.syncToggleSelectFace = syncToggleSelectFace;
+window.closeAllToggleSelects = closeAllToggleSelects;
 
 function readConnectionFilters() {
     try { return JSON.parse(localStorage.getItem(CONNECTION_FILTER_KEY) || '{}') || {}; } catch { return {}; }
