@@ -7,6 +7,7 @@
   const close = (shell = openShell) => {
     if (!shell) return;
     if (shell._zephyrRestoreMenu) shell._zephyrRestoreMenu();
+    shell.classList.remove('menu-closing');
     if (typeof shell._zephyrCloseMenu === 'function') shell._zephyrCloseMenu();
     else {
       shell.classList.remove('open');
@@ -86,7 +87,10 @@
       openShell = shell;
       requestAnimationFrame(() => {
         const selected = menu.querySelector('.is-selected') || menu.querySelector('button:not(:disabled)');
-        selected?.scrollIntoView({ block: 'nearest' });
+        /* Scroll only the menu. scrollIntoView also scrolls modal ancestors,
+         * and the capture-phase scroll handler would immediately close this
+         * freshly opened menu before its options could be clicked. */
+        if (selected) menu.scrollTop = Math.max(0, selected.offsetTop - 6);
       });
     });
     menu.addEventListener('click', (event) => {
@@ -107,7 +111,15 @@
     });
     select.addEventListener('change', () => sync(select));
     shell.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') { event.preventDefault(); close(shell); trigger.focus(); }
+      if (event.key === 'Escape') {
+        /* A select inside a modal owns the first Escape. Without stopping
+         * propagation, the same keypress also reaches the modal's global
+         * Escape handler and closes the whole dialog. */
+        event.preventDefault();
+        event.stopPropagation();
+        close(shell);
+        trigger.focus();
+      }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
         const options = [...select.options];
@@ -185,7 +197,17 @@
     if (!event.target.closest('.ui-toggle-select, .ui-toggle-select-menu')) close();
   }, true);
   window.addEventListener('resize', () => close());
-  document.addEventListener('scroll', (event) => { if (!event.target?.closest?.('.ui-toggle-select-menu')) close(); }, true);
+  document.addEventListener('scroll', (event) => {
+    /* Opening can settle the modal's scroll container after promoted menus
+     * are measured. Do not turn that layout settle into a dismissal. */
+    if (!openShell || event.target === document) return;
+    const targetMenu = openShell.closest('#connectionModal')
+      ? document.querySelector('#connectionModal > .ui-toggle-select-menu')
+      : openShell.querySelector('.ui-toggle-select-menu');
+    if (targetMenu && (event.target === targetMenu || event.target === openShell
+      || event.target === openShell.closest('#connectionModal'))) return;
+    if (!event.target?.closest?.('.ui-toggle-select-menu')) close();
+  }, true);
   window.ZephyrNativeSelect = Object.freeze({ enhance, sync, scan, close });
   window.enhanceToggleSelect = enhance;
   window.syncToggleSelectFace = sync;

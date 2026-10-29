@@ -114,6 +114,8 @@
     try { doc.execCommand(name); } catch {}
   }
 
+  let menuReturnFocus = null;
+
   async function pasteInto(target, savedSelection = null) {
     const value = await readClipboard();
     if (!value) return;
@@ -170,6 +172,7 @@
     /* Focus is restored before every command; selectionStart/End must not be
      * read after the menu button steals focus from a password/input field. */
     menuFocus = pointerFocus || doc.activeElement;
+    menuReturnFocus = menuFocus;
     pointerFocus = null;
     pointerSelection = null;
     const width = menu.offsetWidth;
@@ -300,7 +303,16 @@
     if (!event.target?.closest?.('.zephyr-native-menu')) closeMenu();
   }, true);
   doc.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeMenu();
+    if (event.key === 'Escape' && menu) {
+      /* The menu owns this Escape even when focus is on the original input;
+       * otherwise the surrounding modal also closes on the same keypress. */
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      closeMenu();
+      restoreFocus(menuReturnFocus || menuFocus);
+      menuReturnFocus = null;
+    }
     if (!menu) return;
     const items = [...menu.querySelectorAll('button:not(:disabled)')];
     const index = items.indexOf(doc.activeElement);

@@ -56,6 +56,7 @@ test('owned context menu preserves input selection, editor paste pipeline and pa
     if (contract === "new MouseEvent('contextmenu'") continue;
     assert.ok(menu.includes(contract), contract);
   }
+  assert.match(menu, /event\.key === 'Escape' && menu[\s\S]*?stopImmediatePropagation/);
   assert.doesNotMatch(menu, /(?:window\.)?(?:alert|confirm|prompt)\s*\(/);
   assert.match(menu, /window\.ZephyrNativeUI = Object\.freeze/);
 });
@@ -67,7 +68,12 @@ test('shared select emits native input/change and supports Motion hooks without 
   assert.match(select, /attributeFilter: \['value', 'disabled', 'selected'\]/);
   assert.match(select, /shell\._zephyrOpenMenu/);
   assert.match(select, /shell\._zephyrCloseMenu/);
+  assert.match(select, /shell\.classList\.remove\('menu-closing'\)/);
+  assert.match(select, /event\.key === 'Escape'[\s\S]*?event\.stopPropagation\(\)/);
   assert.match(select, /className === 'force-hidden'/);
+  assert.match(select, /menu\.scrollTop = Math\.max\(0, selected\.offsetTop - 6\)/);
+  assert.match(select, /if \(!openShell \|\| event\.target === document\) return;/);
+  assert.doesNotMatch(select, /selected\?\.scrollIntoView/);
   const app = read('public/app.js');
   assert.match(app, /function isMotionFilterShell\(shell\)/);
   assert.match(app, /function openToggleSelectMenu\(shell\)/);

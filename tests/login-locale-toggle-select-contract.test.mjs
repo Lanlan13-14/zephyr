@@ -35,7 +35,7 @@ test('login toggle re-click closes, outside click and Escape close too', () => {
     /* Shared trigger toggles and calls the page's Motion adapter. */
     assert.match(shared, /const willOpen = !shell\.classList\.contains\('open'\);/);
     assert.match(shared, /if \(!willOpen\) \{ shell\._zephyrCloseMenu\?\.\(\); return; \}/);
-    assert.match(shared, /if \(!event\.target\.closest\('\.ui-toggle-select'\)\) close\(\);/);
+    assert.match(shared, /if \(!event\.target\.closest\('\.ui-toggle-select, \.ui-toggle-select-menu'\)\) close\(\);/);
     assert.match(shared, /event\.key === 'Escape'/);
     /* Programmatic locale sync must refresh the custom face too. */
     assert.match(js, /syncLoginToggleFace\(el\);/);

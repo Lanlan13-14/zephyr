@@ -4051,12 +4051,17 @@ async function openToggleSelectMenu(shell) {
     if (token !== shell._menuToken) return;
 }
 function closeToggleSelectMenu(shell) {
+    if (!shell) return;
     const trigger = shell.querySelector('.ui-toggle-select-trigger');
     const menu = shell.querySelector('.ui-toggle-select-menu');
     if (!trigger || !menu) return;
     const wasOpen = shell.classList.contains('open');
     shell.classList.remove('open');
     trigger.setAttribute('aria-expanded', 'false');
+    /* A menu promoted out of its shell may already have been restored. The
+     * closing class still has to clear, otherwise the next trigger click is
+     * interpreted as closing this stale shell instead of opening it. */
+    shell.classList.remove('menu-closing');
     if (!wasOpen || !isMotionFilterShell(shell)) return;
     const Motion = sshKeyMotion.engine;
     if (!Motion || sshKeyMotion.failed) return;
