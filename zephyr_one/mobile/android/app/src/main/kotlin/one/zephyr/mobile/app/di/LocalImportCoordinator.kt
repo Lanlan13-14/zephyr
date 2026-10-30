@@ -13,6 +13,7 @@ import one.zephyr.mobile.data.*
 import one.zephyr.mobile.data.db.DevicePreferenceRow
 import one.zephyr.mobile.data.db.MirrorEntityRow
 import one.zephyr.mobile.data.db.ZephyrDatabase
+import one.zephyr.mobile.data.repository.LocalAiRepository
 import one.zephyr.mobile.model.SecretState
 import one.zephyr.mobile.security.LockState
 import one.zephyr.mobile.security.SecretStore
@@ -40,7 +41,14 @@ internal class LocalImportCoordinator(private val target: AccountContainer, priv
     private val sourceGeneration = AccountContainer.generationOf(sourceBinding)
 
     private suspend fun sourceRows(): List<MirrorEntityRow> = withSource { source ->
-        EntityRegistry.entities.flatMap { source.mirrorDao().listByType(it.type, sourceBinding.userId) }
+        val mirror = EntityRegistry.entities.flatMap { source.mirrorDao().listByType(it.type, sourceBinding.userId) }
+        val raw = source.devicePreferenceDao().find(LocalAiRepository.PREF_CATALOG)?.valueJson
+            ?: return@withSource mirror
+        val catalog = LocalImportCatalog.sources(LocalImportCatalog.decode(raw), sourceBinding.userId).map {
+            MirrorEntityRow(it.type, it.id, sourceBinding.userId, 0L, it.payload.toString(), "{}", null, null, 0L)
+        }
+        // The catalog is device authority for its five AI types; prefer it over a stale sync mirror.
+        (catalog + mirror).distinctBy { it.entityType to it.entityId }
     }
 
     private suspend fun <T> withSource(block: suspend (ZephyrDatabase) -> T): T {
@@ -227,9 +235,13 @@ internal class LocalImportCoordinator(private val target: AccountContainer, priv
         assertCurrent()
         val presence = EntityCodec.parse(row.secretPresenceJson)
         val flag = "has" + field.replaceFirstChar { it.uppercaseChar() }
-        if (!EntityCodec.bool(presence, flag, false)) return null
-        val bytes = store.get(SecretRef.of(row.entityType, row.entityId, field))
-            ?: error("Selected source credential is unavailable")
+        val refs = buildList {
+            add(SecretRef.of(row.entityType, row.entityId, field))
+            if (row.entityType == "aiEnv") add(SecretRef.of(LocalAiRepository.ENV_ENTITY, row.entityId, field))
+        }
+        val ref = refs.firstOrNull(store::has)
+        if (ref == null && !EntityCodec.bool(presence, flag, false)) return null
+        val bytes = ref?.let(store::get) ?: error("Selected source credential is unavailable")
         return try {
             assertCurrent()
             SecretState.Replace.fromUtf8(bytes)
