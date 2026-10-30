@@ -1160,6 +1160,7 @@ const userSettingsService = new UserSettingsService(storage.rawDb(), storage, {
 const notesService = new NotesService(storage.rawDb(), authz, () => Date.now(), {
     onOwnedMutation: notifyOwnedLinkMutation,
 });
+webDavProduction.setRestoreServices({ notesService, resourceService });
 const appChangeWakeBridge = getMobileV1ChangeBridge(storage.rawDb());
 const appChangeWakeHub = new AppChangeWakeHub({
     allowedEntityTypes: appChangeWakeBridge.registry.entities.map((entity) => entity.type),
@@ -1388,6 +1389,7 @@ function rebuildAuthServices() {
     Object.assign(notesService, new NotesService(storage.rawDb(), authz, () => Date.now(), {
         onOwnedMutation: notifyOwnedLinkMutation,
     }));
+    webDavProduction.setRestoreServices({ notesService, resourceService });
     Object.assign(oneClientManager, new OneClientManager({
         db: storage.rawDb(),
         fileAgentManager,

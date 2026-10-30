@@ -30,6 +30,18 @@ type Host struct {
 }
 
 type confirmedCallKey struct{}
+type toolCallIDKey struct{}
+
+// WithToolCallID binds a host RPC to one provider tool call, not the whole run.
+// A run can invoke many different tools, so runId alone is not an idempotency key.
+func WithToolCallID(ctx context.Context, callID string) context.Context {
+	return context.WithValue(ctx, toolCallIDKey{}, strings.TrimSpace(callID))
+}
+
+func ToolCallIDFromContext(ctx context.Context) string {
+	callID, _ := ctx.Value(toolCallIDKey{}).(string)
+	return callID
+}
 
 // WithConfirmedCall marks exactly one platform tool call as already approved by
 // the runtime permission engine. Node still validates that the approved tool id
@@ -96,6 +108,7 @@ type CallRequest struct {
 	UserID             string          `json:"userId"`
 	SessionID          string          `json:"sessionId,omitempty"`
 	RunID              string          `json:"runId,omitempty"`
+	CallID             string          `json:"callId,omitempty"`
 	DatabaseGeneration string          `json:"databaseGeneration"`
 	RunNonce           string          `json:"runNonce"`
 	Context            json.RawMessage `json:"context,omitempty"`
@@ -265,6 +278,7 @@ func RegisterFromHost(ctx context.Context, reg *tool.Registry, h *Host, userID, 
 					UserID:             userID,
 					SessionID:          sessionID,
 					RunID:              runID,
+					CallID:             ToolCallIDFromContext(ctx),
 					DatabaseGeneration: databaseGeneration,
 					RunNonce:           runNonce,
 					Context:            contextJSON,

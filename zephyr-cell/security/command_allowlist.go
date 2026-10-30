@@ -1,63 +1,47 @@
 package security
 
-import (
-	"strings"
-	"unicode"
-)
+import "strings"
 
-// CommandAllowlist is the Cell command gate (spec §9 / test gate 6.2).
-// Unknown binaries default deny. This is not a sandbox: it only classifies
-// the argv[0] token before PRoot runs.
+// CommandAllowlist is a narrow gate, not a sandbox. Session.Exec still takes
+// a shell string rather than structured argv, so permit bare commands only.
 type CommandAllowlist struct {
 	allowed map[string]struct{}
 }
 
-// DefaultCellCommands is the conservative interactive/read set. Destructive
-// shell metacommands are not on this list.
+// DefaultCellCommands cannot chain another command or accept shell arguments.
 var DefaultCellCommands = []string{
 	"ls", "pwd", "cat", "head", "tail", "echo", "date", "uname",
 	"whoami", "id", "env", "printenv", "true", "false",
 }
 
-// NewCommandAllowlist builds a denylist-by-default table from exact names.
+func canonicalizeCommand(raw string) string {
+	command := strings.TrimSpace(raw)
+	for _, r := range command {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return ""
+	}
+	return command
+}
+
+// NewCommandAllowlist builds an exact, deny-by-default command table.
 func NewCommandAllowlist(names []string) *CommandAllowlist {
 	allowed := make(map[string]struct{}, len(names))
 	for _, name := range names {
-		key := canonicalizeCommand(name)
-		if key == "" {
-			continue
+		if key := canonicalizeCommand(name); key != "" {
+			allowed[key] = struct{}{}
 		}
-		allowed[key] = struct{}{}
 	}
 	return &CommandAllowlist{allowed: allowed}
 }
 
-func canonicalizeCommand(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return ""
-	}
-	if strings.ContainsAny(trimmed, "/\\") {
-		// Paths are not allowlisted by basename; callers must pass argv[0] as a
-		// bare command or explicitly add the path.
-		return trimmed
-	}
-	var b strings.Builder
-	for _, r := range trimmed {
-		if unicode.IsSpace(r) {
-			break
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-// Allow reports whether argv[0] is on the list. Empty/unknown → false.
-func (c *CommandAllowlist) Allow(argv0 string) bool {
+func (c *CommandAllowlist) Allow(command string) bool {
 	if c == nil || c.allowed == nil {
 		return false
 	}
-	key := canonicalizeCommand(argv0)
+	key := canonicalizeCommand(command)
 	if key == "" {
 		return false
 	}

@@ -833,12 +833,16 @@ function registerAiHostRoutes(app, deps) {
                 userId,
                 sessionId,
                 runId,
+                callId,
                 databaseGeneration,
                 runNonce,
                 context,
                 confirmed,
             } = req.body || {};
             if (!toolName) return res.status(400).json({ ok: false, error: 'tool required' });
+            if (typeof callId !== 'string' || !callId.trim() || callId.length > 256 || /[\0-\x1f\x7f]/.test(callId)) {
+                return res.status(400).json({ ok: false, error: 'callId required', code: 'invalid_tool_call_id' });
+            }
             releaseHostCall = deps.runtimeBridge?.beginHostCall({
                 userId,
                 runId,
@@ -869,6 +873,8 @@ function registerAiHostRoutes(app, deps) {
                 confirmedToolId: confirmed ? String(toolName) : '',
                 sessionId,
                 runId,
+                callId: callId.trim(),
+                databaseGeneration,
                 signal: abortController.signal,
                 hostCallGuard: releaseHostCall?.assertLive,
                 deps,

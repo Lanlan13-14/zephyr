@@ -1,0 +1,34 @@
+{
+  "channels": ["control", "ai", "file-bridge", "owned-sync"],
+  "platforms": ["server", "desktop", "agent", "android", "ios"],
+  "dataDomains": ["local", "owned"],
+  "states": ["bound", "offline", "revoked"],
+  "protocolImpact": ["breaking"],
+  "dataImpact": ["none"],
+  "requiredEvidence": ["L0", "L1", "L2", "L3", "L4", "L5"],
+  "failureInjections": [
+    "cross-account-ai-tool-result-replay",
+    "same-run-distinct-callids",
+    "duplicate-inflight-and-failed-side-effect",
+    "revoked-run-while-waiting-for-result",
+    "cell-shell-composition-and-env-proxy",
+    "webdav-production-manager-to-router-to-note-database",
+    "webdav-foreign-resource-id-collision",
+    "webdav-wrong-password-and-tamper",
+    "agent-parent-symlink-escape",
+    "unsupported-production-vector-must-fail-gate",
+    "apk-go-revision-toolchain-and-binary-vulnerability-scan"
+  ],
+  "compatibility": ["new-server", "new-client"],
+  "rollback": [
+    "Revert the audit-fix commit without deleting user databases.",
+    "Deploy Node and Go AI runtimes together: production host RPC now requires callId.",
+    "Cell arguments remain denied until structured argv is implemented.",
+    "The full production-conformance gate remains blocked until all 245 vectors execute."
+  ],
+  "evidenceLinks": [
+    "docs/zephyr-link/contracts/audit-remediation-20261030.md",
+    ".github/workflows/zephyr-link.yml",
+    ".github/workflows/zephyr-one-mobile.yml"
+  ]
+}

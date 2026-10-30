@@ -68,10 +68,25 @@ async function executeCanonicalTool({ toolId, schema, args, ctx, authorize, exec
     const runId = ctx && ctx.runId;
     const runRegistry = (ctx && ctx.runRegistry) || defaultRunRegistry;
     if (runId && runRegistry && typeof runRegistry.dispatch === 'function') {
+        const toolCallId = String(ctx.toolCallId || ctx.callId || '');
+        if (!toolCallId || toolCallId.length > 256 || /[\0-\x1f\x7f]/.test(toolCallId)) {
+            const error = new Error('缺少有效的工具调用标识');
+            error.code = 'invalid_tool_call_id';
+            error.retryable = false;
+            throw error;
+        }
         const dispatched = await runRegistry.dispatch({
+            userId: ctx.user?.userId || ctx.user?.id || '',
+            sessionId: ctx.sessionId || '',
             runId: String(runId),
+            toolCallId,
             tool: String(toolId),
             input,
+            authorize,
+            generation: ctx.databaseGeneration || '',
+            // The canonical confirmation gate above is authoritative here.
+            // The standalone registry approval API remains for noncanonical callers.
+            highRisk: false,
             execute: async () => {
                 const value = await execute();
                 return toToolResult(toolId, policy, value, Date.now() - startedAt);

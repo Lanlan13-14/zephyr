@@ -685,7 +685,7 @@ function jailFileParams(conn, params) {
     const next = { ...params };
     for (const key of ['path', 'from', 'to', 'relativePath']) {
         if (next[key] == null || next[key] === '') continue;
-        const resolved = resolveUnderShare(root, String(next[key]));
+        const resolved = resolveUnderShare(root, String(next[key]), { followSymlinks: true });
         if (!resolved.ok) {
             throw new AgentError('path_escape', 'path escapes the Agent share root');
         }

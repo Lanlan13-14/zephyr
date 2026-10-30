@@ -30,6 +30,9 @@ func runPlatformConfirmationCase(t *testing.T, policy permission.Policy, auto bo
 		case "/internal/ai-host/v1/call":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["callId"] != "c1" {
+				t.Errorf("provider call id was lost on host RPC: %#v", body)
+			}
 			confirmed, _ = body["confirmed"].(bool)
 			if !confirmed {
 				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": map[string]any{

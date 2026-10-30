@@ -21,19 +21,23 @@
 
 on:
   push:
-    branches: [main]
+    branches: [main, zephyr-link-foundation-v1]
     paths:
       - 'zephyr_one/mobile/**'
       - 'zephyr-ai/**'
       - 'zephyr-link/**'
+      - 'scripts/check-link-apk-buildinfo.mjs'
+      - 'scripts/rebuild-mobile-go-runtimes.sh'
       - '.github/workflows/zephyr-one-mobile.yml'
       - '.github/scripts/**'
   pull_request:
-    branches: [main]
+    branches: [main, zephyr-link-foundation-v1]
     paths:
       - 'zephyr_one/mobile/**'
       - 'zephyr-ai/**'
       - 'zephyr-link/**'
+      - 'scripts/check-link-apk-buildinfo.mjs'
+      - 'scripts/rebuild-mobile-go-runtimes.sh'
       - '.github/workflows/zephyr-one-mobile.yml'
       - '.github/scripts/**'
   workflow_dispatch:
@@ -199,63 +203,10 @@ jobs:
         with:
           # zephyr-link needs the standard-library crypto/mlkem, which landed in Go 1.24.
           go-version: '1.26.10'
-      - name: Rebuild embedded Go runtimes and verify they are current
+      - name: Rebuild embedded Go runtimes from pristine source
         shell: bash
         working-directory: .
-        run: |
-          set -euo pipefail
-          # Each embedded Go runtime is a real binary committed under jniLibs. They were once a
-          # stale build CI never rebuilt, so every later fix silently shipped nothing. For each
-          # module: rebuild from the pinned source, then verify the committed binary's embedded
-          # vcs.revision resolves to the same source tree as HEAD (tree-hash compare, so no
-          # cross-environment reproducibility assumption). Drift fails the build.
-          check_runtime() {
-            local module="$1" entry="$2" soname="$3"
-            local so="zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/${soname}"
-            test -f "$so" || { echo "::error::missing ${so}"; exit 1; }
-            # A committed runtime embeds its own commit hash, so the commit that
-            # refreshes it can never satisfy the tree compare below: building it
-            # stamps the parent, and committing that stamp moves HEAD. When the
-            # recorded source tree differs from HEAD, rebuild in place from this
-            # checkout first. The build is clean here, so the rebuilt binary
-            # records HEAD and the check below becomes a confirmation rather
-            # than a deadlock. The APK is packaged afterwards from this same
-            # tree, so what ships is what was just built.
-            local prior_rev prior_tree head_tree
-            prior_rev="$(go version -m "$so" | sed -n 's/.*vcs.revision=\([0-9a-f]*\).*/\1/p')"
-            head_tree="$(git rev-parse "HEAD:${module}")"
-            prior_tree=""
-            if [ -n "$prior_rev" ]; then
-              git cat-file -e "$prior_rev^{commit}" 2>/dev/null || git fetch -q --depth 1 origin "$prior_rev" || true
-              prior_tree="$(git rev-parse "${prior_rev}:${module}" 2>/dev/null || true)"
-            fi
-            if [ "$prior_tree" != "$head_tree" ]; then
-              echo "${soname}: source moved ${prior_rev:-none} -> HEAD, rebuilding"
-              (cd "$module" && CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
-                go build -trimpath -ldflags='-s -w' -o "$so" "$entry")
-            fi
-            local tmp; tmp="$(mktemp -u).so"
-            (cd "$module" && CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
-              go build -trimpath -ldflags='-s -w' -o "$tmp" "$entry")
-            test -s "$tmp"; rm -f "$tmp"
-            local committed_rev committed_mod
-            committed_rev="$(go version -m "$so" | sed -n 's/.*vcs.revision=\([0-9a-f]*\).*/\1/p')"
-            committed_mod="$(go version -m "$so" | sed -n 's/.*vcs.modified=\([a-z]*\).*/\1/p')"
-            echo "${soname}: revision=$committed_rev modified=$committed_mod"
-            test -n "$committed_rev" || { echo "::error::${soname} carries no vcs.revision"; exit 1; }
-            test "$committed_mod" = "false" || { echo "::error::${soname} built from a dirty tree"; exit 1; }
-            git cat-file -e "$committed_rev^{commit}" 2>/dev/null || git fetch -q --depth 1 origin "$committed_rev"
-            local head_tree so_tree
-            head_tree="$(git rev-parse "HEAD:${module}")"
-            so_tree="$(git rev-parse "${committed_rev}:${module}")"
-            test "$head_tree" = "$so_tree" || {
-              echo "::error::${soname} built from ${module}@$committed_rev (tree $so_tree) != HEAD tree $head_tree"
-              echo "Rebuild: (cd ${module} && CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o ../${so} ${entry}) and commit."
-              exit 1
-            }
-          }
-          check_runtime zephyr-ai ./cmd/zephyr-ai-android libzephyr_ai_runtime.so
-          check_runtime zephyr-link ./cmd/zephyr-link-android libzephyr_link.so
+        run: bash scripts/rebuild-mobile-go-runtimes.sh
 
       - name: Build JNI c-shared AI runtime into jniLibs
         shell: bash
@@ -277,9 +228,9 @@ jobs:
           export CGO_CFLAGS="-I${SYSROOT}/usr/include -I${SYSROOT}/usr/include/aarch64-linux-android"
           export CGO_LDFLAGS="--sysroot=${SYSROOT}"
           test -f "${SYSROOT}/usr/include/jni.h"
-          out="zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_ai_runtime_jni.so"
-          (cd zephyr-ai && CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
-            go build -buildmode=c-shared -trimpath -ldflags='-s -w' -o "../${out}" ./cmd/zephyr-ai-jni)
+          out="$GITHUB_WORKSPACE/zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_ai_runtime_jni.so"
+          (cd "$RUNNER_TEMP/zephyr-mobile-go-source/zephyr-ai" && CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
+            go build -mod=readonly -buildmode=c-shared -trimpath -ldflags='-s -w' -o "$out" ./cmd/zephyr-ai-jni)
           test -s "$out"
           # Must be a shared object with the JNI exports Kotlin binds.
           if file "$out" | grep -q 'pie executable'; then
@@ -398,6 +349,30 @@ jobs:
       # per-runner debug.keystore. That is what lets successive pre-releases
       # update each other. Upload the APK so a green run yields a testable
       # build and the release job has something to attach.
+      - name: Inspect and scan Go runtimes extracted from installable APK
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          mkdir -p .link-native-evidence
+          git rev-parse HEAD > .link-native-evidence/revision.txt
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          apk=(zephyr_one/mobile/android/app/build/outputs/apk/prerelease/*.apk)
+          test "${#apk[@]}" -eq 1
+          for name in libzephyr_link.so libzephyr_ai_runtime.so libzephyr_ai_runtime_jni.so; do
+            unzip -p "${apk[0]}" "lib/arm64-v8a/$name" > ".link-native-evidence/$name"
+            test -s ".link-native-evidence/$name"
+            go version -m ".link-native-evidence/$name" > ".link-native-evidence/$name.buildinfo.txt"
+            govulncheck -mode=binary -format=text ".link-native-evidence/$name" > ".link-native-evidence/$name.vuln.txt"
+          done
+          node scripts/check-link-apk-buildinfo.mjs .link-native-evidence .link-native-evidence/revision.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-go-binary-evidence
+          path: .link-native-evidence/*.txt
+          if-no-files-found: warn
+
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4

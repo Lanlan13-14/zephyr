@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -102,4 +105,27 @@ test('dotdot path is path_escape before RPC', async () => {
     (err) => err && err.code === 'path_escape',
   );
   assert.equal(conn.calls.length, 0);
+});
+
+
+test('real escaping parent symlink is rejected before legacy and v2 RPC', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zephyr-agent-jail-'));
+  const root = path.join(dir, 'share');
+  const outside = path.join(dir, 'outside');
+  fs.mkdirSync(root);
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, path.join(root, 'escape'), 'dir');
+  const conn = fakeConn();
+  conn.share.root = root;
+  conn.wireVersion = 2;
+  conn.supportsV2 = true;
+  conn.callBinaryV2 = () => { assert.fail('must not reach v2 RPC'); };
+  const manager = managerWith(conn);
+  try {
+    await assert.rejects(manager.callAgent('agent-1', 'write', { path: 'escape/new-file' }), (error) => error.code === 'path_escape');
+    await assert.rejects(manager.callAgentV2('agent-1', 'mkdir', { path: 'escape/new-dir' }).promise, (error) => error.code === 'path_escape');
+    assert.equal(conn.calls.length, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

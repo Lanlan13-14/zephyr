@@ -1,116 +1,95 @@
 'use strict';
 
 const { openPlainArchive } = require('./webdav-backup-provider');
-const {
-    detectVaultEnvelope,
-    unwrapVaultArchive,
-    WebDavVaultPasswordError,
-} = require('./webdav-vault-password');
-
-const RESTORE_COLLECTIONS = Object.freeze([
-    'connections', 'proxies', 'sshKeys', 'jumpHosts', 'notes',
-]);
-
-function emptyCounts() {
-    return Object.fromEntries(RESTORE_COLLECTIONS.map((name) => [name, 0]));
+const { detectVaultEnvelope, unwrapVaultArchive, WebDavVaultPasswordError } = require('./webdav-vault-password');
+const RESTORE_COLLECTIONS = Object.freeze(['connections', 'proxies', 'sshKeys', 'jumpHosts', 'notes']);
+const OWNER_FIELDS = ['ownerId', 'ownerUserId', 'owner_id', 'owner_user_id', 'userId', 'user_id'];
+function restoreError(code, message, status = 400) {
+    return Object.assign(new Error(message), { code, status, retryable: false });
 }
-
-function noteIdOf(row) {
-    return String(row?.id || row?.noteId || row?.note_id || '');
-}
-
-function resourceIdOf(row) {
-    return String(row?.id || '');
-}
-
-function applyNotes(notesService, user, records) {
-    let count = 0;
-    for (const row of records || []) {
-        const id = noteIdOf(row);
-        if (!id) continue;
-        const patch = {
-            id,
-            title: row.title,
-            content: row.content,
-            groupPath: row.groupPath || row.group_path,
-            tags: row.tags,
-            linkedConnectionIds: row.linkedConnectionIds || row.linked_connection_ids,
-            shareWithUsers: row.shareWithUsers,
-            shareWithAdmins: row.shareWithAdmins,
-            allowAiRead: row.allowAiRead,
-            allowAiWrite: row.allowAiWrite,
-        };
-        const ctx = { remoteMerge: true };
-        try {
-            const current = notesService.get(user, id, { includeContent: false });
-            notesService.update(user, id, {
-                ...patch,
-                expectedRevision: Number(current.revision) || 1,
-            }, ctx);
-        } catch {
-            notesService.create(user, patch, ctx);
+function idOf(row, type) { return String(type === 'notes' ? row.id || row.noteId || row.note_id || '' : row.id || ''); }
+function assertOwner(row, userId) {
+    for (const field of OWNER_FIELDS) {
+        if (row[field] != null && String(row[field]) !== userId) {
+            throw restoreError('webdav_backup_scope_invalid', 'Record is outside the restore user scope');
         }
-        count += 1;
     }
-    return count;
 }
-
-function applyOwned(resourceService, user, type, records) {
-    let count = 0;
-    for (const row of records || []) {
-        const id = resourceIdOf(row);
-        if (!id) continue;
-        const ctx = { remoteMerge: true };
-        if (type === 'connection') {
-            const existing = resourceService.storage.getConnectionById(id);
-            if (existing && existing.ownerUserId === user.userId) {
-                resourceService.updateConnection(user, id, () => ({ ...existing, ...row, id }), ctx);
-            } else {
-                resourceService.createConnection(user, { ...row, id }, ctx);
-            }
-            count += 1;
-            continue;
-        }
-        try {
-            resourceService.updateOwned(user, type, id, { ...row, id }, ctx);
-        } catch {
-            resourceService.createOwned(user, type, { ...row, id }, ctx);
-        }
-        count += 1;
-    }
-    return count;
+function resourceRow(resources, type, id) {
+    const storage = resources.storage;
+    if (type === 'connection') return storage.getConnectionById(id);
+    if (type === 'proxy') return storage.getProxyRaw(id);
+    if (type === 'sshKey') return storage.getSshKeyRaw(id);
+    if (type === 'jumpHost') return storage.listJumpHosts().find((item) => item.id === id) || null;
+    throw restoreError('webdav_backup_format_invalid', 'Unknown restore type');
 }
-
-function applyUserSnapshot(payload, {
-    user,
-    notesService = null,
-    resourceService = null,
-} = {}) {
+function requireService(present, name) {
+    if (!present) throw restoreError('webdav_restore_unavailable', `Restore requires ${name}`, 503);
+}
+function applyUserSnapshot(payload, { user, notesService = null, resourceService = null } = {}) {
     if (!user?.userId) throw new TypeError('applyUserSnapshot requires user');
-    const collections = payload && typeof payload === 'object' ? (payload.collections || payload) : {};
-    const restored = emptyCounts();
-    if (notesService) restored.notes = applyNotes(notesService, user, collections.notes);
-    if (resourceService) {
-        restored.connections = applyOwned(resourceService, user, 'connection', collections.connections);
-        restored.proxies = applyOwned(resourceService, user, 'proxy', collections.proxies);
-        restored.sshKeys = applyOwned(resourceService, user, 'sshKey', collections.sshKeys);
-        restored.jumpHosts = applyOwned(resourceService, user, 'jumpHost', collections.jumpHosts);
+    const userId = String(user.userId);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        throw restoreError('webdav_backup_format_invalid', 'Invalid snapshot');
     }
-    return { ok: true, restored };
+    assertOwner(payload, userId);
+    const collections = payload.collections || payload;
+    const records = {};
+    // Validate every collection and every existing id BEFORE the first write.
+    // createOwned is an upsert: a catch-all update/create fallback steals rows.
+    const typeFor = { proxies: 'proxy', sshKeys: 'sshKey', jumpHosts: 'jumpHost', connections: 'connection' };
+    for (const name of RESTORE_COLLECTIONS) {
+        const rows = collections[name] ?? [];
+        if (!Array.isArray(rows)) throw restoreError('webdav_backup_format_invalid', 'Invalid collection');
+        if (rows.length) requireService(name === 'notes' ? notesService : resourceService, name === 'notes' ? 'NotesService' : 'ResourceService');
+        const seen = new Set();
+        records[name] = rows.map((row) => {
+            if (!row || typeof row !== 'object' || Array.isArray(row)) throw restoreError('webdav_backup_format_invalid', 'Invalid record');
+            assertOwner(row, userId);
+            const id = idOf(row, name);
+            if (!id || seen.has(id)) throw restoreError('webdav_backup_format_invalid', 'Missing or duplicate record id');
+            seen.add(id);
+            const existing = name === 'notes'
+                ? notesService.stmtGet.get(id)
+                : resourceRow(resourceService, typeFor[name], id);
+            if (existing) assertOwner(existing, userId);
+            return { row, id, existing };
+        });
+    }
+    const restored = Object.fromEntries(RESTORE_COLLECTIONS.map((name) => [name, 0]));
+    // Publish restoration as a local mutation, including owned-sync outbox.
+    // Dependencies precede connections; jump hosts can refer to connections.
+    const ctx = {};
+    for (const name of ['proxies', 'sshKeys', 'connections', 'jumpHosts', 'notes']) {
+        for (const { row, id, existing } of records[name]) {
+            if (name === 'notes') {
+                const patch = { id, title: row.title, content: row.content,
+                    groupPath: row.groupPath ?? row.group_path, tags: row.tags,
+                    linkedConnectionIds: row.linkedConnectionIds,
+                    shareWithUsers: false, shareWithAdmins: false,
+                    allowAiRead: false, allowAiWrite: false };
+                if (existing) {
+                    if (existing.deleted_at) notesService.restore(user, id, ctx);
+                    const current = notesService.get(user, id, { includeContent: false });
+                    notesService.update(user, id, { ...patch, expectedRevision: current.revision }, ctx);
+                } else notesService.create(user, patch, ctx);
+            } else {
+                // Restore private; an archive cannot grant new sharing rights.
+                const data = { ...row, id, ownerUserId: userId, visibility: 'private', shareWithUsers: false, shareWithAdmins: false };
+                if (name === 'connections') {
+                    if (existing) resourceService.updateConnection(user, id, (current) => ({ ...current, ...data }), ctx);
+                    else resourceService.createConnection(user, data, ctx);
+                } else if (existing) resourceService.updateOwned(user, typeFor[name], id, data, ctx);
+                else resourceService.createOwned(user, typeFor[name], data, ctx);
+            }
+            restored[name] += 1;
+        }
+    }
+    const unsupportedCollections = Object.keys(collections).filter((name) => !RESTORE_COLLECTIONS.includes(name) && Array.isArray(collections[name]) && collections[name].length > 0);
+    return { ok: true, restored, unsupportedCollections };
 }
-
 async function openVaultPayload(body, vaultPassword) {
-    const kind = detectVaultEnvelope(body);
-    if (kind !== 'password-wrapped') {
-        const err = new WebDavVaultPasswordError('webdav_vault_password_invalid');
-        throw err;
-    }
-    const zip = unwrapVaultArchive(body, vaultPassword);
-    return openPlainArchive(zip);
+    if (detectVaultEnvelope(body) !== 'password-wrapped') throw new WebDavVaultPasswordError('webdav_vault_password_invalid');
+    return openPlainArchive(unwrapVaultArchive(body, vaultPassword));
 }
-
-module.exports = {
-    RESTORE_COLLECTIONS,
-    applyUserSnapshot,
-    openVaultPayload,
-};
+module.exports = { RESTORE_COLLECTIONS, applyUserSnapshot, openVaultPayload };

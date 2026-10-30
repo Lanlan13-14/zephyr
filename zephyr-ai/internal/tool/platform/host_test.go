@@ -47,6 +47,16 @@ func TestListToolsCarriesRemoteDesktopContext(t *testing.T) {
 	}
 }
 
+func TestToolCallIDContext(t *testing.T) {
+	ctx := WithToolCallID(context.Background(), "provider-call-1")
+	if got := ToolCallIDFromContext(ctx); got != "provider-call-1" {
+		t.Fatalf("ToolCallIDFromContext() = %q", got)
+	}
+	if got := ToolCallIDFromContext(context.Background()); got != "" {
+		t.Fatalf("empty context call id = %q", got)
+	}
+}
+
 func TestCallPropagatesBusiness403FromNotesGate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -147,5 +157,45 @@ func TestRegisterFromHostInjectsIdentityForToolDiscovery(t *testing.T) {
 	}
 	if got["aiChatSessionId"] != "chat-1" {
 		t.Fatalf("original browser context was lost: %#v", got)
+	}
+}
+
+func TestRegisteredHostToolTransmitsPerCallIdentity(t *testing.T) {
+	var requests []CallRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/ai-host/v1/tools" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "tools": []map[string]any{{
+				"name": "connection_list_v1", "parameters": map[string]any{"type": "object"}, "readOnly": true, "risk": "low",
+			}}})
+			return
+		}
+		var req CallRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Error(err)
+		}
+		requests = append(requests, req)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": map[string]any{"ok": true}})
+	}))
+	defer srv.Close()
+	reg := tool.NewRegistry()
+	if err := RegisterFromHost(context.Background(), reg, NewHost(srv.URL, ""), "u", "s", "r", "g", "n", nil); err != nil {
+		t.Fatal(err)
+	}
+	registered, ok := reg.Get("connection_list_v1")
+	if !ok {
+		t.Fatal("missing registered tool")
+	}
+	for _, callID := range []string{"provider-call-1", "provider-call-2"} {
+		if _, err := registered.Execute(WithToolCallID(context.Background(), callID), json.RawMessage(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(requests) != 2 || requests[0].CallID != "provider-call-1" || requests[1].CallID != "provider-call-2" {
+		t.Fatalf("per-call identity missing: %+v", requests)
+	}
+	for _, req := range requests {
+		if req.UserID != "u" || req.SessionID != "s" || req.RunID != "r" || req.DatabaseGeneration != "g" {
+			t.Fatalf("run scope changed: %+v", req)
+		}
 	}
 }

@@ -1,44 +1,61 @@
-name: Zephyr Link (Go)
+name: Zephyr Link validation
 
 on:
   push:
     branches: [main, zephyr-newui, zephyr-link-foundation-v1]
-    paths:
-      - 'zephyr-link/**'
-      - 'link-v2-*.js'
-      - 'agent-policy-engine.js'
-      - 'webdav-writer-grade.js'
-      - 'tests/link-v2-sync-envelope.test.mjs'
-      - 'tests/agent-policy-engine.test.mjs'
-      - 'tests/webdav-writer-grade.test.mjs'
-      - 'tests/link-v2-sync-bridge.test.mjs'
-      - 'scripts/gen-*-vectors.mjs'
-      - 'docs/zephyr-link/**'
-      - '.github/workflows/zephyr-link.yml'
   pull_request:
-    branches: [main, zephyr-newui]
-    paths:
-      - 'zephyr-link/**'
-      - 'link-v2-*.js'
-      - 'agent-policy-engine.js'
-      - 'webdav-writer-grade.js'
-      - 'tests/link-v2-sync-envelope.test.mjs'
-      - 'tests/agent-policy-engine.test.mjs'
-      - 'tests/webdav-writer-grade.test.mjs'
-      - 'tests/link-v2-sync-bridge.test.mjs'
-      - 'scripts/gen-*-vectors.mjs'
-      - 'docs/zephyr-link/**'
-      - '.github/workflows/zephyr-link.yml'
+    branches: [main, zephyr-newui, zephyr-link-foundation-v1]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: link-validation-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  conformance:
+  baseline-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+      - run: npm ci
+      - name: New behavioral tests must fail against the reviewed implementation
+        run: |
+          set -eu
+          baseline="$RUNNER_TEMP/link-ac62b87d"
+          git worktree add --detach "$baseline" ac62b87d4eea1eeed485b661854d6dceeb7e3e05
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$baseline/node_modules"
+          for file in ai-run-idempotency webdav-vault-restore-production agent-file-policy-gate; do
+            cp "tests/$file.test.mjs" "$baseline/tests/$file.test.mjs"
+          done
+          node scripts/prove-link-regressions.mjs "$baseline"
+          cp zephyr-cell/security/command_allowlist_test.go "$baseline/zephyr-cell/security/command_allowlist_test.go"
+          if (cd "$baseline/zephyr-cell" && go test ./security -run TestCommandAllowlist_DeniesEntireShellString -count=1) > .link-evidence/baseline-cell.txt 2>&1; then
+            echo 'Cell baseline incorrectly passed the new negative tests' >&2
+            exit 1
+          fi
+          rg 'full shell string must be denied' .link-evidence/baseline-cell.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: link-baseline-regressions
+          path: .link-evidence/
+          if-no-files-found: error
+
+  specification:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -47,66 +64,113 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Install schema validation dependencies
-        run: npm ci --ignore-scripts
-      - name: Verify Link specification and anti-bypass contracts
+      - run: npm ci --ignore-scripts
+      - name: Verify specification and anti-bypass reference contracts
         run: |
           node docs/zephyr-link/verify-docs.mjs
           node docs/zephyr-link/conformance/run-conformance.mjs
           node docs/zephyr-link/conformance/verify-conformance.mjs
           node docs/zephyr-link/conformance/run-source-mutations.mjs
-          node docs/zephyr-link/conformance/run-production-conformance.mjs
-          node --test tests/link-v2-sync-envelope.test.mjs tests/agent-policy-engine.test.mjs tests/webdav-writer-grade.test.mjs tests/link-v2-sync-bridge.test.mjs
 
-  test:
+  product-node:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [sync, webdav, agent, ai]
     steps:
       - uses: actions/checkout@v5
-
-      # ZSL/2 needs crypto/mlkem, which landed in the Go standard library in 1.24.
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.26.10'
-          cache-dependency-path: zephyr-link/go.sum
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
+      - run: npm ci
+      - name: Product regression tests (not reference-only)
+        env:
+          LINK_TEST_GROUP: ${{ matrix.group }}
+        run: node scripts/run-link-product-tests.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: link-node-${{ matrix.group }}
+          path: .link-evidence/
+          if-no-files-found: error
 
-      - name: Install Node deps (interop vectors come from the Node reference)
-        run: npm ci --ignore-scripts
-
-      - name: Vet and unit-test the Go core
-        working-directory: zephyr-link
+  go-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [zephyr-link, zephyr-cell, zephyr-ai]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - name: Vet and run actual Go product module
+        working-directory: ${{ matrix.module }}
         run: |
           go vet ./...
-          go test ./...
-
-      - name: Install govulncheck for reachable vulnerability analysis
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-
-      - name: Check Link vulnerabilities with the actual toolchain
-        working-directory: zephyr-link
-        run: govulncheck -mode=source -format=text ./...
-
-      # The interop vectors are the contract that the Go and Node runtimes share a
-      # wire format. Regenerate them from the Node reference and fail on any drift,
-      # so neither side can silently change a label, table or encoding rule.
-      - name: Verify Go<->Node interop vectors are current
+          go test -count=1 ./...
+      - name: Source vulnerability analysis
+        working-directory: ${{ matrix.module }}
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          govulncheck -mode=source -format=text ./...
+      - name: Verify Go and Node interop vectors
+        if: matrix.module == 'zephyr-link'
         run: |
           node scripts/gen-zsl-vectors.mjs
           node scripts/gen-codec-vectors.mjs
           node scripts/gen-cdc-vectors.mjs
-          if ! git diff --quiet -- zephyr-link/internal/*/testdata/; then
-            echo "::error::interop vectors drifted from the Node reference; re-run scripts/gen-*-vectors.mjs and commit"
-            git diff -- zephyr-link/internal/*/testdata/ | head -50
-            exit 1
-          fi
+          git diff --exit-code -- zephyr-link/internal/
+      - name: Cross-compile Android source
+        if: matrix.module != 'zephyr-cell'
+        working-directory: ${{ matrix.module }}
+        run: CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build ./...
 
-      # Build the Android-embeddable artifact to prove the mobile target compiles.
-      - name: Cross-compile the Link core for Android arm64
-        working-directory: zephyr-link
+  agent-filesystem:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: zephyr_agent
+      - name: Analyze actual file provider and run filesystem tests
+        working-directory: zephyr_agent
         run: |
-          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build ./...
+          dart analyze lib/fs/file_provider.dart test/file_provider_test.dart
+          flutter test test/file_provider_test.dart
+
+  production-release-gate:
+    # Intentionally independent of passing unit/reference jobs. Unsupported
+    # required vectors are a release blocker, never an allowed-failure result.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - name: Require complete production conformance
+        run: |
+          mkdir -p .link-evidence
+          node docs/zephyr-link/conformance/run-production-conformance.mjs > .link-evidence/production-conformance.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: link-production-release-gate
+          path: .link-evidence/
+          if-no-files-found: error

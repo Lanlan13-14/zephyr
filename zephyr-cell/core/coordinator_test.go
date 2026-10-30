@@ -414,3 +414,33 @@ func TestQuotaTracker_OutputTruncation(t *testing.T) {
 		t.Errorf("allowed: want %d, got %d", 100*1024, allowed)
 	}
 }
+
+func TestSession_UnsafeShellNeverReachesEngine(t *testing.T) {
+	calls := 0
+	eng := &testEngine{
+		name: "test",
+		execFn: func(_ context.Context, _, _ string, _ engine.ExecLimits) (*engine.ExecResult, error) {
+			calls++
+			return &engine.ExecResult{ExitCode: 0}, nil
+		},
+	}
+	coord := NewCoordinator(eng, cell.CapsDirect, "0.1.0", NewMemoryAuditStore())
+	sess, err := coord.SpawnSession(context.Background(), cell.Template{Limits: cell.DefaultLimits()}, "jail")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"echo ok; rm target", "cat file > target", "env rm target", "env -S sh"} {
+		if _, err := sess.Exec(context.Background(), command, engine.ExecLimits{}); err == nil {
+			t.Errorf("must reject %q", command)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("unsafe commands reached engine %d times", calls)
+	}
+	if _, err := sess.Exec(context.Background(), "pwd", engine.ExecLimits{}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("allowed bare command reached engine %d times", calls)
+	}
+}

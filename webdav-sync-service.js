@@ -47,6 +47,13 @@ const PUBLIC_MESSAGES = Object.freeze({
     webdav_request_aborted: 'The WebDAV request was cancelled.',
     webdav_sync_unknown: 'The WebDAV backup may have completed. Verify the remote backup before retrying.',
     webdav_multiwriter_requires_B2: 'Multi-writer WebDAV is not enabled in this release.',
+    webdav_restore_requires_password_vault: 'Only password-encrypted WebDAV vault archives can be restored.',
+    webdav_restore_unavailable: 'WebDAV restore services are unavailable.',
+    webdav_restore_conflict: 'A restored resource id belongs to another account.',
+    webdav_backup_scope_invalid: 'The vault archive is outside the authenticated account scope.',
+    webdav_backup_format_invalid: 'The vault archive format is invalid.',
+    webdav_vault_password_required: 'A vault password is required.',
+    webdav_vault_password_invalid: 'The vault password is incorrect or the archive is corrupted.',
 });
 
 class WebDavSyncError extends Error {
@@ -1180,17 +1187,25 @@ class WebDavSyncService {
             try {
                 payload = await openVaultPayload(response.body, vaultPassword);
             } catch (error) {
+                if (error?.code === 'webdav_restore_requires_password_vault') fail(501, error.code);
                 fail(400, error?.code === 'webdav_vault_password_invalid'
                     ? 'webdav_vault_password_invalid'
                     : 'webdav_backup_failed');
             }
+            this._assertOperation(operation);
             const user = { userId: String(userId) };
             const apply = () => applyUserSnapshot(payload, {
                 user,
                 notesService: this.notesService,
                 resourceService: this.resourceService,
             });
-            return typeof this.db.transaction === 'function' ? this.db.transaction(apply)() : apply();
+            try {
+                return typeof this.db.transaction === 'function' ? this.db.transaction(apply)() : apply();
+            } catch (error) {
+                const restoreCodes = new Set(['webdav_restore_unavailable', 'webdav_restore_conflict', 'webdav_backup_scope_invalid', 'webdav_backup_format_invalid']);
+                if (restoreCodes.has(error?.code)) fail(error.status || 400, error.code);
+                throw error;
+            }
         }, callerOperation);
     }
 }

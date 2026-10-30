@@ -30,7 +30,7 @@ func TestPlatformL2BackendExecSuccess(t *testing.T) {
 	}}
 	b := &PlatformL2Backend{Host: host, UserID: "u1", SessionID: "s1", RunID: "r1", DatabaseGeneration: "g1", RunNonce: "n1"}
 
-	res, err := b.Exec(context.Background(), "cell1", ExecRequest{Command: "grep", Args: []string{"foo", "bar"}})
+	res, err := b.Exec(platform.WithToolCallID(context.Background(), "call-1"), "cell1", ExecRequest{Command: "grep", Args: []string{"foo", "bar"}})
 	if err != nil {
 		t.Fatalf("exec: %v", err)
 	}
@@ -52,6 +52,9 @@ func TestPlatformL2BackendExecSuccess(t *testing.T) {
 	}
 	if host.gotReq.UserID != "u1" || host.gotReq.SessionID != "s1" || host.gotReq.RunID != "r1" {
 		t.Fatalf("identity not propagated: %+v", host.gotReq)
+	}
+	if host.gotReq.CallID != "call-1" {
+		t.Fatalf("call id not propagated: %+v", host.gotReq)
 	}
 	if host.gotReq.DatabaseGeneration != "g1" || host.gotReq.RunNonce != "n1" {
 		t.Fatalf("nonce/gen not propagated: %+v", host.gotReq)

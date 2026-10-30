@@ -1822,7 +1822,10 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
             schema: toolDefinitions(deps.storage.getSettings().ai || {}).find((item) => item.function?.name === toolName)?.function?.parameters,
             args,
             ctx: { ...ctx, requireConfirmation: () => requireCanonicalConfirmation(toolName, args, ctx, deps) },
-            authorize: () => canonicalToolAuthorization(toolName, args, ctx, deps),
+            authorize: () => {
+                assertHostCallLive(ctx);
+                return canonicalToolAuthorization(toolName, args, ctx, deps);
+            },
             execute: () => executeAiTool(toolName, args, { ...ctx, _extendedCanonical: true }, deps),
             policy: extendedPolicy,
         });
@@ -4389,6 +4392,8 @@ async function executeAiToolForHost(toolName, args = {}, hostCtx = {}) {
         responseMode: hostCtx.responseMode || 'chat',
         sessionId: hostCtx.sessionId,
         runId: hostCtx.runId,
+        toolCallId: hostCtx.callId || '',
+        databaseGeneration: hostCtx.databaseGeneration || '',
     };
     return executeAiTool(toolName, args, ctx, hostDeps);
 }

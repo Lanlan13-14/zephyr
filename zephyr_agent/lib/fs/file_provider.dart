@@ -103,17 +103,43 @@ class DesktopFileProvider extends ZephyrFileProvider {
   }
 
   String _resolve(String virtualPath) {
-    final cleaned = virtualPath
-        .replaceAll('\\', '/')
+    final requested = virtualPath.replaceAll('\\', '/');
+    if (requested.contains('\u0000') ||
+        requested.split('/').contains('..') ||
+        (io.Platform.isWindows && requested.contains(':'))) {
+      throw FileProviderException('invalid_path', 'Path traversal blocked');
+    }
+    final cleaned = requested
         .split('/')
-        .where((s) => s.isNotEmpty && s != '.' && s != '..')
+        .where((s) => s.isNotEmpty && s != '.')
         .join('/');
     if (cleaned.isEmpty) return _normalizedRoot;
     final joined = _path.join(_normalizedRoot, cleaned);
     return _path.normalize(joined);
   }
 
-  void _validatePath(String virtualPath) {
+  bool _hasSymlinkInPath(String resolved, {bool includeLeaf = true}) {
+    try {
+      final relative = _path.relative(resolved, from: _normalizedRoot);
+      if (relative == '.' || relative.isEmpty) return false;
+      final parts = relative.split(_path.separator).where((part) => part.isNotEmpty);
+      var current = _normalizedRoot;
+      final values = parts.toList(growable: false);
+      final length = includeLeaf ? values.length : values.length - 1;
+      for (var i = 0; i < length; i += 1) {
+        current = _path.join(current, values[i]);
+        if (io.FileSystemEntity.typeSync(current, followLinks: false) ==
+            io.FileSystemEntityType.link) {
+          return true;
+        }
+      }
+      return false;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  void _validatePath(String virtualPath, {bool allowLeafSymlink = false}) {
     final resolved = _resolve(virtualPath);
     final root = _normalizedRoot;
     if (resolved == root) return;
@@ -142,6 +168,9 @@ class DesktopFileProvider extends ZephyrFileProvider {
       if (!ok) {
         throw FileProviderException('invalid_path', 'Path traversal blocked');
       }
+    }
+    if (_hasSymlinkInPath(resolved, includeLeaf: !allowLeafSymlink)) {
+      throw FileProviderException('invalid_path', 'Symbolic links are outside the shared directory contract');
     }
   }
 

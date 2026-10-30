@@ -6,6 +6,47 @@ import 'package:zephyr_agent/fs/file_provider.dart';
 
 void main() {
   group('DesktopFileProvider', () {
+    test('blocks symlinked directories and leaf files from escaping root', () async {
+      final parent = await Directory.systemTemp.createTemp('zephyr_agent_jail_');
+      final root = Directory('${parent.path}/share');
+      final outside = Directory('${parent.path}/outside');
+      await root.create();
+      await outside.create();
+      final secret = File('${outside.path}/secret.txt');
+      await secret.writeAsString('private');
+      try {
+        final linkedDirectory = Link('${root.path}/escape');
+        await linkedDirectory.create(outside.path);
+        final provider = DesktopFileProvider(root.path);
+        await expectLater(
+          provider.open('/escape/secret.txt', 'read'),
+          throwsA(isA<FileProviderException>()),
+        );
+        await expectLater(
+          provider.list('/escape'),
+          throwsA(isA<FileProviderException>()),
+        );
+
+        final linkedLeaf = Link('${root.path}/leaf.txt');
+        await linkedLeaf.create(secret.path);
+        await expectLater(
+          provider.open('/leaf.txt', 'read'),
+          throwsA(isA<FileProviderException>()),
+        );
+        await expectLater(
+          provider.open('/leaf.txt', 'write'),
+          throwsA(isA<FileProviderException>()),
+        );
+        expect(await secret.readAsString(), 'private');
+      } on FileSystemException {
+        if (!Platform.isWindows) rethrow;
+        // Windows may lack symlink privilege; Linux is a required CI target.
+        markTestSkipped('Windows symlink privilege is unavailable');
+      } finally {
+        await parent.delete(recursive: true);
+      }
+    });
+
     test('write mode preserves existing bytes until overwritten', () async {
       final dir = await Directory.systemTemp.createTemp(
         'zephyr_agent_provider_',

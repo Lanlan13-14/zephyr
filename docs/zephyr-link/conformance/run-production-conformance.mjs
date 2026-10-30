@@ -65,8 +65,6 @@ const report = {
 
 console.log(JSON.stringify(report, null, 2));
 
-if (failed.length > 0) {
-  process.exitCode = 1;
-} else {
-  process.exitCode = 0;
-}
+// A report with unsupported required vectors is not production conformance.
+// Development unit tests are a separate job; never turn incompleteness green.
+process.exitCode = report.ok ? 0 : 1;

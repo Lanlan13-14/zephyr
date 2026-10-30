@@ -892,9 +892,9 @@ func (r *Runner) runOneTool(ctx context.Context, cfg Config, w *callWork, metric
 	_ = r.emit(cfg, event.TypeToolStart, event.ToolStart{
 		CallID: w.call.ID, Name: w.call.Name, Args: json.RawMessage(w.args),
 	})
-	execCtx := ctx
+	execCtx := platform.WithToolCallID(ctx, w.call.ID)
 	if w.permissionApproved {
-		execCtx = platform.WithConfirmedCall(ctx, w.call.Name)
+		execCtx = platform.WithConfirmedCall(execCtx, w.call.Name)
 	}
 	st := time.Now()
 	res, err := w.t.Execute(execCtx, w.args)

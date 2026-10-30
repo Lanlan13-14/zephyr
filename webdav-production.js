@@ -428,7 +428,7 @@ function deleteUserWebDavState(db, userId, service = null) {
 
 function createUnavailableProxy(getService) {
     const proxy = {};
-    for (const method of ['getConfig', 'patchConfig', 'testConnection', 'syncNow', 'deleteConfigAndDrain']) {
+    for (const method of ['getConfig', 'patchConfig', 'testConnection', 'syncNow', 'deleteConfigAndDrain', 'restoreFromRemote']) {
         proxy[method] = (...args) => {
             const service = getService();
             if (!service) throw new WebDavSyncError(503, 'webdav_unavailable', true);
@@ -455,7 +455,7 @@ function consumeProductionKeys(env) {
     }
 }
 
-function createWebDavProductionManager({ storage, env = process.env, serviceOptions = {}, providerOptions = {} } = {}) {
+function createWebDavProductionManager({ storage, env = process.env, serviceOptions = {}, providerOptions = {}, restoreServices = {} } = {}) {
     if (!storage?.rawDb) throw new TypeError('WebDAV production manager requires storage');
     let backupKey = null;
     let credentialCrypto = null;
@@ -474,6 +474,8 @@ function createWebDavProductionManager({ storage, env = process.env, serviceOpti
     }
 
     let active = null;
+    let notesService = restoreServices.notesService || serviceOptions.notesService || null;
+    let resourceService = restoreServices.resourceService || serviceOptions.resourceService || serviceOptions.resources || null;
     let closed = false;
     let managerClosePromise = null;
     const retiring = new Set();
@@ -502,6 +504,14 @@ function createWebDavProductionManager({ storage, env = process.env, serviceOpti
 
     const manager = {
         service: createUnavailableProxy(() => active?.service),
+        setRestoreServices(services = {}) {
+            notesService = services.notesService || null;
+            resourceService = services.resourceService || services.resources || null;
+            if (active?.service) {
+                active.service.notesService = notesService;
+                active.service.resourceService = resourceService;
+            }
+        },
         get available() { return !!active?.service && !closed; },
         get unavailableCode() { return unavailableCode; },
 
@@ -529,6 +539,8 @@ function createWebDavProductionManager({ storage, env = process.env, serviceOpti
                     secretCrypto: credentialCrypto,
                     backupProvider,
                     ...serviceOptions,
+                    notesService,
+                    resourceService,
                 });
             } catch (error) {
                 void trackRetirement(backupProvider.close());

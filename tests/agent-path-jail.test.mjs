@@ -63,6 +63,29 @@ test('symlink realpath that leaves the root is rejected', () => {
   assert.equal(result.code, 'path_escape');
 });
 
+test('realpath is checked for every existing parent, not only the final path', () => {
+  const calls = [];
+  const result = resolveUnderShare(ROOT, 'link/secret.txt', {
+    realpath(target) {
+      calls.push(target);
+      if (target.endsWith('/link')) return '/etc';
+      if (target.endsWith('/secret.txt')) return '/etc/secret.txt';
+      return null;
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'path_escape');
+  assert.ok(calls.some((item) => item.endsWith('/link')));
+});
+
+test('realpath symlink to sibling with a shared string prefix is rejected', () => {
+  const result = resolveUnderShare(ROOT, 'link', {
+    realpath: () => `${ROOT}-outside/secret.txt`,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'path_escape');
+});
+
 test('missing share root fails closed', () => {
   const result = resolveUnderShare('', 'foo');
   assert.equal(result.ok, false);

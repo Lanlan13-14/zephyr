@@ -59,6 +59,7 @@ func (b *PlatformL2Backend) Exec(ctx context.Context, cellID string, req ExecReq
 		UserID:             b.UserID,
 		SessionID:          b.SessionID,
 		RunID:              b.RunID,
+		CallID:             platform.ToolCallIDFromContext(ctx),
 		DatabaseGeneration: b.DatabaseGeneration,
 		RunNonce:           b.RunNonce,
 		Context:            b.Context,

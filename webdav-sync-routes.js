@@ -131,7 +131,9 @@ function createWebDavSyncRouter({
 
     router.post('/restore', sensitiveRateLimiter, sensitiveVerification, asyncRoute(async (req, res) => {
         if (typeof service.restoreFromRemote !== 'function') {
-            throw new WebDavSyncError(400, 'webdav_invalid_config');
+            const error = new WebDavSyncError(501, 'webdav_restore_requires_password_vault');
+            error.retryable = false;
+            throw error;
         }
         const vaultPassword = req.body && typeof req.body.vaultPassword === 'string'
             ? req.body.vaultPassword

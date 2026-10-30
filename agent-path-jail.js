@@ -2,7 +2,8 @@
 
 /**
  * Share-root path jail for Agent file operations (ZEPHYR-LINK §8 / D15).
- * String normalization first; optional realpath only when the target exists.
+ * Resolve existing path components one at a time so an escaping parent symlink
+ * cannot hide behind a non-existing final leaf.
  */
 
 const fs = require('fs');
@@ -14,95 +15,61 @@ const WIN32_RESERVED = new Set([
     'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9',
 ]);
 
-function fail(reason) {
-    return { ok: false, code: 'path_escape', reason };
-}
-
-function isWin32(opts) {
-    if (opts && opts.win32 === true) return true;
-    if (opts && opts.platform === 'win32') return true;
-    return false;
-}
-
-function api(platformWin32) {
-    return platformWin32 ? path.win32 : path.posix;
-}
-
-function hasNul(value) {
-    return value.includes('\0');
-}
-
+function fail(reason) { return { ok: false, code: 'path_escape', reason }; }
+function isWin32(opts) { return opts?.win32 === true || opts?.platform === 'win32'; }
+function api(platformWin32) { return platformWin32 ? path.win32 : path.posix; }
+function hasNul(value) { return value.includes('\0'); }
 function looksAbsolute(requested, platformWin32) {
-    if (platformWin32) {
-        if (/^[A-Za-z]:[\\/]/.test(requested)) return true;
-        if (requested.startsWith('\\\\') || requested.startsWith('//')) return true;
-        if (requested.startsWith('/') || requested.startsWith('\\')) return true;
-        return false;
-    }
-    return requested.startsWith('/');
+    if (!platformWin32) return requested.startsWith('/');
+    return /^[A-Za-z]:[\\/]/.test(requested) || requested.startsWith('\\\\')
+        || requested.startsWith('//') || requested.startsWith('/') || requested.startsWith('\\');
 }
-
-function hasAds(requested) {
-    return requested.includes(':');
-}
-
 function reservedWin32Segment(segment) {
-    const base = String(segment || '').split('.')[0].toUpperCase();
-    return WIN32_RESERVED.has(base);
+    return WIN32_RESERVED.has(String(segment || '').split('.')[0].toUpperCase());
 }
 
 function resolveUnderShare(shareRoot, requestedPath, opts = {}) {
     const platformWin32 = isWin32(opts);
     const p = api(platformWin32);
-    if (typeof shareRoot !== 'string' || !shareRoot.trim()) {
-        return fail('share root missing');
-    }
-    if (requestedPath == null) return fail('path missing');
+    if (typeof shareRoot !== 'string' || !shareRoot.trim()) return fail('share root missing');
     if (typeof requestedPath !== 'string') return fail('path not a string');
     if (hasNul(requestedPath) || hasNul(shareRoot)) return fail('nul');
-
-    const requested = requestedPath;
-    if (looksAbsolute(requested, platformWin32)) return fail('absolute path');
-    if (platformWin32 && (requested.startsWith('\\\\') || requested.startsWith('//'))) {
-        return fail('unc');
-    }
-    if (platformWin32 && hasAds(requested) && !/^[A-Za-z]:$/.test(requested)) {
-        return fail('ads');
-    }
+    if (looksAbsolute(requestedPath, platformWin32)) return fail('absolute path');
+    if (platformWin32 && requestedPath.includes(':')) return fail('ads');
 
     const rootResolved = p.resolve(shareRoot);
-    const joined = p.resolve(rootResolved, requested);
+    const joined = p.resolve(rootResolved, requestedPath);
     const relative = p.relative(rootResolved, joined);
-    if (relative.startsWith('..') || p.isAbsolute(relative)) return fail('escapes share root');
-
-    if (platformWin32) {
-        const segments = relative.split(/[\\/]/).filter(Boolean);
-        if (segments.some(reservedWin32Segment)) return fail('reserved name');
+    if (relative === '..' || relative.startsWith(`..${p.sep}`) || p.isAbsolute(relative)) {
+        return fail('escapes share root');
+    }
+    if (platformWin32 && relative.split(/[\\/]/).filter(Boolean).some(reservedWin32Segment)) {
+        return fail('reserved name');
     }
 
+    const realFn = typeof opts.realpath === 'function' ? opts.realpath : (target) => {
+        try { return fs.realpathSync(target); } catch { return null; }
+    };
+    let realRoot;
+    try { realRoot = fs.realpathSync(rootResolved); } catch { realRoot = rootResolved; }
+    const inside = (target) => {
+        const rel = p.relative(realRoot, target);
+        return rel !== '..' && !rel.startsWith(`..${p.sep}`) && !p.isAbsolute(rel);
+    };
+
     let absolute = joined;
-    if (typeof opts.realpath === 'function' || opts.followSymlinks === true) {
-        const realFn = typeof opts.realpath === 'function' ? opts.realpath : (target) => {
-            try { return fs.realpathSync(target); } catch { return null; }
-        };
-        const real = realFn(joined);
+    let candidate = rootResolved;
+    const parts = relative === '' ? [] : relative.split(p.sep).filter(Boolean);
+    for (let index = 0; index < parts.length; index += 1) {
+        candidate = p.join(candidate, parts[index]);
+        let real;
+        try { real = realFn(candidate); } catch { real = null; }
         if (real) {
-            const realRoot = (() => {
-                try { return fs.realpathSync(rootResolved); } catch { return rootResolved; }
-            })();
-            const realRel = p.relative(realRoot, real);
-            if (realRel.startsWith('..') || p.isAbsolute(realRel)) return fail('symlink escape');
+            if (!inside(real)) return fail('symlink escape');
             absolute = real;
         }
     }
-
-    return {
-        ok: true,
-        relative: relative === '' ? '.' : relative,
-        absolute,
-    };
+    return { ok: true, relative: relative === '' ? '.' : relative, absolute };
 }
 
-module.exports = {
-    resolveUnderShare,
-};
+module.exports = { resolveUnderShare };
