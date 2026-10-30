@@ -57,17 +57,21 @@ class LocalAiRepository(
     suspend fun upsertEnvironment(item: LocalAiEnvironment, value: CharArray?) {
         val current = load()
         val id = item.id.ifBlank { UUID.randomUUID().toString() }
-        if (value != null) replaceSecret(ENV_ENTITY, id, "value", value.concatToString())
+        if (value != null) {
+            replaceSecret(ENV_ENTITY, id, "value", value.concatToString())
+            secrets.removeEntity("aiEnv", id)
+        }
         save(current.copy(environment = current.environment.filterNot { it.id == id } + item.copy(id = id)))
     }
 
     suspend fun deleteEnvironment(id: String) {
         secrets.removeEntity(ENV_ENTITY, id)
+        secrets.removeEntity("aiEnv", id)
         val current = load()
         save(current.copy(environment = current.environment.filterNot { it.id == id }))
     }
 
-    fun environmentValue(id: String): CharArray? = secret(ENV_ENTITY, id, "value")
+    fun environmentValue(id: String): CharArray? = secret(ENV_ENTITY, id, "value") ?: secret("aiEnv", id, "value")
 
     suspend fun upsertMcp(server: LocalAiMcpServer, secretHeaders: CharArray?) {
         val current = load()

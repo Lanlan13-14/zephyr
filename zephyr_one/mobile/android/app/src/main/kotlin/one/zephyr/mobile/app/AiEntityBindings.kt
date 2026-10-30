@@ -60,6 +60,10 @@ internal fun <T> SyncedRow.unpackLocal(): T? = (this as? LocalRow<*>)?.row as? T
 @Suppress("UNCHECKED_CAST")
 internal fun <T> SyncedRow.unpackMirror(): T? = (this as? MirrorRow<*>)?.row as? T
 
+/** A merged list contains BOTH wrappers; dropping MirrorRow loses every newly imported row. */
+internal inline fun <reified L, reified M> catalogRows(rows: List<SyncedRow>, fromMirror: (M) -> L): List<L> =
+    rows.mapNotNull { row -> row.unpackLocal<L>() ?: row.unpackMirror<M>()?.let(fromMirror) }
+
 internal class TodoBinding(
     private val localAi: LocalAiRepository,
     private val ownedAi: OwnedAiRepository,
@@ -74,7 +78,7 @@ internal class TodoBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val merged = rows.mapNotNull { it.unpackLocal<LocalAiTodo>() }
+        val merged = catalogRows<LocalAiTodo, AiTodo>(rows) { it.toLocal() }
         localAi.save(catalog.copy(todos = merged))
     }
 
@@ -124,13 +128,7 @@ internal class ProviderBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val localRows = rows.mapNotNull { it.unpackLocal<LocalAiProvider>() }
-        /* Merge into the catalog by id: a mirrored row replaces config fields
-         * but NEVER the local secret (key stays in the SecretStore untouched). */
-        val merged = catalog.providers.map { existing ->
-            val incoming = localRows.firstOrNull { it.id == existing.id } ?: return@map existing
-            incoming
-        } + localRows.filter { incoming -> catalog.providers.none { it.id == incoming.id } }
+        val merged = catalogRows<LocalAiProvider, AiProvider>(rows) { it.toLocal() }
         localAi.save(catalog.copy(providers = merged))
     }
 
@@ -187,7 +185,7 @@ internal class MemoryBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val merged = rows.mapNotNull { it.unpackLocal<LocalAiMemory>() }
+        val merged = catalogRows<LocalAiMemory, AiMemory>(rows) { it.toLocal() }
         localAi.save(catalog.copy(memories = merged))
     }
 
@@ -229,7 +227,7 @@ internal class SkillBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val merged = rows.mapNotNull { it.unpackLocal<LocalAiSkill>() }
+        val merged = catalogRows<LocalAiSkill, AiSkill>(rows) { it.toLocal() }
         localAi.save(catalog.copy(skills = merged))
     }
 
@@ -270,7 +268,7 @@ internal class EnvBinding(
 
     override suspend fun applyMerged(rows: List<SyncedRow>) {
         val catalog = localAi.load()
-        val merged = rows.mapNotNull { it.unpackLocal<LocalAiEnvironment>() }
+        val merged = catalogRows<LocalAiEnvironment, AiEnv>(rows) { it.toLocal() }
         localAi.save(catalog.copy(environment = merged))
     }
 
@@ -296,6 +294,6 @@ internal class EnvBinding(
     }
 
     private fun AiEnv.toLocal() = LocalAiEnvironment(
-        id = id, name = name, enabled = enabled, revision = revision,
+        id = id, name = name, enabled = enabled, visibleToAi = visibleToAi, revision = revision,
     )
 }

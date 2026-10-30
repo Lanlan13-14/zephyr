@@ -26,7 +26,22 @@ private data class Row(
 
 private fun same(a: Row, b: Row) = a.id == b.id && a.payload == b.payload
 
-class AiEntitySyncLogicTest {
+    @Test
+    fun `mirror rows are retained when merge result is applied to catalog`() {
+        val merged = catalogRows<LocalAiTodo, AiTodo>(
+            listOf(MirrorRow(AiTodo("new", "owner", "Imported"), "new", 2, null)),
+        ) { todo -> LocalAiTodo(todo.id, todo.title, revision = todo.revision) }
+        assertEquals(listOf("new"), merged.map { it.id })
+    }
+
+    @Test
+    fun `environment merge retains visibility flag`() {
+        val merged = catalogRows<LocalAiEnvironment, AiEnv>(
+            listOf(MirrorRow(AiEnv("env", "owner", "TOKEN", visibleToAi = true), "env", 1, null)),
+        ) { env -> LocalAiEnvironment(env.id, env.name, visibleToAi = env.visibleToAi, revision = env.revision) }
+        assertTrue(merged.single().visibleToAi)
+    }
+
 
     @Test
     fun `two-round convergence with mixed states`() {
