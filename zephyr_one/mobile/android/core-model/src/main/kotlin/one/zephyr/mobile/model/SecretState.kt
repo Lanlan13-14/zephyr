@@ -16,8 +16,8 @@ sealed interface SecretState {
      * A mutable character buffer is intentional: editor success, cancel, lock and disposal can
      * overwrite it. The type is not a data class because generated toString would disclose it.
      */
-    class Replace(plaintext: String) : SecretState {
-        private val characters: CharArray = plaintext.toCharArray()
+    class Replace private constructor(private val characters: CharArray) : SecretState {
+        constructor(plaintext: String) : this(plaintext.toCharArray())
 
         val isBlank: Boolean get() = characters.all(Char::isWhitespace)
 
@@ -50,8 +50,20 @@ sealed interface SecretState {
 
         override fun toString(): String = "Replace(plaintext=[redacted])"
 
-        private companion object {
-            const val NUL = '\u0000'
+        companion object {
+            private const val NUL = '\u0000'
+
+            /** Caller retains ownership of bytes and must wipe them; no immutable String is made. */
+            fun fromUtf8(bytes: ByteArray): Replace {
+                val decoded = Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes))
+                return try {
+                    val owned = CharArray(decoded.remaining())
+                    decoded.get(owned)
+                    Replace(owned)
+                } finally {
+                    if (decoded.hasArray()) decoded.array().fill(NUL)
+                }
+            }
         }
     }
 

@@ -8,6 +8,20 @@ import org.junit.Test
 class SecretStateSecurityTest {
 
     @Test
+    fun `utf8 import has independent wipeable ownership and rejects malformed input`() {
+        val bytes = "凭据-🔑".toByteArray(Charsets.UTF_8)
+        val imported = SecretState.Replace.fromUtf8(bytes)
+        bytes.fill(0)
+        assertEquals("凭据-🔑", imported.editingText())
+        assertFalse(imported.toString().contains("凭据"))
+        imported.wipe()
+        assertTrue(imported.isWiped())
+        org.junit.Assert.assertThrows(java.nio.charset.CharacterCodingException::class.java) {
+            SecretState.Replace.fromUtf8(byteArrayOf(0xc3.toByte(), 0x28))
+        }
+    }
+
+    @Test
     fun `replacement is redacted and wipeable`() {
         val secret = SecretState.Replace("do-not-log-this")
 

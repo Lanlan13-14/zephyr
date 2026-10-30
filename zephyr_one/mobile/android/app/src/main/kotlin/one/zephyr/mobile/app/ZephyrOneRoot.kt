@@ -456,6 +456,14 @@ private fun BoundRoot(
 
     val ownerUserId = account.binding.userId
     val syncStatus = account.syncEngine.status
+    val importView by account.localImport.view.collectAsState()
+    var showLocalImport by remember(account.generation) { mutableStateOf(false) }
+    LaunchedEffect(importView.required) {
+        if (importView.required) showLocalImport = true
+    }
+    LaunchedEffect(account, route) {
+        if (!account.localMode) runCatching { account.refreshLocalImport() }
+    }
 
     /* One message channel for the whole tree. Every route takes a `suspend (String) -> Unit`, and
      * routing them all here means a message raised by a screen that is being navigated away from
@@ -850,7 +858,14 @@ private fun BoundRoot(
                 onOpenDiagnostics = { route = RootRoute.Diagnostics },
                 onUnbind = if (account.isLocalMode) null else ({ route = RootRoute.ServerBinding }),
                 onBind = if (account.isLocalMode) ({ route = RootRoute.ServerBinding }) else null,
-                onSyncNow = { if (!account.isLocalMode) scope.launch { account.syncEngine.syncNow() } },
+                onSyncNow = {
+                    if (!account.isLocalMode) scope.launch {
+                        account.refreshLocalImport()
+                        if (account.localImport.view.value.required) showLocalImport = true
+                        account.syncEngine.syncNow()
+                        account.refreshLocalImport()
+                    }
+                },
             )
             RootRoute.ClientToken -> ClientTokenLiveDestination(
                 account = account,
@@ -1091,6 +1106,10 @@ private fun BoundRoot(
             onOpenSettings = { route = RootRoute.AiSettings },
             onNotice = notice,
         )
+
+        if (showLocalImport && importView.required && !account.localMode) {
+            LocalImportDialog(account, onDismiss = { showLocalImport = false })
+        }
 
         managedHostKeyPrompt?.let { prompt ->
             one.zephyr.mobile.ui.component.AlertDialog(

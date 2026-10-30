@@ -65,6 +65,11 @@ class SyncActor(
     val progress: StateFlow<SyncProgress> = progressState.asStateFlow()
 
     private val flagLock = Mutex()
+    private val storeLock = Mutex()
+
+    /** Serializes first-import writes with bootstrap promotion/pull/ACK, not merely UI taps. */
+    suspend fun <T> withExclusiveLocalWrite(block: suspend () -> T): T = storeLock.withLock { block() }
+
     private var running = false
     private var rerunRequested = false
     private var rerunTrigger: SyncTrigger? = null
@@ -109,7 +114,7 @@ class SyncActor(
         try {
             var next: SyncTrigger? = trigger
             while (next != null) {
-                val result = runRound(next)
+                val result = storeLock.withLock { runRound(checkNotNull(next)) }
                 results.add(result)
                 next = flagLock.withLock {
                     bootstrapContinuationPending =

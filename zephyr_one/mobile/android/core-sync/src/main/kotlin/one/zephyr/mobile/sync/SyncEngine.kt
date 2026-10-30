@@ -94,6 +94,9 @@ class SyncEngine(
      */
     suspend fun syncNow(): List<SyncRoundResult> = run(SyncTrigger.MANUAL, respectPolicy = false)
 
+    /** Never invoke syncNow from this block; its actor round uses the same store lock. */
+    suspend fun <T> withExclusiveLocalWrite(block: suspend () -> T): T = actor.withExclusiveLocalWrite(block)
+
     suspend fun onBindComplete(): List<SyncRoundResult> = run(SyncTrigger.BIND_COMPLETE, respectPolicy = false)
 
     /** keep_local: drop the first-bind import gate without enqueueing preexisting rows. */

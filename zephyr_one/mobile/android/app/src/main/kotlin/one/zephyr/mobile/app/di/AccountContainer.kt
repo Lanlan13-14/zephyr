@@ -293,6 +293,13 @@ class AccountContainer(
     // -- local data --
 
     val writeGateway: LocalWriteGateway = LocalWriteGateway(database, secretStore, journal)
+    internal val localImport = LocalImportCoordinator(this, appContainer)
+    internal val acceptsLocalImport: Boolean get() = started.get() && networkEnabled.get() && !localMode
+
+    internal suspend fun refreshLocalImport() = accountScope.async(Dispatchers.IO) { localImport.refresh() }.await()
+
+    internal suspend fun decideLocalImport(types: Set<String>, credentials: Boolean, confirmed: Boolean) =
+        accountScope.async(Dispatchers.IO) { localImport.decide(types, credentials, confirmed) }.await()
 
     val connections: ConnectionRepository = ConnectionRepository(database, writeGateway)
 
@@ -722,6 +729,8 @@ class AccountContainer(
         // which is what wipes device-local secrets when the device locks.
         if (localMode) return
         syncState.ensure(bindingKey)
+        // Arm D1 from the separate local workspace before any owned-sync producer can push.
+        localImport.prepare()
         networkEnabled.set(true)
     }
 
@@ -747,6 +756,8 @@ class AccountContainer(
                 }
                 // Any completed round may have refreshed AI entity rows; merge
                 // them (and flush pending local pushes) into the mirror.
+                if (round?.bootstrapOutcome is BootstrapOutcome.Complete) markAccountDatabaseReady()
+                runCatching { localImport.refresh() }
                 if (round?.error == null) {
                     aiEntitySync.reconcile()
                     refreshSharedAiProviders()

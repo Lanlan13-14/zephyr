@@ -79,7 +79,13 @@ class LocalWriteGateway(
     /** Emitted after a successful commit so the sync actor can debounce a push round. */
     val writeSignals: SharedFlow<Unit> = signals
 
-    suspend fun apply(edit: LocalEdit, ownerUserId: String): LocalEditResult {
+    suspend fun apply(
+        edit: LocalEdit,
+        ownerUserId: String,
+        commitReceipt: one.zephyr.mobile.data.db.DevicePreferenceRow? = null,
+        requireAbsent: Boolean = false,
+        commitGuard: () -> Unit = {},
+    ): LocalEditResult {
         val spec = EntityRegistry.byType[edit.entityType]
             ?: throw LocalWriteRejected("unknown_entity_type", "unknown entity type " + edit.entityType)
 
@@ -139,7 +145,11 @@ class LocalWriteGateway(
         var revision = 0L
 
         val roomCommit: suspend () -> Unit = {
+            commitGuard()
             val existing = db.mirrorDao().find(edit.entityType, edit.entityId)
+            if (requireAbsent && (existing != null || db.tombstoneDao().find(edit.entityType, edit.entityId) != null)) {
+                throw LocalWriteRejected("identity_collision", "copy identity already exists")
+            }
             if (existing != null && existing.ownerUserId != ownerUserId) {
                 // Defence in depth: a row owned by someone else cannot be edited through One even
                 // if a caller somehow reached this point with the wrong binding.
@@ -235,6 +245,8 @@ class LocalWriteGateway(
                     ),
                 )
             }
+            commitGuard()
+            commitReceipt?.let { db.devicePreferenceDao().upsert(it) }
         }
 
         if (secretMutations.isEmpty()) {

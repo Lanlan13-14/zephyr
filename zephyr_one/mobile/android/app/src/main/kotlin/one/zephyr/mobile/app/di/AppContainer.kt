@@ -394,6 +394,8 @@ class AppContainer(private val context: Context) {
         instanceEpoch = 0L,
     )
 
+    internal fun localImportBinding(): AccountBinding = localBinding()
+
     private fun localWorkspaceGeneration(): Long {
         val preferences = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return preferences.getLong(KEY_LOCAL_WORKSPACE_GENERATION, 0L).takeIf { it > 0L }

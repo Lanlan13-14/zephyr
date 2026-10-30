@@ -8,6 +8,7 @@ android {
     namespace = "one.zephyr.mobile.data"
 
     defaultConfig {
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Room exports schemas so migrations are reviewable instead of implicit.
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
@@ -29,4 +30,5 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }
