@@ -217,7 +217,15 @@ test('owned-sync bridge is a private loopback listener, not the public HTTP port
 
 test('embedded Link runtime has a CI freshness gate like the AI runtime', () => {
   const workflow = readRepo('.github/workflows/zephyr-one-mobile.yml');
-  assert.match(workflow, /libzephyr_link\.so/);
-  assert.match(workflow, /zephyr-link/);
-  assert.match(workflow, /cmd\/zephyr-link-android/);
+  const rebuild = readRepo('scripts/rebuild-mobile-go-runtimes.sh');
+  const inspect = readRepo('scripts/check-link-apk-buildinfo.mjs');
+  assert.match(workflow, /bash scripts\/rebuild-mobile-go-runtimes\.sh/);
+  assert.match(workflow, /govulncheck -mode=binary/);
+  assert.match(workflow, /unzip -p/);
+  assert.match(rebuild, /libzephyr_link\.so/);
+  assert.match(rebuild, /cmd\/zephyr-link-android/);
+  assert.match(rebuild, /worktree add --detach/);
+  assert.match(rebuild, /vcs\.modified=false/);
+  assert.match(inspect, /vcs\.revision=/);
+  assert.match(inspect, /go1\.26\.10/);
 });

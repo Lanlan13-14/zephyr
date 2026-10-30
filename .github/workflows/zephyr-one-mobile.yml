@@ -139,7 +139,7 @@ jobs:
 
       - name: Install FreeRDP Android build tools
         working-directory: .
-        run: sudo apt-get update && sudo apt-get install -y ninja-build nasm pkg-config autoconf automake libtool
+        run: sudo apt-get update && sudo apt-get install -y ninja-build nasm pkg-config autoconf automake libtool ripgrep
 
       - name: Cache Android FreeRDP
         uses: actions/cache@v4

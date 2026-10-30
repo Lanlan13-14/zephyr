@@ -435,6 +435,13 @@
       "source": "mobile v1"
     },
     {
+      "code": "sync_projection_failed",
+      "httpStatus": 500,
+      "retryable": true,
+      "clientAction": "retry_same_page",
+      "source": "mobile v1"
+    },
+    {
       "code": "token_missing",
       "httpStatus": 403,
       "retryable": false,

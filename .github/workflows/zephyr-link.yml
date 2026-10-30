@@ -32,6 +32,7 @@ jobs:
         with:
           go-version: '1.26.10'
       - run: npm ci
+      - run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: New behavioral tests must fail against the reviewed implementation
         run: |
           set -eu

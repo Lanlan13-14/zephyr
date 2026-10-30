@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 const root = process.argv[2];
 const cases = [
   ['ai', 'tests/ai-run-idempotency.test.mjs', 'identical call ids cannot replay another account result'],
-  ['webdav', 'tests/webdav-vault-restore-production.test.mjs', 'missing business services fail closed rather than returning zero-count success'],
+  ['webdav', 'tests/webdav-vault-restore-production.test.mjs', 'nonempty restore with missing business services fails closed'],
   ['agent', 'tests/agent-file-policy-gate.test.mjs', 'real escaping parent symlink'],
 ];
 fs.mkdirSync('.link-evidence', { recursive: true });
