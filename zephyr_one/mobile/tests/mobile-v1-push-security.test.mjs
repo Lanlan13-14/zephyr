@@ -14,6 +14,7 @@ const {
   setPatchValueAtPath,
   createPushJsonBodyParser,
 } = require('../../../mobile-v1-routes.js');
+const { MobileV1Store } = require('../../../mobile-v1-store.js');
 const express = require('express');
 const { assertMaskAllowed } = require('../../../mobile-v1-entities.js');
 const { secretAadBytes, sharedUseAadBytes } = require('../../../mobile-v1-crypto.js');
@@ -257,7 +258,7 @@ test('parent and child registry paths overlap in either direction', () => {
 
   const api = Object.create(MobileV1Api.prototype);
   api.store = {
-    hasOverlap: () => false,
+    hasOverlap: MobileV1Store.prototype.hasOverlap,
     fieldRevisions: () => new Map([['settings', 3]]),
   };
   assert.equal(api.hasFieldOverlap('user-1', 'settings', 'entity-1', 2, ['settings.theme']), true);

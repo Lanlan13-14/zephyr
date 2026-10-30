@@ -2,7 +2,7 @@ import Foundation
 import ZephyrContracts
 
 /// The Link v2 wire kind registry values this transport uses. These are business frame kinds, not
-/// cryptographic primitives — the Swift side names the lane, the embedded Go core owns sealing.
+/// cryptographic primitives -- the Swift side names the lane, the embedded Go core owns sealing.
 /// The integers must match zephyr-link/internal/codec/codec.go and link-v2-codec.js exactly.
 public enum LinkKinds {
     public static let syncOp = 1
@@ -54,14 +54,14 @@ public struct LinkChannelError: Error, Equatable, Sendable, LocalizedError {
 /// ``SyncTransport`` over the Zephyr Link channel (ZSL/2). One clients carry data sync on the
 /// encrypted channel end to end rather than plaintext HTTPS, satisfying the security model: the
 /// browser is the only client that falls back to HTTPS. The ``SyncEngine`` state machine is reused
-/// unchanged — only the transport differs — and every verb encodes/decodes the SAME DTO wire shape
+/// unchanged -- only the transport differs -- and every verb encodes/decodes the SAME DTO wire shape
 /// as the HTTP path, so there is exactly one sync implementation and one wire contract.
 ///
 /// Capabilities remains HTTPS discovery because it precedes a session. Bootstrap, changes, push
 /// and ack all ride owned-sync so every account payload and every business error stays inside ZSL.
 ///
 /// Field-name exception: iOS HTTPS `changes` uses the query key `cursor`, but the Go/Node Link
-/// bridge (`link-v2-sync-bridge.js` → `executeChangesForDevice`) reads `sinceCursor`. The ZSL body
+/// bridge (`link-v2-sync-bridge.js` -> `executeChangesForDevice`) reads `sinceCursor`. The ZSL body
 /// therefore uses the Android/server name. Bootstrap uses `pageSize` for the same reason (HTTP GET
 /// on iOS sends `limit`).
 public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
@@ -139,7 +139,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
     }
 
     /// `{ok:false}` is the only failure shape. Missing `ok` is treated as success so a business
-    /// payload that omitted the flag still decodes — matching Android `ack["ok"] != false`.
+    /// payload that omitted the flag still decodes -- matching Android `ack["ok"] != false`.
     private static func requireSuccessAck(
         _ ack: [String: MobileJSONValue]
     ) throws -> [String: MobileJSONValue] {
@@ -154,7 +154,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
         if case .string(let text)? = error["message"], !text.isEmpty {
             message = text
         } else {
-            message = "同步请求失败"
+            message = "Sync request failed"
         }
         let retryable: Bool
         switch error["retryable"] {
@@ -191,7 +191,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
     }
 
     private func runLink<T>(_ body: () async throws -> T) async throws -> T {
-        // Do NOT gate on channel.isEstablished here. The channel dials lazily inside syncOp —
+        // Do NOT gate on channel.isEstablished here. The channel dials lazily inside syncOp --
         // checking isEstablished before calling it would reject the first-ever sync round
         // (session starts as null) and the Link transport would never dial at all.
         do {
@@ -203,7 +203,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
         } catch let error as LinkChannelError {
             throw MobileApiError(
                 code: error.code,
-                message: error.message.isEmpty ? "Link 通道失败" : error.message,
+                message: error.message.isEmpty ? "Link channel failed" : error.message,
                 retryable: error.retryable,
                 requestId: nil,
                 details: error.details
@@ -215,7 +215,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
         } catch {
             throw MobileApiError.local(
                 code: "link_unavailable",
-                message: error.localizedDescription.isEmpty ? "Link 通道失败" : error.localizedDescription,
+                message: error.localizedDescription.isEmpty ? "Link channel failed" : error.localizedDescription,
                 retryable: true
             )
         }
@@ -224,7 +224,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
     private static var unparseableError: MobileApiError {
         MobileApiError.local(
             code: "link_unavailable",
-            message: "Link 返回了无法解析的响应",
+            message: "Link returned an unparseable response",
             retryable: false
         )
     }

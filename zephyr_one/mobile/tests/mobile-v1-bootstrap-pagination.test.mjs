@@ -111,7 +111,10 @@ test('bootstrap keyset pages converge across inter-page deletes, inserts and upd
 
     const second = bootstrap(api, { pageSize: 2, pageToken: first.body.nextPageToken });
     assert.equal(second.statusCode, 200);
-    assert.deepEqual(second.body.entities.map((entity) => entity.entityId), ['d']);
+    // P0 materializes the complete generation on page one. Later live writes
+    // are replayed from changes after snapshotCursor, not mixed into page two.
+    assert.deepEqual(second.body.entities.map((entity) => entity.entityId), ['c', 'd']);
+    assert.deepEqual(second.body.entities.map((entity) => entity.revision), [1, 1]);
     assert.equal(second.body.snapshotCursor, first.body.snapshotCursor);
     assert.equal(second.body.complete, true);
     assert.equal(second.body.nextPageToken, null);

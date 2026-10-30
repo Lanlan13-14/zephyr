@@ -14,8 +14,9 @@ for module in zephyr-ai zephyr-link; do
     zephyr-link) entry=./cmd/zephyr-link-android; name=libzephyr_link.so ;;
   esac
   (cd "$source/$module" && CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
-    go build -mod=readonly -trimpath -ldflags='-s -w' -o "$output/$name" "$entry")
+    go build -buildvcs=true -mod=readonly -trimpath -ldflags='-s -w' -o "$output/$name" "$entry")
   go version -m "$output/$name" > "$output/$name.buildinfo.txt"
+  cat "$output/$name.buildinfo.txt"
   rg -F "vcs.revision=$revision" "$output/$name.buildinfo.txt"
   rg -F 'vcs.modified=false' "$output/$name.buildinfo.txt"
   rg -F 'go1.26.10' "$output/$name.buildinfo.txt"

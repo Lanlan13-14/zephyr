@@ -230,7 +230,7 @@ jobs:
           test -f "${SYSROOT}/usr/include/jni.h"
           out="$GITHUB_WORKSPACE/zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/libzephyr_ai_runtime_jni.so"
           (cd "$RUNNER_TEMP/zephyr-mobile-go-source/zephyr-ai" && CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
-            go build -mod=readonly -buildmode=c-shared -trimpath -ldflags='-s -w' -o "$out" ./cmd/zephyr-ai-jni)
+            go build -buildvcs=true -mod=readonly -buildmode=c-shared -trimpath -ldflags='-s -w' -o "$out" ./cmd/zephyr-ai-jni)
           test -s "$out"
           # Must be a shared object with the JNI exports Kotlin binds.
           if file "$out" | grep -q 'pie executable'; then
@@ -370,7 +370,10 @@ jobs:
         if: always()
         with:
           name: android-go-binary-evidence
-          path: .link-native-evidence/*.txt
+          include-hidden-files: true
+          path: |
+            .link-native-evidence/*.txt
+            ${{ runner.temp }}/zephyr-mobile-go-output/*.txt
           if-no-files-found: warn
 
       - name: Upload debug APK

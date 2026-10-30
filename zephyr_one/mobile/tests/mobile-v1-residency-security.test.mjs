@@ -293,7 +293,14 @@ test('bootstrap refuses an adapter regression that returns a foreign row', () =>
     idOf: (row) => row.id,
     revisionOf: (row) => row.revision,
   }]]);
-  api.store = { latestCursor: () => 41 };
+  api.store = {
+    latestCursor: () => 41,
+    captureBootstrapSnapshot({ collect }) {
+      // Exercise the same projection/owner check the real SQLite snapshot calls.
+      collect(0, 'connection');
+      assert.fail('foreign adapter row must abort snapshot capture');
+    },
+  };
   const req = { mobileRequestId: 'request-bootstrap', query: {} };
   const res = fakeResponse();
   api.handleBootstrap(req, res);
