@@ -1,5 +1,8 @@
 package one.zephyr.mobile.app
 
+import one.zephyr.mobile.data.repository.LocalAiEnvironment
+import one.zephyr.mobile.model.AiEnv
+import one.zephyr.mobile.model.AiTodo
 import one.zephyr.mobile.data.repository.LocalAiMemory
 import one.zephyr.mobile.data.repository.LocalAiProvider
 import one.zephyr.mobile.data.repository.LocalAiSkill
@@ -26,6 +29,7 @@ private data class Row(
 
 private fun same(a: Row, b: Row) = a.id == b.id && a.payload == b.payload
 
+class AiEntitySyncLogicTest {
     @Test
     fun `mirror rows are retained when merge result is applied to catalog`() {
         val merged = catalogRows<LocalAiTodo, AiTodo>(
@@ -41,7 +45,6 @@ private fun same(a: Row, b: Row) = a.id == b.id && a.payload == b.payload
         ) { env -> LocalAiEnvironment(env.id, env.name, visibleToAi = env.visibleToAi, revision = env.revision) }
         assertTrue(merged.single().visibleToAi)
     }
-
 
     @Test
     fun `two-round convergence with mixed states`() {
