@@ -359,13 +359,18 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           apk=(zephyr_one/mobile/android/app/build/outputs/apk/prerelease/*.apk)
           test "${#apk[@]}" -eq 1
+          scan_failed=0
           for name in libzephyr_link.so libzephyr_ai_runtime.so libzephyr_ai_runtime_jni.so; do
             unzip -p "${apk[0]}" "lib/arm64-v8a/$name" > ".link-native-evidence/$name"
             test -s ".link-native-evidence/$name"
             go version -m ".link-native-evidence/$name" > ".link-native-evidence/$name.buildinfo.txt"
-            govulncheck -mode=binary -format=text ".link-native-evidence/$name" > ".link-native-evidence/$name.vuln.txt"
+            if ! govulncheck -mode=binary -format=text ".link-native-evidence/$name" > ".link-native-evidence/$name.vuln.txt" 2>&1; then
+              scan_failed=1
+            fi
+            cat ".link-native-evidence/$name.vuln.txt"
           done
           node scripts/check-link-apk-buildinfo.mjs .link-native-evidence .link-native-evidence/revision.txt
+          test "$scan_failed" -eq 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:

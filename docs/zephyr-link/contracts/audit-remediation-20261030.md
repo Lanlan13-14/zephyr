@@ -32,3 +32,8 @@
 ## Compatibility
 
 [KNOWN] Deploy Node and Go AI host together. Old Go host without callId is now rejected (intentional breaking internal contract). No data migration. Revert this change if needed without deleting user data. Do not revert strict release failure merely to get a green badge.
+
+
+## Additional packaged-binary finding
+
+- [KNOWN] The first real APK scan (run 41069517107) reported GO-2026-5841 in `klauspost/compress v1.17.11` (`s2.NewDict`); host-source scanning alone did not report it. The Link module is upgraded to v1.18.7 using checksums from the official Go sum database; the APK inspector requires the patched dependency in the actual extracted Link binary. All three Go runtimes are scanned even if one fails, with any failure blocking artifact delivery. Final CI results, not this note, are the evidence of remediation.
