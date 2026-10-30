@@ -89,7 +89,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
             if let pageToken { body["pageToken"] = .string(pageToken) }
             if let limit { body["pageSize"] = .integer(Int64(limit)) }
             let ack = try Self.requireSuccessAck(
-                try await channel.syncOp("bootstrap", body: Self.wireBody(op: "bootstrap", body: body))
+                try await channel.syncOp(op: "bootstrap", body: Self.wireBody(op: "bootstrap", body: body))
             )
             return try Self.decode(MobileBootstrapResponse.self, from: ack)
         }
@@ -102,7 +102,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
             ]
             if let limit { body["limit"] = .integer(Int64(limit)) }
             let ack = try Self.requireSuccessAck(
-                try await channel.syncOp("changes", body: Self.wireBody(op: "changes", body: body))
+                try await channel.syncOp(op: "changes", body: Self.wireBody(op: "changes", body: body))
             )
             return try Self.decode(MobileChangesResponse.self, from: ack)
         }
@@ -114,7 +114,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
             // from the constructor deviceId. Remaining fields are the exact HTTPS DTO.
             let aligned = MobilePushRequest(
                 protocolVersion: request.protocolVersion,
-                deviceId: deviceId,
+                deviceId: self.deviceId,
                 batchId: request.batchId,
                 baseCursor: request.baseCursor,
                 registryHash: request.registryHash,
@@ -122,7 +122,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
             )
             let body = try Self.jsonObject(from: aligned)
             let ack = try Self.requireSuccessAck(
-                try await channel.syncOp("push", body: Self.wireBody(op: "push", body: body))
+                try await channel.syncOp(op: "push", body: Self.wireBody(op: "push", body: body))
             )
             return try Self.decode(MobilePushResponse.self, from: ack)
         }
@@ -132,7 +132,7 @@ public final class LinkSyncTransport: SyncTransport, @unchecked Sendable {
         try await runLink {
             let body = try Self.jsonObject(from: request)
             let ack = try Self.requireSuccessAck(
-                try await channel.syncOp("ack", body: Self.wireBody(op: "ack", body: body))
+                try await channel.syncOp(op: "ack", body: Self.wireBody(op: "ack", body: body))
             )
             return try Self.decode(MobileAckResponse.self, from: ack)
         }

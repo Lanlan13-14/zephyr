@@ -238,6 +238,7 @@ test('maintenance cancels an SSE monitor whose reader ignores its abort signal',
         fetchImpl: async (url, options = {}) => {
             const path = new URL(url).pathname;
             if (path === '/admin/runs') return jsonResponse({ ok: true, runId: 'run-monitor', ticket: 'ticket-monitor' });
+            if (path === '/v1/runs/run-monitor/frames') return { ok: false, status: 404 };
             if (path === '/v1/runs/run-monitor/events') {
                 monitorSignal = options.signal;
                 return {
@@ -337,6 +338,8 @@ test('late host completion after rollback cannot write activity through a retire
         user: { userId: 'alice', role: 'user' },
         confirmedToolId: 'remote_execute',
         runId: 'late-host',
+        callId: 'late-host-call-1',
+        databaseGeneration: startBody.databaseGeneration,
         signal: hostAbort.signal,
         hostCallGuard: releaseHost.assertLive,
         deps: {

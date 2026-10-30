@@ -43,6 +43,7 @@ test('restore does not upsert a foreign connection id or shared foreign note id'
     (error) => error.code === 'webdav_restore_conflict');
   const notes = {
     get: () => ({ noteId: 'n', ownerUserId: 'bob', revision: 1 }),
+    stmtGet: { get: () => ({ id: 'n', owner_user_id: 'bob', revision: 1 }) },
     update() { assert.fail('foreign shared note update'); },
   };
   assert.throws(() => applyUserSnapshot(snapshot({ notes: [{ id: 'n' }] }), { user, notesService: notes }),
@@ -51,15 +52,15 @@ test('restore does not upsert a foreign connection id or shared foreign note id'
 
 test('restore counts real resource creation and restores references before connections', () => {
   const order = [];
-  const resources = {
-    storage: { getConnectionById: () => null }, _rawResource: () => null,
+    const resources = {
+    storage: { getConnectionById: () => null, getProxyRaw: () => null, getSshKeyRaw: () => null, listJumpHosts: () => [] }, _rawResource: () => null,
     createOwned(_actor, type) { order.push(type); },
     createConnection() { order.push('connection'); },
   };
   const result = applyUserSnapshot(snapshot({
     proxies: [{ id: 'p' }], sshKeys: [{ id: 'k' }], jumpHosts: [{ id: 'j' }], connections: [{ id: 'c' }],
   }), { user, resourceService: resources });
-  assert.deepEqual(order, ['proxy', 'sshKey', 'jumpHost', 'connection']);
+  assert.deepEqual(order, ['proxy', 'sshKey', 'connection', 'jumpHost']);
   assert.deepEqual(result.restored, { connections: 1, proxies: 1, sshKeys: 1, jumpHosts: 1, notes: 0 });
 });
 

@@ -11,7 +11,7 @@ const cases = [
 ];
 fs.mkdirSync('.link-evidence', { recursive: true });
 for (const [name, file, title] of cases) {
-  const result = spawnSync(process.execPath, ['--test', `--test-name-pattern=${title}`, file], { cwd: root, encoding: 'utf8', timeout: 120_000 });
+  const result = spawnSync(process.execPath, ['--test', '--test-reporter=tap', `--test-name-pattern=${title}`, file], { cwd: root, encoding: 'utf8', timeout: 120_000 });
   const output = `${result.stdout || ''}${result.stderr || ''}`;
   fs.writeFileSync(`.link-evidence/baseline-${name}.tap`, output);
   process.stdout.write(output);

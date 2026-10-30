@@ -76,6 +76,7 @@ object ErrorRegistry {
         MobileErrorSpec("shared_session_consumed", 409, false, "mintFreshSessionEnvelope"),
         MobileErrorSpec("shared_session_expired", 410, false, "reopenSharedSession"),
         MobileErrorSpec("sync_conflict", 409, false, "open_conflict"),
+        MobileErrorSpec("sync_projection_failed", 500, true, "retry_same_page"),
         MobileErrorSpec("token_missing", 403, false, "rebind"),
         MobileErrorSpec("token_not_found", 404, false, "select_valid_token"),
         MobileErrorSpec("token_required", 400, false, "create_token_on_server"),

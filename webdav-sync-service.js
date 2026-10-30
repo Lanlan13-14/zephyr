@@ -306,6 +306,8 @@ class WebDavSyncService {
         this.db = db;
         this.secretCrypto = secretCrypto;
         this.backupProvider = backupProvider;
+        this.notesService = notesService;
+        this.resourceService = resourceService;
         this.now = now;
         this.lookup = lookup;
         this.allowHttpLoopback = !!allowHttpLoopback;

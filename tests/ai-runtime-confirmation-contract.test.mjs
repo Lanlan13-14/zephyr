@@ -21,7 +21,8 @@ test('runtime auto-confirm settings cross browser, Node bridge and Go', () => {
 test('runtime approval is bound to the exact platform tool', () => {
   assert.match(host, /Confirmed:\s*confirmedCallFromContext\(ctx, d\.Name\)/);
   assert.match(loop, /w\.permissionApproved = !w\.t\.ReadOnly\(\) && \(autoApproved \|\| dec == permission\.Allow\)/);
-  assert.match(loop, /execCtx = platform\.WithConfirmedCall\(ctx, w\.call\.Name\)/);
+  assert.match(loop, /execCtx := platform\.WithToolCallID\(ctx, w\.call\.ID\)/);
+  assert.match(loop, /execCtx = platform\.WithConfirmedCall\(execCtx, w\.call\.Name\)/);
   assert.match(loop, /works\[wi\]\.permissionApproved = true/);
   assert.match(bridge, /confirmedToolId:\s*confirmed \? String\(toolName\) : ''/);
 });

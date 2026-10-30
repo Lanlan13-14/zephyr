@@ -247,6 +247,7 @@ class AiRuntimeBridge {
         try {
             res = await this._awaitAbortable(fetchPromise, signal, deadline);
         } catch (fetchErr) {
+            if (fetchErr?.code === 'ai_run_generation_expired' || fetchErr?.code === 'ai_runtime_maintenance_timeout') throw fetchErr;
             const contractErr = toContractError(fetchErr);
             const err = new HttpError(contractErr.httpStatus || 503, contractErr.code, contractErr.message, contractErr.retryable);
             err.retryable = contractErr.retryable;
@@ -446,6 +447,7 @@ class AiRuntimeBridge {
                 );
             }
         } catch (fetchErr) {
+            if (fetchErr?.code === 'ai_run_generation_expired' || fetchErr?.code === 'ai_runtime_maintenance_timeout') throw fetchErr;
             const contractErr = toContractError(fetchErr);
             const error = new Error(`AI runtime history monitor failed: ${contractErr.message}`);
             error.code = contractErr.code;

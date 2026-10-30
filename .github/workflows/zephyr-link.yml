@@ -52,6 +52,7 @@ jobs:
         if: always()
         with:
           name: link-baseline-regressions
+          include-hidden-files: true
           path: .link-evidence/
           if-no-files-found: error
 
@@ -94,6 +95,7 @@ jobs:
         if: always()
         with:
           name: link-node-${{ matrix.group }}
+          include-hidden-files: true
           path: .link-evidence/
           if-no-files-found: error
 
@@ -115,11 +117,15 @@ jobs:
           node-version: '22'
       - run: npm ci --ignore-scripts
       - name: Vet and run actual Go product module
+        env:
+          CGO_ENABLED: '0'
         working-directory: ${{ matrix.module }}
         run: |
           go vet ./...
           go test -count=1 ./...
       - name: Source vulnerability analysis
+        env:
+          CGO_ENABLED: '0'
         working-directory: ${{ matrix.module }}
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
@@ -172,5 +178,6 @@ jobs:
         if: always()
         with:
           name: link-production-release-gate
+          include-hidden-files: true
           path: .link-evidence/
           if-no-files-found: error

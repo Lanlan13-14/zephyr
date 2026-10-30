@@ -8,10 +8,11 @@ function restoreError(code, message, status = 400) {
     return Object.assign(new Error(message), { code, status, retryable: false });
 }
 function idOf(row, type) { return String(type === 'notes' ? row.id || row.noteId || row.note_id || '' : row.id || ''); }
-function assertOwner(row, userId) {
+function assertOwner(row, userId, existing = false) {
     for (const field of OWNER_FIELDS) {
         if (row[field] != null && String(row[field]) !== userId) {
-            throw restoreError('webdav_backup_scope_invalid', 'Record is outside the restore user scope');
+            throw restoreError(existing ? 'webdav_restore_conflict' : 'webdav_backup_scope_invalid',
+                existing ? 'An existing resource id belongs to another account' : 'Record is outside the restore user scope', existing ? 409 : 400);
         }
     }
 }
@@ -52,7 +53,7 @@ function applyUserSnapshot(payload, { user, notesService = null, resourceService
             const existing = name === 'notes'
                 ? notesService.stmtGet.get(id)
                 : resourceRow(resourceService, typeFor[name], id);
-            if (existing) assertOwner(existing, userId);
+            if (existing) assertOwner(existing, userId, true);
             return { row, id, existing };
         });
     }
