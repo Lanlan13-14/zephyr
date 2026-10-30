@@ -6,7 +6,12 @@ root="${GITHUB_WORKSPACE:?}"
 source="${RUNNER_TEMP:?}/zephyr-mobile-go-source"
 output="$RUNNER_TEMP/zephyr-mobile-go-output"
 revision="$(git -C "$root" rev-parse HEAD)"
-git -C "$root" worktree add --detach "$source" "$revision"
+# Go's VCS detector in this pinned toolchain requires a .git directory.
+# A linked worktree has only a .git file and silently loses VCS build settings.
+git clone --shared --no-checkout "$root" "$source"
+git -C "$source" checkout --detach "$revision"
+test -d "$source/.git"
+test -z "$(git -C "$source" status --porcelain)"
 mkdir -p "$output"
 for module in zephyr-ai zephyr-link; do
   case "$module" in

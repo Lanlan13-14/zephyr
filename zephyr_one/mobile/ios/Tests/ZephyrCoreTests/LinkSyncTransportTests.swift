@@ -196,7 +196,7 @@ final class LinkSyncTransportTests: XCTestCase {
 
     func testUnestablishedChannelThatFailsToDialIsRetryable() async throws {
         let channel = FakeLinkChannel(established: false)
-        channel.throwOnCall = LinkChannelError(message: "Link 会话未建立")
+        channel.throwOnCall = LinkChannelError(message: "Link session is not established")
         let transport = LinkSyncTransport(
             channel: channel,
             deviceId: "dev-1",

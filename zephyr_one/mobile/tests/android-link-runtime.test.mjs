@@ -224,7 +224,8 @@ test('embedded Link runtime has a CI freshness gate like the AI runtime', () => 
   assert.match(workflow, /unzip -p/);
   assert.match(rebuild, /libzephyr_link\.so/);
   assert.match(rebuild, /cmd\/zephyr-link-android/);
-  assert.match(rebuild, /worktree add --detach/);
+  assert.match(rebuild, /git clone --shared --no-checkout/);
+  assert.match(rebuild, /checkout --detach/);
   assert.match(rebuild, /vcs\.modified=false/);
   assert.match(inspect, /vcs\.revision=/);
   assert.match(inspect, /go1\.26\.10/);
