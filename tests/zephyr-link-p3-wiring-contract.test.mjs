@@ -50,3 +50,11 @@ test('Android D1 importDecisionRequired skips PUSH_PENDING and migrates additive
   const schema = read('zephyr_one/mobile/android/core-data/schemas/one.zephyr.mobile.data.db.ZephyrDatabase/4.json');
   assert.match(schema, /import_decision_required/);
 });
+
+
+test('Android first-bind pending count uses a generated Room DAO query', () => {
+  const store = read('zephyr_one/mobile/android/core-sync/src/main/kotlin/one/zephyr/mobile/sync/RoomSyncLocalStore.kt');
+  const dao = read('zephyr_one/mobile/android/core-data/src/main/kotlin/one/zephyr/mobile/data/db/SyncDao.kt');
+  assert.match(store, /pendingOperationDao\(\)\.count\(\)/);
+  assert.match(dao, /@Query\("SELECT COUNT\(\*\) FROM pending_operations"\)\s+suspend fun count\(\): Int/);
+});

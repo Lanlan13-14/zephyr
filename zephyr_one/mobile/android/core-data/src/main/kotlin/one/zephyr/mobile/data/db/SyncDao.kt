@@ -22,6 +22,10 @@ interface PendingOperationDao {
     @Query("SELECT COUNT(*) FROM pending_operations")
     fun observeCount(): Flow<Int>
 
+    /** Snapshot count for first-bind import gating; no collection or subscription. */
+    @Query("SELECT COUNT(*) FROM pending_operations")
+    suspend fun count(): Int
+
     @Query("SELECT * FROM pending_operations WHERE entityType = :entityType AND entityId = :entityId ORDER BY createdAt")
     suspend fun forEntity(entityType: String, entityId: String): List<PendingOperationRow>
 
