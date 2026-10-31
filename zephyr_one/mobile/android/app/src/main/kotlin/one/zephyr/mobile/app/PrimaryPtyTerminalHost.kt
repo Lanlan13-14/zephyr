@@ -6,6 +6,7 @@ import java.util.Base64
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -158,9 +159,4 @@ internal class PrimaryPtyTerminalHost(
             runCatching { rpc("handoff.abort") { put("prepareId", prepared["prepareId"]!!.jsonPrimitive.content) } }
         }
     }
-    override suspend fun measureLatency(sessionId: String): Long? = if (isPrimaryPty(sessionId)) null else owned.measureLatency(sessionId)
-    override suspend fun exec(sessionId: String, command: String) = if (isPrimaryPty(sessionId)) Result.failure(IllegalStateException("PTY-only handoff")) else owned.exec(sessionId, command)
-    override suspend fun listDirectory(sessionId: String, path: String) = if (isPrimaryPty(sessionId)) Result.failure(IllegalStateException("PTY-only handoff")) else owned.listDirectory(sessionId, path)
-    override fun execStream(sessionId: String, command: String) = if (isPrimaryPty(sessionId)) kotlinx.coroutines.flow.emptyFlow() else owned.execStream(sessionId, command)
-    override fun execStreamIsolated(sessionId: String, connectionId: String, command: String) = if (isPrimaryPty(sessionId)) kotlinx.coroutines.flow.emptyFlow() else owned.execStreamIsolated(sessionId, connectionId, command)
 }
