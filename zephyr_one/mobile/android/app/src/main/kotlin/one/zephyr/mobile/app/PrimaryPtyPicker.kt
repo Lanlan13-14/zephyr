@@ -3,9 +3,9 @@ package one.zephyr.mobile.app
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import one.zephyr.mobile.ui.component.AlertDialog
+import one.zephyr.mobile.ui.component.Text
+import one.zephyr.mobile.ui.component.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -41,9 +41,9 @@ internal fun PrimaryPtyPickerButton(
         text = {
             Column {
                 Text("上游凭据留在主端（trusted-primary）；屏幕应用成功后才转移控制权，原端随后停止输入。")
-                if (loading) Text("正在加载…", Modifier.padding(top = 12.dp))
-                failure?.let { Text(it, Modifier.padding(top = 12.dp)) }
-                if (!loading && failure == null && rows.isEmpty()) Text("暂无允许接力的主端 SSH 会话", Modifier.padding(top = 12.dp))
+                if (loading) Text("正在加载…", modifier = Modifier.padding(top = 12.dp))
+                failure?.let { Text(it, modifier = Modifier.padding(top = 12.dp)) }
+                if (!loading && failure == null && rows.isEmpty()) Text("暂无允许接力的主端 SSH 会话", modifier = Modifier.padding(top = 12.dp))
                 rows.forEach { row ->
                     TextButton(onClick = {
                         opened = false

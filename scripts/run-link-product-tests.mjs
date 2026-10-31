@@ -32,7 +32,7 @@ const groups = {
     'ai-run-idempotency', 'ai-tool-executor-idempotency', 'ai-host-call-identity',
     'ai-runtime-bridge-contract', 'ai-runtime-database-generation',
     'ai-runtime-confirmation-contract', 'ai-connection-tools-v1',
-    'ai-session-exec', 'ai-host-isolation-contract',
+    'ai-session-exec', 'ai-host-isolation-contract', 'ai-terminal-session-tools',
     'link-ai-dispatch-store', 'link-v2-ai-bridge', 'link-ai-production-wiring',
   ],
 };

@@ -13542,7 +13542,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     // Register the Terminal ctor before WTerm.init so XtermBridge.load works
     // without a bare npm resolver in the browser.
     try {
-        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20260801-terminal-stability1');
+        await import('/vendor/wterm-fork/core/xterm-headless-register.js?v=20261031-pty1');
     } catch (err) {
         console.error('[terminal] xterm-headless register failed', err);
         throw err;

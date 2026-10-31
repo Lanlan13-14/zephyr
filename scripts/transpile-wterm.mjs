@@ -70,6 +70,11 @@ async function runEsbuild(infile, outfile) {
     write: true,
     logLevel: "silent",
   });
+  const built = readFileSync(outfile, "utf8").replace(
+    /from (['"])(\.\/(?:wterm|xterm-bridge|core\/index)\.js)\1/g,
+    'from "$2?v=20261031-pty1"',
+  );
+  writeFileSync(outfile, built);
 }
 
 function preprocess(infile, isDom) {

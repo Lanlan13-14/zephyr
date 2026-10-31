@@ -77,3 +77,15 @@ test('terminal alias fallback remains owner-scoped and rejects ambiguous connect
   assert.throws(() => terminalTools.readSession(h.sessions, h.history, h.user, { sessionId: 'conn-1' }), (error) => error.status === 404);
   assert.throws(() => terminalTools.readSession(h.sessions, h.history, { userId: 'u2', username: 'bob' }, { sessionId: 'session-1' }), (error) => error.status === 404);
 });
+
+test('AI terminal read/send/wait cannot reuse authority on an exclusive handed-off PTY', async () => {
+  const h = harness('SSH');
+  h.session.handoff = { owner: 'new-device', epoch: 2 };
+  for (const invoke of [
+    () => terminalTools.readSession(h.sessions, h.history, h.user, { sessionId: 'session-1' }),
+    () => terminalTools.sendSession(h.sessions, h.history, h.user, { sessionId: 'session-1', text: 'danger' }),
+  ]) assert.throws(invoke, error => error.code === 'handoff_owner_required');
+  await assert.rejects(terminalTools.waitSession(h.sessions, h.history, h.user,
+    { sessionId: 'session-1', pattern: 'login', timeoutMs: 100 }), error => error.code === 'handoff_owner_required');
+  assert.deepEqual(h.writes, []);
+});

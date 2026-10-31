@@ -117,6 +117,9 @@ function findOwnedSession(sessions, user, sessionId, context = {}) {
         if (matches.length === 1) session = matches[0];
     }
     if (!session || session.closed || !isOwned(session)) throw new HttpError(404, 'resource_not_found_or_inaccessible', '终端会话不存在或无权访问');
+    // AI capability/approval is not a PTY owner lease. Until an explicit current-epoch
+    // delegation is implemented, deny read/send/wait rather than reuse a stale approval.
+    if (session.handoff) throw new HttpError(403, 'handoff_owner_required', '接力终端仅允许当前控制租约操作');
     const protocol = String(session.protocol || 'SSH').toUpperCase();
     if (!['SSH', 'TELNET'].includes(protocol)) throw new HttpError(400, 'invalid_terminal_protocol', '标准终端操作仅支持 SSH 或 TELNET 会话');
     return session;
