@@ -501,7 +501,7 @@ private fun BoundRoot(
                 opsExec.execStreamEvents(connectionId, command)
             },
         )
-        SharedRelayTerminalHost(account, ownedHost)
+        PrimaryPtyTerminalHost(account, SharedRelayTerminalHost(account, ownedHost))
     }
     val managedHostKeyPrompt by managedSsh.prompt.collectAsState()
     val managedSftp = remember(managedSsh, sshEngine, account.sessions) {
@@ -611,6 +611,7 @@ private fun BoundRoot(
                 when (current) {
             is RootRoute.Root -> RootDestination(
                 destination = current.destination,
+                primaryPtyHost = terminalHost,
                 account = account,
                 ownerUserId = ownerUserId,
                 syncStatus = syncStatus,
@@ -969,7 +970,7 @@ private fun BoundRoot(
                             },
                         ),
                         secretProvider = { connection ->
-                            if (connection.residency == Residency.SHARED_ONLINE_ONLY) {
+                            if (terminalHost.isPrimaryPty(current.sessionId) || connection.residency == Residency.SHARED_ONLINE_ONLY) {
                                 TerminalCredentials()
                             } else {
                                 account.terminalCredentials(connection)
@@ -985,7 +986,8 @@ private fun BoundRoot(
                             ).probe(sessionId, connection)
                         },
                         findConnection = { id ->
-                            account.connections.find(id)
+                            terminalHost.displayConnection(current.sessionId)
+                                ?: account.connections.find(id)
                                 ?: account.sharedResources.find(Connection.ENTITY_TYPE, id)
                                     ?.let { summary ->
                                         one.zephyr.mobile.feature.connections.SharedConnectionRows.toDisplayRow(
@@ -1229,6 +1231,7 @@ private fun routeTransition(
 @Composable
 private fun RootDestination(
     destination: IslandDestination,
+    primaryPtyHost: PrimaryPtyTerminalHost,
     account: AccountContainer,
     ownerUserId: String,
     syncStatus: Flow<SyncStatus>,
@@ -1300,7 +1303,13 @@ private fun RootDestination(
             )
         }
 
-        IslandDestination.SESSIONS -> SessionListRoute(
+        IslandDestination.SESSIONS -> Column(Modifier.fillMaxSize()) {
+            if (!account.isLocalMode) PrimaryPtyPickerButton(
+                host = primaryPtyHost,
+                onSelect = { localId, connectionId -> onOpenSession(localId, connectionId, Protocol.SSH) },
+                onMessage = onMessage,
+            )
+            SessionListRoute(
             viewModel = viewModel(
                 key = "sessions",
                 factory = SessionListViewModel.Factory(
@@ -1340,7 +1349,9 @@ private fun RootDestination(
             },
             onDetails = onOpenSessionDetails,
             onMessage = onMessage,
+            modifier = Modifier.weight(1f),
         )
+        }
 
         IslandDestination.LIBRARY -> LibraryDestination(
             account = account,

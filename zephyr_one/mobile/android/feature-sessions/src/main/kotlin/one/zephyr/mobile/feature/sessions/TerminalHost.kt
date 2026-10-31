@@ -179,6 +179,13 @@ interface TerminalHost {
     /** Raw bytes from the peer, still to be fed to a [TerminalEmulator]. */
     fun output(sessionId: String): Flow<ByteArray>
 
+    /** Ownership protocols may wait for parser consumption AND a visible render before committing. */
+    suspend fun outputApplied(sessionId: String, bytes: ByteArray) = Unit
+    fun requiresRenderAck(sessionId: String): Boolean = false
+    fun initialSize(sessionId: String): Pair<Int, Int>? = null
+    fun primaryPtyCommitted(sessionId: String): Boolean = true
+    fun isPrimaryPty(sessionId: String): Boolean = false
+
     fun transportFor(sessionId: String): TerminalTransport
 
     suspend fun close(sessionId: String)

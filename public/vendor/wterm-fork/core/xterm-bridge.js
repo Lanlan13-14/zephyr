@@ -654,6 +654,15 @@ class XtermBridge {
     this._term.write(data);
     this.markAllDirty();
   }
+  writeConsumed(data) {
+    return new Promise((resolve) => {
+      const payload = this._preprocessStream(data);
+      this._term.write(payload, () => {
+        this.markAllDirty();
+        resolve();
+      });
+    });
+  }
   _flushWriteBuffer() {
     const wb = this._term._core?._writeBuffer;
     if (!wb) return;

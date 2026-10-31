@@ -4,7 +4,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
 import {
   WasmBridge,
   XtermBridge
-} from "./core/index.js";
+} from "./core/index.js?v=20261031-pty1";
 import { Renderer, resolveQueryColor } from "./renderer.js?v=20260726-url-wrap1";
 import { CanvasRenderer } from "./canvas-renderer.js";
 import { InputHandler } from "./input.js";
@@ -482,6 +482,18 @@ class WTerm {
       this._shouldScrollToBottom = this._isScrolledToBottom();
     }
     this._scheduleRender();
+  }
+  async writeAndRender(data) {
+    if (!this.bridge || this._destroyed) throw new Error('terminal_unavailable');
+    if (typeof this.bridge.writeConsumed === 'function') await this.bridge.writeConsumed(data);
+    else if (typeof data === 'string') this.bridge.writeString(data);
+    else this.bridge.writeRaw(data);
+    return new Promise((resolve, reject) => {
+      let unsubscribe = () => {};
+      const timeout = setTimeout(() => { unsubscribe(); reject(new Error('terminal_render_timeout')); }, 5000);
+      unsubscribe = this.onRenderComplete(() => { clearTimeout(timeout); unsubscribe(); resolve(); });
+      this._scheduleRender();
+    });
   }
   resize(cols, rows) {
     if (!this.bridge) return;

@@ -18,12 +18,18 @@ type AIBridgeConfig struct{ URL, AdminToken string }
 // RegisterAIBridge installs the actual AI account service, replacing the builtin status-only
 // handler. Identity is from the proven session, never a frame body user/device field.
 func (n *Node) RegisterAIBridge(cfg AIBridgeConfig) error {
+	return n.registerBusinessBridge(cfg, codec.KindAI)
+}
+
+// registerBusinessBridge preserves the proven device identity across a bounded authenticated
+// loopback hop. The business kind is fixed by the server registration, never by a client body.
+func (n *Node) registerBusinessBridge(cfg AIBridgeConfig, kind int) error {
 	address, err := url.Parse(cfg.URL)
 	if err != nil || address.Scheme != "http" || net.ParseIP(address.Hostname()) == nil || !net.ParseIP(address.Hostname()).IsLoopback() || address.User != nil || len(cfg.AdminToken) < 16 {
 		return errors.New("link: AI bridge must be authenticated loopback")
 	}
 	client := &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	n.dispatch.Register(codec.KindAI, func(ctx *FrameContext, frame *codec.Frame) (int, any, bool, error) {
+	n.dispatch.Register(kind, func(ctx *FrameContext, frame *codec.Frame) (int, any, bool, error) {
 		deviceID := n.sessionDeviceGet(ctx.SessionID)
 		if deviceID == "" {
 			return 0, nil, false, errors.New("link: AI requires an attested device")
@@ -36,7 +42,7 @@ func (n *Node) RegisterAIBridge(cfg AIBridgeConfig) error {
 		if err != nil {
 			return 0, nil, false, err
 		}
-		payload, err := json.Marshal(syncBridgeRequest{DeviceID: deviceID, Kind: codec.KindAI, Body: input})
+		payload, err := json.Marshal(syncBridgeRequest{DeviceID: deviceID, Kind: kind, Body: input})
 		if err != nil {
 			return 0, nil, false, err
 		}
@@ -63,11 +69,11 @@ func (n *Node) RegisterAIBridge(cfg AIBridgeConfig) error {
 			if envelope.Error == nil || envelope.Error.Code == "" {
 				return 0, nil, false, errors.New("link: AI rejected request")
 			}
-			return codec.KindAI, map[string]any{"ok": false, "error": map[string]any{
+			return kind, map[string]any{"ok": false, "error": map[string]any{
 				"code": envelope.Error.Code, "message": envelope.Error.Message, "retryable": envelope.Error.Retryable,
 			}}, false, nil
 		}
-		if response.StatusCode != http.StatusOK || envelope.Kind != codec.KindAI {
+		if response.StatusCode != http.StatusOK || envelope.Kind != kind {
 			return 0, nil, false, errors.New("link: unexpected AI reply lane")
 		}
 		var output any
@@ -77,7 +83,7 @@ func (n *Node) RegisterAIBridge(cfg AIBridgeConfig) error {
 			return 0, nil, false, err
 		}
 		output, err = normalizeJSONIntegers(output)
-		return codec.KindAI, output, false, err
+		return kind, output, false, err
 	})
 	return nil
 }

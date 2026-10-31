@@ -529,6 +529,7 @@ class AccountContainer(
     private val linkInsecure: Boolean = endpoint.tlsPolicy is TlsPolicy.InsecureTrust
 
     private val linkSessionMutex = Mutex()
+    private val linkPushMutex = Mutex()
     private var linkSession: one.zephyr.mobile.app.EmbeddedLinkApi.LinkSession? = null
 
     private suspend fun ensureLinkSession(): one.zephyr.mobile.app.EmbeddedLinkApi.LinkSession {
@@ -550,13 +551,11 @@ class AccountContainer(
          * rounds, but wake/manual and lifecycle callbacks can still enter this
          * channel from different coroutines. Keep one push in flight per
          * binding so the embedded Link runtime cannot race its send state. */
-        private val pushMutex = Mutex()
-
         override val isEstablished: Boolean get() = linkSession != null
 
         override suspend fun syncOp(op: String, body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject {
             var result: kotlinx.serialization.json.JsonObject? = null
-            pushMutex.withLock {
+            linkPushMutex.withLock {
                 var attemptedRedial = false
                 while (result == null) {
                     val sess = ensureLinkSession()
@@ -590,6 +589,28 @@ class AccountContainer(
             return checkNotNull(result)
         }
     }
+
+    /** Non-retrying business call. An uncertain input/commit is never silently re-executed.
+     * Account scope is cancelled/joined at lock, unbind and generation replacement. */
+    internal suspend fun ptyRequest(body: kotlinx.serialization.json.JsonObject): kotlinx.serialization.json.JsonObject =
+        accountScope.async(Dispatchers.IO) {
+            check(!localMode && started.get() && networkEnabled.get()) { "binding_expired" }
+            linkPushMutex.withLock {
+                check(networkEnabled.get()) { "binding_expired" }
+                val session = ensureLinkSession()
+                try {
+                    val result = appContainer.embeddedLink.push(
+                        endpoint.baseUrl, session, kind = 11, body = body,
+                        spkiPins = linkSpkiPins, insecure = linkInsecure,
+                    ).ack
+                    check(networkEnabled.get()) { "binding_expired" }
+                    result
+                } catch (error: Exception) {
+                    linkSessionMutex.withLock { if (linkSession == session) linkSession = null }
+                    throw error
+                }
+            }
+        }.await()
 
     /**
      * Data sync transport. Local-only accounts have no server. Bound accounts use HTTPS only for

@@ -100,6 +100,28 @@ jobs:
           path: .link-evidence/
           if-no-files-found: error
 
+  primary-pty-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false playwright@1.58.2
+      - run: npx playwright install --with-deps chromium
+      - name: Actual browser renderer and real retained SSH PTY handoff
+        run: node --test tests/link-pty-browser-live.test.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: link-primary-pty-browser
+          include-hidden-files: true
+          path: .link-evidence/
+          if-no-files-found: warn
+
   go-runtime:
     runs-on: ubuntu-latest
     timeout-minutes: 25

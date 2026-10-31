@@ -6019,6 +6019,15 @@ function bindTerminalPanelPinStateMessages() {
     window.__splitSlideBound = '1';
     window.addEventListener('message', (e) => {
         const data = e.data;
+        /* 只有当前主端明确允许的 SSH PTY 才可接收；设备在线不是拥有会话的证明。 */
+        if (data?.source === 'zephyr-terminal' && data.type === 'zephyr-handoff-transferred') {
+            const frame = [...document.querySelectorAll('iframe.terminal-frame')].find(item => item.contentWindow === e.source);
+            if (e.origin !== location.origin || !frame) return;
+            toast('会话已接力到另一端');
+            exitTerminalFullscreen();
+            setTerminalSmartbarOpen(true);
+            return;
+        }
         /* 文档 4.2.3 规则 B：子窗格加载完成后回问槽位，立即补发。 */
         if (data && data.source === 'zephyr-terminal' && data.type === 'zephyr-pane-slot-query') {
             broadcastPaneSlotConstraints(); try { broadcastAiStateToTerminalFrames(); } catch (_) {}
@@ -16539,17 +16548,16 @@ function bindConnectionPressFeedback(root = document) {
 function bindEvents() {
     document.documentElement.dataset.appBindEvents = 'start';
     bindTerminalPanelPinStateMessages();
-    /* 计划 4.2.4：跨端接管入口。协议（ZSL-HANDOFF/1）尚未实现，
-     * 这里明确告知而不是假装成功，避免出现「点了没反应」的假功能。 */
+    /* 设备角标只打开真实主端 PTY 列表，不把在线状态当成可接管证明。
+     * 未允许的 SSH、本地直连、RDP/VNC/跨账户会话不会出现在接收列表。 */
     document.addEventListener('click', (e) => {
         const row = e.target.closest && e.target.closest('[data-handoff-device]');
         if (!row) return;
         e.preventDefault();
         e.stopPropagation();
         const online = row.dataset.handoffOnline === '1';
-        toast(online
-            ? t('跨端接管协议尚未实现，无法从此设备接管会话')
-            : t('该设备当前离线，无法接管'));
+        if (!online) { toast(t('该设备当前离线，无法接管')); return; }
+        window.open('/terminal.html?handoff=1', '_blank', 'noopener');
     }, true);
     bindTerminalShelfCollapse();
     bindConnectionPressFeedback();

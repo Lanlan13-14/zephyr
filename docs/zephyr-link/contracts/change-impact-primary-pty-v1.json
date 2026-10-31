@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "Primary same-account SSH PTY handoff continuation",
+  "scope": ["Node real SSH PTY ownership", "browser receive and render ACK", "Android kind-11 receive", "Go authenticated business bridge"],
+  "invariants": ["server-authenticated owner lease", "snapshot-before-single-winner-commit", "old-socket-input-disconnect-reconnect-denied", "no-upstream-credential-export", "byte-exact-bounded-output", "input-consumed-before-write", "binding-revoke-fail-closed", "Android-sync-and-PTY-share-push-mutex"],
+  "requiredTests": ["tests/link-pty-handoff.test.mjs", "tests/link-pty-production.test.mjs", "tests/link-pty-browser.test.mjs", "tests/link-v2-pty-bridge.test.mjs", "Go AI and primary-PTY encrypted business roundtrip", "PrimaryPtyTerminalHostTest", "all existing mobile platform jobs"],
+  "notClaimed": ["iOS PTY UI", "RDP/VNC handoff", "cross-user approval", "local PTY migration", "multi-replica HA", "D1-D15", "physical-device validation"],
+  "releaseGate": "unchanged strict production conformance, no release"
+}

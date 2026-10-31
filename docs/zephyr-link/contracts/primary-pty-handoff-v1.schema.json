@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zephyr-link/primary-pty-handoff-v1",
+  "title": "Primary anchored same-account SSH PTY (kind 11)",
+  "oneOf": [
+    {"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"const":"handoff.list"}}},
+    {"type":"object","additionalProperties":false,"required":["op","sessionId"],"properties":{"op":{"const":"handoff.prepare"},"sessionId":{"$ref":"#/$defs/id"}}},
+    {"type":"object","additionalProperties":false,"required":["op","prepareId","snapshotHash","appliedSequence"],"properties":{"op":{"const":"handoff.commit"},"prepareId":{"$ref":"#/$defs/id"},"snapshotHash":{"type":"string","pattern":"^[a-f0-9]{64}$"},"appliedSequence":{"$ref":"#/$defs/sequence"}}},
+    {"type":"object","additionalProperties":false,"required":["op","prepareId"],"properties":{"op":{"const":"handoff.abort"},"prepareId":{"$ref":"#/$defs/id"}}},
+    {"type":"object","additionalProperties":false,"required":["op","sessionId","sessionEpoch","afterSeq"],"properties":{"op":{"const":"pty.read"},"sessionId":{"$ref":"#/$defs/id"},"sessionEpoch":{"$ref":"#/$defs/epoch"},"afterSeq":{"$ref":"#/$defs/sequence"}}},
+    {"type":"object","additionalProperties":false,"required":["op","sessionId","sessionEpoch","inputSeq","data"],"properties":{"op":{"const":"pty.input"},"sessionId":{"$ref":"#/$defs/id"},"sessionEpoch":{"$ref":"#/$defs/epoch"},"inputSeq":{"$ref":"#/$defs/epoch"},"data":{"type":"string","maxLength":87384,"pattern":"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"}}},
+    {"type":"object","additionalProperties":false,"required":["op","sessionId","sessionEpoch","cols","rows"],"properties":{"op":{"const":"pty.resize"},"sessionId":{"$ref":"#/$defs/id"},"sessionEpoch":{"$ref":"#/$defs/epoch"},"cols":{"type":"integer","minimum":20,"maximum":500},"rows":{"type":"integer","minimum":2,"maximum":200}}}
+  ],
+  "$defs": {
+    "id":{"type":"string","minLength":1,"maxLength":200},
+    "epoch":{"type":"integer","minimum":1,"maximum":9007199254740991},
+    "sequence":{"type":"integer","minimum":0,"maximum":9007199254740991}
+  }
+}

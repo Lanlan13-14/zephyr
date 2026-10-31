@@ -41,7 +41,7 @@ function resolveBin() {
 }
 
 class GoLinkProcess {
-    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeUrlReady = null, syncBridgeToken = '', aiBridgeUrl = '', aiBridgeUrlReady = null, aiBridgeToken = '', fileBridgeUrl = '', fileBridgeUrlReady = null, fileBridgeToken = '', oneRelayAuthUrl = '', oneRelayAuthUrlReady = null } = {}) {
+    constructor({ log, adminToken = '', syncBridgeUrl = '', syncBridgeUrlReady = null, syncBridgeToken = '', aiBridgeUrl = '', aiBridgeUrlReady = null, aiBridgeToken = '', ptyBridgeUrl = '', ptyBridgeUrlReady = null, ptyBridgeToken = '', fileBridgeUrl = '', fileBridgeUrlReady = null, fileBridgeToken = '', oneRelayAuthUrl = '', oneRelayAuthUrlReady = null } = {}) {
         this.log = log || (() => {});
         this.proc = null;
         this.addr = null;
@@ -55,6 +55,9 @@ class GoLinkProcess {
         this.aiBridgeUrl = aiBridgeUrl;
         this.aiBridgeUrlReady = aiBridgeUrlReady;
         this.aiBridgeToken = aiBridgeToken;
+        this.ptyBridgeUrl = ptyBridgeUrl;
+        this.ptyBridgeUrlReady = ptyBridgeUrlReady;
+        this.ptyBridgeToken = ptyBridgeToken;
         this.fileBridgeUrl = fileBridgeUrl;
         this.fileBridgeUrlReady = fileBridgeUrlReady;
         this.fileBridgeToken = fileBridgeToken;
@@ -74,6 +77,7 @@ class GoLinkProcess {
             this.syncBridgeUrl = await this.syncBridgeUrlReady;
         }
         if (this.aiBridgeUrlReady) this.aiBridgeUrl = await this.aiBridgeUrlReady;
+        if (this.ptyBridgeUrlReady) this.ptyBridgeUrl = await this.ptyBridgeUrlReady;
         if (this.fileBridgeUrlReady) {
             this.fileBridgeUrl = await this.fileBridgeUrlReady;
         }
@@ -94,6 +98,8 @@ class GoLinkProcess {
                 ZEPHYR_LINK_SYNC_TOKEN: this.syncBridgeToken,
                 ZEPHYR_LINK_AI_BRIDGE: this.aiBridgeUrl,
                 ZEPHYR_LINK_AI_TOKEN: this.aiBridgeToken,
+                ZEPHYR_LINK_PTY_BRIDGE: this.ptyBridgeUrl,
+                ZEPHYR_LINK_PTY_TOKEN: this.ptyBridgeToken,
                 ZEPHYR_LINK_FILE_BRIDGE: this.fileBridgeUrl,
                 ZEPHYR_LINK_FILE_TOKEN: this.fileBridgeToken,
                 ZEPHYR_LINK_ONE_RELAY_AUTH: this.oneRelayAuthUrl,
@@ -142,7 +148,7 @@ function stopLinkV2Go() {
     if (shared.proc) { shared.proc.stop(); shared.proc = null; }
 }
 
-function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken, aiBridgeUrl, aiBridgeUrlReady, aiBridgeToken, fileBridgeUrl, fileBridgeUrlReady, fileBridgeToken, oneRelayAuthUrl, oneRelayAuthUrlReady } = {}) {
+function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, syncBridgeUrlReady, syncBridgeToken, aiBridgeUrl, aiBridgeUrlReady, aiBridgeToken, ptyBridgeUrl, ptyBridgeUrlReady, ptyBridgeToken, fileBridgeUrl, fileBridgeUrlReady, fileBridgeToken, oneRelayAuthUrl, oneRelayAuthUrlReady } = {}) {
     /* oneRelayAuthUrlReady must reach GoLinkProcess. Dropping it left
      * ZEPHYR_LINK_ONE_RELAY_AUTH empty, so every One→Agent splice died as
      * "one-relay is not authorized on this server" and Android showed 502. */
@@ -154,6 +160,9 @@ function createLinkV2GoProxy({ log, enrollments, adminToken, syncBridgeUrl, sync
         aiBridgeUrl,
         aiBridgeUrlReady,
         aiBridgeToken,
+        ptyBridgeUrl,
+        ptyBridgeUrlReady,
+        ptyBridgeToken,
         fileBridgeUrl,
         fileBridgeUrlReady,
         fileBridgeToken,

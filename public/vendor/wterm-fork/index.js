@@ -1,4 +1,4 @@
-import { WTerm } from "./wterm.js";
+import { WTerm } from "./wterm.js?v=20261031-pty1";
 import { Renderer } from "./renderer.js";
 import { CanvasRenderer } from "./canvas-renderer.js";
 import { InputHandler } from "./input.js";

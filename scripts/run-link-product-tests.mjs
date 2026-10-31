@@ -25,6 +25,8 @@ const groups = {
     'agent-policy-engine', 'file-agent-v2', 'file-agent-preauth-resource-gate',
     'link-frame-validate', 'link-v2-sync-envelope', 'link-v2-sync-bridge',
     'link-v2-file-bridge', 'link-handoff-session', 'cell-command-allowlist-contract',
+    'link-pty-handoff', 'link-pty-production', 'link-pty-browser', 'link-v2-pty-bridge',
+    'terminal-snapshot-race', 'terminal-history-integration', 'ssh-session-resume-contract',
   ],
   ai: [
     'ai-run-idempotency', 'ai-tool-executor-idempotency', 'ai-host-call-identity',

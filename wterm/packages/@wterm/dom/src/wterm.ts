@@ -658,6 +658,20 @@ export class WTerm {
     this._scheduleRender();
   }
  
+  async writeAndRender(data: string | Uint8Array): Promise<void> {
+    if (!this.bridge || this._destroyed) throw new Error('terminal_unavailable');
+    const bridge = this.bridge as typeof this.bridge & { writeConsumed?: (data: string | Uint8Array) => Promise<void> };
+    if (typeof bridge.writeConsumed === 'function') await bridge.writeConsumed(data);
+    else if (typeof data === 'string') bridge.writeString(data);
+    else bridge.writeRaw(data);
+    return new Promise<void>((resolve, reject) => {
+      let unsubscribe = () => {};
+      const timeout = setTimeout(() => { unsubscribe(); reject(new Error('terminal_render_timeout')); }, 5000);
+      unsubscribe = this.onRenderComplete(() => { clearTimeout(timeout); unsubscribe(); resolve(); });
+      this._scheduleRender();
+    });
+  }
+
   resize(cols: number, rows: number): void {
     if (!this.bridge) return;
     if (!this._isXtermEngine()) {

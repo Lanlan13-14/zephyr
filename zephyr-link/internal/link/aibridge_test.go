@@ -12,6 +12,11 @@ import (
 )
 
 func TestAIBridgeAuthenticatedSessionDispatchesRealBusinessRequest(t *testing.T) {
+	t.Run("AI", func(t *testing.T) { testBusinessBridge(t, codec.KindAI) })
+	t.Run("primary-PTY", func(t *testing.T) { testBusinessBridge(t, codec.KindSharedTerminal) })
+}
+
+func testBusinessBridge(t *testing.T, kind int) {
 	calls := 0
 	business := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -22,22 +27,28 @@ func TestAIBridgeAuthenticatedSessionDispatchesRealBusinessRequest(t *testing.T)
 		if json.NewDecoder(r.Body).Decode(&body) != nil {
 			t.Error("bad bridge JSON")
 		}
-		if body["deviceId"] != "device-ai" || body["kind"] != float64(codec.KindAI) {
+		if body["deviceId"] != "device-ai" || body["kind"] != float64(kind) {
 			t.Errorf("identity from authenticated session: %#v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"ok":true,"kind":15,"body":{"ok":true,"runId":"executed-run","state":"running"}}`)
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "kind": kind, "body": map[string]any{"ok": true, "runId": "executed-run", "state": "running"}})
 	}))
 	defer business.Close()
 	node := NewNode()
-	if err := node.RegisterAIBridge(AIBridgeConfig{URL: business.URL, AdminToken: "test-bridge-secret-123456"}); err != nil {
-		t.Fatal(err)
+	var registerErr error
+	if kind == codec.KindSharedTerminal {
+		registerErr = node.RegisterPtyBridge(PtyBridgeConfig{URL: business.URL, AdminToken: "test-bridge-secret-123456"})
+	} else {
+		registerErr = node.RegisterAIBridge(AIBridgeConfig{URL: business.URL, AdminToken: "test-bridge-secret-123456"})
+	}
+	if registerErr != nil {
+		t.Fatal(registerErr)
 	}
 	host := httptest.NewServer(node.Handler())
 	defer host.Close()
 	device, sessionID := enrollAndHandshake(t, node, host.URL, "device-ai")
 	body := map[string]any{"op": "ai.command.dispatch", "requestId": "req1", "prompt": "pwd", "deviceId": "forged-device"}
-	envelope, err := device.Send(codec.KindAI, body, false)
+	envelope, err := device.Send(kind, body, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +86,7 @@ func TestAIBridgeAuthenticatedSessionDispatchesRealBusinessRequest(t *testing.T)
 	if err := codec.Decode(frame.Body, &ack); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || frame.Kind != codec.KindAI || ack["runId"] != "executed-run" {
+	if calls != 1 || frame.Kind != kind || ack["runId"] != "executed-run" {
 		t.Fatalf("not real AI business result: calls=%d frame=%#v ack=%#v", calls, frame, ack)
 	}
 }

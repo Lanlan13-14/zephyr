@@ -135,6 +135,30 @@ class TermuxSessionBridge(
         session.appendFromRemote(bytes, 0, bytes.size)
     }
 
+    /** Wait for a real attached visible view draw, not a timer pretending rendering completed. */
+    suspend fun awaitVisibleRender() {
+        kotlinx.coroutines.withTimeout(5000) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                val view = attachedView?.get() ?: error("render_ack_unavailable")
+                check(view.isShown && view.width > 0 && view.height > 0) { "render_ack_unavailable" }
+                kotlinx.coroutines.suspendCancellableCoroutine<Unit> { continuation ->
+                    val observer = view.viewTreeObserver
+                    lateinit var listener: android.view.ViewTreeObserver.OnDrawListener
+                    listener = android.view.ViewTreeObserver.OnDrawListener {
+                        view.post {
+                            if (observer.isAlive) observer.removeOnDrawListener(listener)
+                            if (continuation.isActive) continuation.resumeWith(Result.success(Unit))
+                        }
+                    }
+                    observer.addOnDrawListener(listener)
+                    continuation.invokeOnCancellation { view.post { if (observer.isAlive) observer.removeOnDrawListener(listener) } }
+                    view.onScreenUpdated()
+                    view.invalidate()
+                }
+            }
+        }
+    }
+
     fun sendBytes(bytes: ByteArray) {
         if (bytes.isEmpty()) return
         session.write(bytes, 0, bytes.size)

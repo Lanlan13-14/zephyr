@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -292,6 +293,7 @@ class TerminalViewModel(
     }
 
     private fun disclosureFor(connection: Connection): String? {
+        if (host.isPrimaryPty(sessionId)) return "主端执行 · trusted-primary · 上游凭据不落本机"
         if (connection.residency != Residency.SHARED_ONLINE_ONLY) return null
         return if (connection.sharedUsePolicy.materialTouchesDevice) DISCLOSURE_DIRECT else DISCLOSURE_RELAY
     }
@@ -379,8 +381,14 @@ class TerminalViewModel(
             )
             when (val outcome = host.open(request)) {
                 is TerminalOpenOutcome.Opened -> {
-                    registry.setTransport(sessionId, SessionTransport.CONNECTED, clock())
+                    if (!host.isPrimaryPty(sessionId)) registry.setTransport(sessionId, SessionTransport.CONNECTED, clock())
                     if (outcome.banner.isNotEmpty()) titleState.value = outcome.banner
+                    host.initialSize(sessionId)?.let { (cols, rows) ->
+                        withContext(Dispatchers.Main.immediate) {
+                            synchronized(emulatorLock) { emulator.resize(cols, rows) }
+                            controller.onViewportGeometry(cols, rows)
+                        }
+                    }
                     startOutput()
                     startClosureWatch()
                     startLatencyProbe()
@@ -452,7 +460,12 @@ class TerminalViewModel(
     private fun startOutput() {
         outputJob?.cancel()
         outputJob = viewModelScope.launch {
-            host.output(sessionId).collect { bytes ->
+            host.output(sessionId).catch { failure ->
+                errorState.value = MobileError.local("terminal_output_failed", failure.message ?: REMOTE_CLOSED, false)
+                registry.close(sessionId, clock(), failure.message ?: REMOTE_CLOSED)
+                runCatching { host.close(sessionId) }
+            }.collect { bytes ->
+                if (host.isPrimaryPty(sessionId) && host.primaryPtyCommitted(sessionId)) registry.setTransport(sessionId, SessionTransport.CONNECTED, clock())
                 // Termux's emulator and TerminalView share one buffer. Feeding it off the main
                 // thread races onDraw and paints a blank grid. Snapshot-only emulators stay on
                 // the background dispatcher so unit tests do not need a Looper.
@@ -469,6 +482,19 @@ class TerminalViewModel(
                 controller.onOutput(update.newRows, update.transcriptRows)
                 update.title?.let { titleState.value = it }
                 redrawWake.trySend(Unit)
+                if (host.requiresRenderAck(sessionId)) {
+                    try {
+                        val bridge = termux ?: error("render_ack_unavailable")
+                        bridge.awaitVisibleRender()
+                    } catch (failure: Exception) {
+                        if (failure is kotlinx.coroutines.CancellationException && failure !is kotlinx.coroutines.TimeoutCancellationException) throw failure
+                        errorState.value = MobileError.local("render_ack_failed", failure.message ?: "屏幕尚未应用", false)
+                        registry.close(sessionId, clock(), "接力屏幕确认失败")
+                        runCatching { host.close(sessionId) }
+                        throw kotlinx.coroutines.CancellationException("接力屏幕确认失败", failure)
+                    }
+                }
+                host.outputApplied(sessionId, bytes)
             }
         }
     }
@@ -605,7 +631,9 @@ class TerminalViewModel(
                 host = connection.host,
                 port = connection.port,
                 transport = transport,
-                execution = if (connection.sharedUsePolicy.materialTouchesDevice) {
+                execution = if (host.isPrimaryPty(sessionId)) {
+                    SessionExecution.RELAY
+                } else if (connection.sharedUsePolicy.materialTouchesDevice) {
                     SessionExecution.LOCAL
                 } else if (connection.residency == Residency.SHARED_ONLINE_ONLY) {
                     SessionExecution.RELAY

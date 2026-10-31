@@ -82,9 +82,9 @@ test('cross-user handoff without approval is approval_required', () => {
   assert.equal(handoff.get('sess-1').sessionEpoch, 1);
 });
 
-test('Smartbar still refuses to pretend Handoff protocol exists', () => {
+test('Smartbar opens an explicit primary SSH PTY receiver, not fake per-device takeover', () => {
   const app = fs.readFileSync('public/app.js', 'utf8');
-  assert.match(app, /跨端接管协议尚未实现/);
+  assert.match(app, /terminal\.html\?handoff=1/);
   assert.match(app, /data-handoff-device/);
 });
 
@@ -96,5 +96,6 @@ test('live SSH session input without epoch stays compatible; stale epoch is reje
     (err) => err.code === 'stale_epoch',
   );
   const server = fs.readFileSync('server.js', 'utf8');
-  assert.match(server, /assertLiveSessionEpoch\(attachedSshSession, msg\)/);
+  assert.match(server, /primaryPtyHandoff\.assertSocket\(ptySocketAuth, attachedSshSession, msg\.sessionEpoch\)/);
+  assert.match(server, /if \(existingSession\.handoff\)/);
 });

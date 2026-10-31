@@ -32,6 +32,8 @@ const envSyncBridge = "ZEPHYR_LINK_SYNC_BRIDGE" // loopback Node sync-core bridg
 const envSyncToken = "ZEPHYR_LINK_SYNC_TOKEN"   // loopback shared secret for the bridge
 const envAIBridge = "ZEPHYR_LINK_AI_BRIDGE"
 const envAIToken = "ZEPHYR_LINK_AI_TOKEN"
+const envPtyBridge = "ZEPHYR_LINK_PTY_BRIDGE"
+const envPtyToken = "ZEPHYR_LINK_PTY_TOKEN"
 const envFileBridge = "ZEPHYR_LINK_FILE_BRIDGE"      // loopback Node file bridge URL
 const envFileToken = "ZEPHYR_LINK_FILE_TOKEN"        // loopback shared secret for file bridge
 const envOneRelayAuth = "ZEPHYR_LINK_ONE_RELAY_AUTH" // loopback Node one-relay auth URL
@@ -71,6 +73,13 @@ func main() {
 			os.Exit(1)
 		}
 		log.Info("AI lane bridged to the canonical Node AI service")
+	}
+	if url := os.Getenv(envPtyBridge); url != "" {
+		if err := node.RegisterPtyBridge(link.PtyBridgeConfig{URL: url, AdminToken: os.Getenv(envPtyToken)}); err != nil {
+			log.Error("PTY bridge configuration rejected")
+			os.Exit(1)
+		}
+		log.Info("shared-terminal lane bridged to live primary PTYs")
 	}
 	if url := os.Getenv(envFileBridge); url != "" {
 		node.RegisterFileBridge(link.FileBridgeConfig{URL: url, AdminToken: os.Getenv(envFileToken)})

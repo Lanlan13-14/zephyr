@@ -38,6 +38,7 @@ import {
     Intent as SoftKeyboardIntent,
     LiftMode as SoftKeyboardLiftMode,
 } from './ssh-keyboard/index.js?v=20260723-sync2';
+import { createTerminalHandoff } from './terminal-handoff.js?v=20261031-pty1';
 import { createTerminalRemoteHistory } from './terminal-remote-history.js?v=20260720-wterm-main1';
 import { createTerminalHistoryGesture } from './terminal-history-gesture.js?v=20260801-terminal-stability1';
 import { decideTerminalGridGrowth } from './terminal-grid-convergence.js?v=20260801-terminal-grid-converge1';
@@ -670,6 +671,7 @@ function getParams() {
     try {
         const qs = new URLSearchParams(location.search);
         const tabId = qs.get('tabId');
+        if (qs.get('handoff') === '1') return { handoffOnly: true, protocol: 'SSH', host: '主端会话', port: 22, username: '', tabId: tabId || crypto.randomUUID() };
         const key = tabId ? `zephyr_ssh_params_${tabId}` : 'zephyr_ssh_params';
         const raw = sessionStorage.getItem(key);
         const params = raw ? JSON.parse(raw) : null;
@@ -876,6 +878,84 @@ const toolbar = topbarActions;  // mobile: original CSS-icon actions row
 // ---------- 全局变量 ----------
 let term = null;
 let wsConnection = null;
+let ptyHandoffClient = null;
+let offeredPtyEpoch = null;
+const ptyRpcPending = new Map();
+function ptyRpc(body) {
+    return new Promise((resolve, reject) => {
+        if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) { reject(new Error('terminal_not_connected')); return; }
+        const requestId = crypto.randomUUID();
+        const timeout = setTimeout(() => { ptyRpcPending.delete(requestId); reject(new Error('handoff_timeout')); }, 10000);
+        ptyRpcPending.set(requestId, { resolve, reject, timeout });
+        wsConnection.send(JSON.stringify({ type: 'handoff.rpc', requestId, body }));
+    });
+}
+function setupPtyHandoff(ws) {
+    const send = ws.send.bind(ws);
+    ws.send = data => {
+        let msg;
+        try { msg = JSON.parse(data); } catch { return send(data); }
+        if (msg.type === 'input' && ptyHandoffClient?.active) { ptyHandoffClient.input(new TextEncoder().encode(String(msg.data || ''))); return; }
+        if (msg.type === 'resize' && ptyHandoffClient?.active) { void ptyHandoffClient.resize(msg.cols, msg.rows); return; }
+        if (offeredPtyEpoch != null && msg.type !== 'handoff.rpc') msg.sessionEpoch = offeredPtyEpoch;
+        return send(JSON.stringify(msg));
+    };
+    ptyHandoffClient?.stop();
+    offeredPtyEpoch = null;
+    ptyHandoffClient = createTerminalHandoff({
+        rpc: ptyRpc,
+        applySnapshot: async snapshot => {
+            if (!term?.writeAndRender) throw new Error('renderer_ack_unavailable');
+            resizeWTermSafely(snapshot.cols, snapshot.rows, 'handoff-snapshot');
+            await term.writeAndRender(snapshot.data);
+        },
+        applyFrames: async frames => {
+            for (const frame of frames) {
+                const bytes = Uint8Array.from(atob(frame.data), value => value.charCodeAt(0));
+                await term.writeAndRender(bytes);
+            }
+        },
+        onTaken: result => {
+            offeredPtyEpoch = result.sessionEpoch;
+            terminalHistorySessionId = result.sessionId;
+            setStatus('connected', '已接收主端会话 · trusted-primary');
+        },
+        onError: error => { userClosedConnection = true; setStatus('error', '接力已停止：' + error.message); },
+    });
+}
+async function showPtyHandoffDialog() {
+    if (!ptyHandoffClient || !wsConnection || wsConnection.readyState !== WebSocket.OPEN) { showToast('请先连接终端', 'error'); return; }
+    const dialog = document.createElement('dialog');
+    dialog.setAttribute('aria-label', 'SSH 会话接力');
+    dialog.style.cssText = 'max-width:440px;width:calc(100% - 32px);border-radius:14px;padding:20px;background:var(--bg-secondary,#181a20);color:var(--text-primary,#fff);border:1px solid var(--border-color,#444)';
+    const title = document.createElement('h3'); title.textContent = 'SSH 会话接力';
+    const description = document.createElement('p'); description.textContent = '上游凭据留在主端。接收方为当前账号，接收完成后原端失去控制权（trusted-primary）。';
+    const offer = document.createElement('button'); offer.className = 'btn-sm'; offer.textContent = '允许接力当前会话';
+    const list = document.createElement('div'); list.setAttribute('aria-live', 'polite'); list.textContent = '正在加载…';
+    const close = document.createElement('button'); close.className = 'btn-sm'; close.textContent = '关闭'; close.onclick = () => dialog.close();
+    dialog.append(title, description, offer, list, close); document.body.append(dialog);
+    dialog.addEventListener('close', () => dialog.remove(), { once: true }); dialog.showModal();
+    offer.onclick = async () => {
+        offer.disabled = true;
+        try { const result = await ptyHandoffClient.offer(); offeredPtyEpoch = result.sessionEpoch; offer.textContent = '已允许本账号接力'; }
+        catch (error) { list.textContent = error.message; offer.disabled = false; }
+    };
+    try {
+        const result = await ptyHandoffClient.list(); list.textContent = '';
+        if (!result.sessions.length) list.textContent = '暂无主端允许接力的 SSH 会话';
+        for (const session of result.sessions) {
+            const button = document.createElement('button'); button.className = 'btn-sm'; button.style.cssText = 'display:block;margin:12px 0;min-height:44px';
+            button.textContent = '接收：' + session.name;
+            button.onclick = async () => {
+                button.disabled = true;
+                try { await ptyHandoffClient.take(session.sessionId); dialog.close(); }
+                catch (error) { list.textContent = '接收失败：' + error.message; }
+            };
+            list.append(button);
+        }
+    } catch (error) { list.textContent = error.message; }
+}
+document.getElementById('handoffBtn')?.addEventListener('click', showPtyHandoffDialog);
 let isConnected = false;
 let sftpReady = false;
 let currentPath = '.';
@@ -13470,7 +13550,7 @@ async function initWTerm(connectionToken = activeConnectionToken, { followOnConn
     try {
         // Zephyr fork of @wterm/dom with public viewport API. DOM/input/viewport
         // stay wterm; core is XtermBridge over vendored xterm (see /xterm).
-        const module = await import('/vendor/wterm-fork/index.js?v=20260801-terminal-stability1');
+        const module = await import('/vendor/wterm-fork/index.js?v=20261031-pty1');
         WTermClass = module.WTerm;
     } catch {
         try {
@@ -13682,6 +13762,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
     return new Promise((resolve, reject) => {
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(`${proto}//${location.host}/ssh`);
+        setupPtyHandoff(ws);
         let settled = false;
         let ready = false;
         const fail = (err) => {
@@ -13697,6 +13778,13 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
         ws.addEventListener('open', () => {
             if (connectionToken !== activeConnectionToken) { try { ws.close(); } catch (_) {} return; }
             clearTimeout(timeout);
+            if (params.handoffOnly) {
+                ready = true; settled = true;
+                setStatus('connected', '请选择要接收的主端 SSH 会话');
+                resolve(ws);
+                void showPtyHandoffDialog();
+                return;
+            }
             const initialSize = getInitialTerminalSize();
             ws.send(JSON.stringify({
                 type: 'connect',
@@ -13730,6 +13818,20 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
             if (connectionToken !== activeConnectionToken) return;
             try {
                 const msg = JSON.parse(event.data);
+                if (msg.type === 'handoff.reply') {
+                    const pending = ptyRpcPending.get(msg.requestId);
+                    if (pending) { clearTimeout(pending.timeout); ptyRpcPending.delete(msg.requestId); pending.resolve(msg.body); }
+                    return;
+                }
+                if (msg.type === 'HANDOFF_TRANSFERRED') {
+                    ptyHandoffClient?.stop(); offeredPtyEpoch = null;
+                    userClosedConnection = true;
+                    clearReconnectTimer();
+                    setStatus('disconnected', '会话已接力到另一端');
+                    try { parent.postMessage({ source: 'zephyr-terminal', type: 'zephyr-handoff-transferred', tabId: params.tabId, sessionId: msg.sessionId }, location.origin); } catch {}
+                    ws.close(1000, 'handoff-transferred');
+                    return;
+                }
                 if (msg.type === 'stats') { renderStatsSoon(msg.data); return; }
                 if (msg.type === 'os-detected') {
                     /* 后端探测到远端系统并已回写连接 icon：通知宿主页（app.html）
@@ -13881,7 +13983,14 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
         ws.addEventListener('close', (e) => {
             clearTimeout(timeout);
             if (connectionToken !== activeConnectionToken) return;
-            if (wsConnection === ws) wsConnection = null;
+            if (wsConnection === ws) {
+                const wasHandoff = ptyHandoffClient?.active || offeredPtyEpoch != null;
+                ptyHandoffClient?.stop();
+                if (wasHandoff) userClosedConnection = true;
+                wsConnection = null;
+                for (const pending of ptyRpcPending.values()) { clearTimeout(pending.timeout); pending.reject(new Error('handoff_disconnected')); }
+                ptyRpcPending.clear();
+            }
             if (!ready) {
                 fail(new Error(`连接已关闭 (${e.code || 'N/A'})`));
                 return;

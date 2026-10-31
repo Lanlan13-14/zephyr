@@ -472,6 +472,15 @@ export class XtermBridge implements TerminalCore {
     this.markAllDirty();
   }
 
+  writeConsumed(data: string | Uint8Array): Promise<void> {
+    return new Promise((resolve) => {
+      this._term.write(data, () => {
+        this.markAllDirty();
+        resolve();
+      });
+    });
+  }
+
   private _flushWriteBuffer(): void {
     const wb = this._term._core?._writeBuffer;
     // Older builds expose writeSync only; calling writeSync('') is a no-op drain

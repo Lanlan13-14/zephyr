@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title data-i18n="Zephyr - 终端">Zephyr - 终端</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
-    <link rel="modulepreload" href="terminal.js?v=20261019-ui130">
+    <link rel="modulepreload" href="terminal.js?v=20261031-pty1">
     <link rel="modulepreload" href="theme-runtime.js?v=20261018-ui1">
     <link rel="modulepreload" href="i18n/runtime.js?v=20261018-ui1">
     <link rel="stylesheet" href="/vendor/wterm-fork/terminal.css?v=20260801-terminal-grid-converge1">
@@ -62,6 +62,7 @@
                 <span class="topbar-v-sep" aria-hidden="true"></span>
                 <button class="btn-sm wterm-theme-toggle" id="wtermThemeToggle" title="独立切换终端画布明暗" data-i18n-title="独立切换 wterm 终端主题，不跟随全局深浅色模式" aria-label="切换终端主题" data-i18n-aria-label="切换终端主题" data-mobile-icon="term-theme"><svg class="tb-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/></svg></button>
                 <button class="btn-sm" id="themeToggle" title="切换主题" data-i18n-title="切换主题" aria-label="切换主题" data-i18n-aria-label="切换主题" data-mobile-icon="theme" data-i18n="主题" style="display:none;">主题</button>
+                <button class="btn-sm" id="handoffBtn" type="button" title="SSH 会话接力" aria-label="SSH 会话接力" data-mobile-icon="handoff">接力</button>
                 <button class="btn-sm" id="reconnectBtn" title="重新连接" data-i18n-title="重新连接" aria-label="重新连接" data-i18n-aria-label="重新连接" data-mobile-icon="reconnect"><svg class="tb-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
                 <button class="btn-sm danger" id="disconnectBtn" title="断开连接" data-i18n-title="断开连接" aria-label="断开连接" data-i18n-aria-label="断开连接" data-mobile-icon="disconnect" style="display:none;"><svg class="tb-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="5.7" y1="5.7" x2="18.3" y2="18.3"/></svg></button>
             </div>
@@ -455,6 +456,6 @@
     <script src="preview/image/image-preview.js?v=20261008-media-preview2"></script>
     <script src="preview/media/media-preview.js?v=20261008-media-preview2"></script>
     <script src="editor/zephyr-editor.bundle.js?v=20260725-telnet-page-split1" type="module"></script>
-    <script src="terminal.js?v=20261019-ui130" type="module"></script>
+    <script src="terminal.js?v=20261031-pty1" type="module"></script>
 </body>
 </html>

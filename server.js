@@ -157,6 +157,8 @@ const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go, linkTunnelDial, li
 const { OneLinkInitiator, OneLinkSyncSession } = require('./zephyr-one-link-embed');
 const { createLinkSyncBridge } = require('./link-v2-sync-bridge');
 const { createLinkAiBridge } = require('./link-v2-ai-bridge');
+const { PrimaryPtyHandoff, fault: ptyHandoffFault } = require('./link-pty-handoff');
+const { createLinkPtyBridge, dispatchPty } = require('./link-v2-pty-bridge');
 const { createLinkFileBridge } = require('./link-v2-file-bridge');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 const { MobileV1OutboxDispatcher } = require('./mobile-v1-outbox-dispatcher');
@@ -509,6 +511,29 @@ const terminalHistoryCleanupTimer = setInterval(() => {
 }, 6 * 60 * 60 * 1000);
 terminalHistoryCleanupTimer.unref?.();
 const sshTerminalSessions = new Map();
+const primaryPtyHandoff = new PrimaryPtyHandoff({
+    sessions: sshTerminalSessions,
+    authorize: (auth, session) => {
+        const connection = resourceService.getRawAuthorized(auth.user, 'connection', session.connectionId, CAP.USE);
+        if (String(connection.ownerUserId) !== String(auth.userId)) throw ptyHandoffFault('session_not_found', 404);
+    },
+    capture: async (session) => {
+        if (session.snapshotFailed || !session.terminalSnapshot) throw ptyHandoffFault('snapshot_unavailable');
+        return session.terminalSnapshot.serialize({ scrollback: 2000 });
+    },
+    writeInput: (session, bytes) => {
+        if (!session.sshStream?.writable || session.sshStream.writableLength > 256 * 1024) throw ptyHandoffFault('stream_unavailable');
+        session.sshStream.write(bytes);
+    },
+    resize: (session, cols, rows) => {
+        if (!session.sshStream?.setWindow) throw ptyHandoffFault('stream_unavailable');
+        session.sshStream.setWindow(rows, cols, 0, 0);
+        session.pty = { cols, rows };
+        session.terminalSnapshot.resize(cols, rows);
+        flushSshSessionHistory(session);
+        terminalHistory.appendResize(session.userId, session.id, cols, rows);
+    },
+});
 const sftpDownloadTokens = new Map();
 const sftpUploadTokens = new Map();
 const sftpPreviewTokens = new Map();
@@ -694,10 +719,15 @@ function appendSshSessionBuffer(session, data) {
     // into a headless xterm and replay its serialized framebuffer instead.
     session.outputSequence = Math.max(0, Number(session.outputSequence) || 0) + 1;
     const outputSequence = session.outputSequence;
-    try { session.terminalSnapshot?.write?.(bytes, outputSequence); }
+    try {
+        const written = session.terminalSnapshot?.write?.(bytes, outputSequence);
+        written?.catch?.(() => { session.snapshotFailed = true; });
+    }
     catch (err) {
+        session.snapshotFailed = true;
         console.warn('[SSH-SESSION]', 'snapshot write failed', { sessionId: session.id, error: err.message });
     }
+    primaryPtyHandoff.append(session, bytes, outputSequence);
     queueSshSessionHistory(session, bytes);
     session.lastActive = Date.now();
     return outputSequence;
@@ -706,6 +736,10 @@ function appendSshSessionBuffer(session, data) {
 function broadcastSshSession(session, obj) {
     if (!session?.attachedWs) return;
     for (const targetWs of [...session.attachedWs]) {
+        if (session.handoff) {
+            if (targetWs._ptyLeaseId !== session.handoff.owner) continue;
+            try { if (!targetWs._assertPtyLive) continue; targetWs._assertPtyLive(session); } catch { continue; }
+        }
         wsSendJSON(targetWs, obj);
     }
 }
@@ -720,6 +754,10 @@ const SSH_OUTPUT_FRAME_MS = Math.max(4, Math.min(32, Number(process.env.SSH_OUTP
 function broadcastSshOutputItems(session, pending = []) {
     if (!session?.attachedWs || !pending.length) return;
     for (const targetWs of [...session.attachedWs]) {
+        if (session.handoff) {
+            if (targetWs._ptyLeaseId !== session.handoff.owner) continue;
+            try { if (!targetWs._assertPtyLive) continue; targetWs._assertPtyLive(session); } catch { continue; }
+        }
         const delivered = Math.max(0, Number(targetWs._sshOutputSequence) || 0);
         const relevant = pending.filter((item) => !item.sequence || item.sequence > delivered);
         if (!relevant.length) continue;
@@ -9485,6 +9523,12 @@ try {
             next();
         });
         linkInternalApp.use('/internal/link', express.json({ limit: '4mb' }));
+        const linkPtyBridge = createLinkPtyBridge({
+            handoff: primaryPtyHandoff, resolveAuth: linkSyncBridge.resolveAuth,
+            adminToken: linkSyncAdminToken,
+            operational: () => !databaseMaintenance.active && !databaseMaintenance.fatal,
+        });
+        linkInternalApp.post('/internal/link/pty', databaseMaintenanceGate, (req,res) => linkPtyBridge.handle(req,res));
         linkInternalApp.post('/internal/link/ai', databaseMaintenanceGate, (req,res) => linkAiBridge.handle(req,res));
         linkInternalApp.post('/internal/link/sync', (req, res) => linkSyncBridge.handle(req, res));
         const linkFileBridge = createLinkFileBridge({
@@ -9560,6 +9604,8 @@ try {
             syncBridgeToken: linkSyncAdminToken,
             aiBridgeUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/ai')),
             aiBridgeToken: linkSyncAdminToken,
+            ptyBridgeUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/pty')),
+            ptyBridgeToken: linkSyncAdminToken,
             fileBridgeUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/file')),
             fileBridgeToken: linkSyncAdminToken,
             oneRelayAuthUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/one-relay')),
@@ -10538,6 +10584,24 @@ wss.on('connection', (ws, req) => {
         }
     };
 
+    const ptyLeaseId = 'socket:' + crypto.randomUUID();
+    ws._ptyLeaseId = ptyLeaseId;
+    const ptySocketAuth = {
+        leaseId: ptyLeaseId,
+        userId: String(req.authSession?.userId || ''),
+        get user() { return storage.getUserBrief(this.userId); },
+        assertLive() {
+            const live = currentSession(req), user = this.user;
+            if (ws.readyState !== ws.OPEN || databaseMaintenance.active || databaseMaintenance.fatal ||
+                !live || live.mustChangePassword || String(live.userId) !== this.userId || user?.status !== 'active') throw ptyHandoffFault('app_session_expired', 403);
+        },
+    };
+    ws._assertPtyLive = session => primaryPtyHandoff.live(ptySocketAuth, session);
+    ws._onPtyHandoff = (event) => {
+        ++terminalConnectGeneration;
+        sendJSON(event);
+        cleanup({ destroySsh: false, reason: 'handoff-transferred' });
+    };
     let handleWsMessage = null;
     const pendingWsMessages = [];
     ws.on('message', (raw) => {
@@ -11187,6 +11251,34 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
             bytes: Buffer.byteLength(rawText),
         });
 
+        if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
+        if (msg.type === 'handoff.rpc') {
+            try {
+                ptySocketAuth.assertLive();
+                if (msg.body?.op === 'handoff.enable') {
+                    if (!attachedSshSession || Object.keys(msg.body).some(key => key !== 'op')) throw ptyHandoffFault('invalid_request', 400);
+                    if ([...attachedSshSession.attachedWs].some(socket => socket !== ws)) throw ptyHandoffFault('multiple_controllers');
+                    const body = primaryPtyHandoff.enable(attachedSshSession, ptySocketAuth);
+                    sendJSON({ type: 'handoff.reply', requestId: msg.requestId, body });
+                } else {
+                    if (msg.body?.op === 'handoff.prepare') cleanup({ destroySsh: false, reason: 'handoff-prepare-receiver' });
+                    const body = await dispatchPty(primaryPtyHandoff, ptySocketAuth, msg.body);
+                    ptySocketAuth.assertLive();
+                    if (msg.body?.op === 'handoff.commit' && body.ok) cleanup({ destroySsh: false, reason: 'handoff-receiver' });
+                    sendJSON({ type: 'handoff.reply', requestId: msg.requestId, body });
+                }
+            } catch (error) {
+                sendJSON({ type: 'handoff.reply', requestId: msg.requestId,
+                    body: { ok: false, error: { code: error.code || 'internal_error', message: 'PTY handoff rejected', retryable: false } } });
+            }
+            return;
+        }
+        // Once offered, every operation using this upstream handle is owner-fenced, including
+        // disconnect/SFTP/exec and reconnect. A client omission of epoch never restores authority.
+        if (attachedSshSession?.handoff && msg.type !== 'connect') {
+            try { primaryPtyHandoff.assertSocket(ptySocketAuth, attachedSshSession, msg.sessionEpoch); }
+            catch (error) { sendJSON({ type: 'error', code: error.code || 'stale_owner', message: '会话控制权已转移' }); return; }
+        }
         // ------------------------- SSH / TELNET 连接 -------------------------
         if (msg.type === 'connect') {
             /* Identity was verified once at upgrade; reuse it (no double-auth
@@ -11210,6 +11302,10 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
                 if (!sameOwner) {
                     sendJSON({ type: 'error', code: 'resource_not_found_or_inaccessible', message: '会话不存在或无权访问', retryable: false });
                     try { ws.close(1008, 'session-owner-mismatch'); } catch {}
+                    return;
+                }
+                if (existingSession.handoff) {
+                    sendJSON({ type: 'error', code: 'handoff_required', message: '该会话已启用独占接力，请从接力列表接收', retryable: false });
                     return;
                 }
                 await attachSshSession(existingSession, { replay: true });
@@ -11673,9 +11769,9 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
         // 输入
         if (msg.type === 'input') {
             try {
-                assertLiveSessionEpoch(attachedSshSession, msg);
+                if (!attachedSshSession?.handoff && msg.sessionEpoch !== undefined && msg.sessionEpoch !== attachedSshSession?.sessionEpoch) throw ptyHandoffFault('stale_epoch', 403);
             } catch (err) {
-                const code = err instanceof LinkHandoffError ? err.code : 'stale_epoch';
+                const code = err.code || 'stale_epoch';
                 sendJSON({ type: 'error', code, message: err.message || '会话 epoch 已失效' });
                 return;
             }
@@ -11701,9 +11797,9 @@ echo "Docker registry-mirrors 已更新，请重启 Docker 服务使配置生效
         // 窗口大小调整
         if (msg.type === 'resize') {
             try {
-                assertLiveSessionEpoch(attachedSshSession, msg);
+                if (!attachedSshSession?.handoff && msg.sessionEpoch !== undefined && msg.sessionEpoch !== attachedSshSession?.sessionEpoch) throw ptyHandoffFault('stale_epoch', 403);
             } catch (err) {
-                const code = err instanceof LinkHandoffError ? err.code : 'stale_epoch';
+                const code = err.code || 'stale_epoch';
                 sendJSON({ type: 'error', code, message: err.message || '会话 epoch 已失效' });
                 return;
             }

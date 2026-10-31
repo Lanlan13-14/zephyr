@@ -4,7 +4,7 @@ import {
   setDefaultXtermTerminalCtor,
   getDefaultXtermTerminalCtor,
   cellFromXterm
-} from "./xterm-bridge.js";
+} from "./xterm-bridge.js?v=20261031-pty1";
 import { WebSocketTransport } from "./transport.js";
 export {
   WasmBridge,
