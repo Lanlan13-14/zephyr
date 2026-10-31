@@ -481,7 +481,7 @@ test('every type the Swift references is declared somewhere in the tree', () => 
     'AuthChallengeDisposition', 'URLCredential', 'NSURLAuthenticationMethodServerTrust',
     'HTTPCookie', 'HTTPCookieStorage', 'URLCache', 'StoragePolicy', 'CharacterSet',
     'JSONSerialization', 'JSONEncoder', 'JSONDecoder', 'NSNumber', 'NSString', 'NSDictionary',
-    'NSNull', 'LocalizedError',
+    'NSNull', 'LocalizedError', 'ProcessInfo',
     'Date', 'DateFormatter', 'TimeInterval', 'TimeZone', 'Locale', 'UUID', 'NSObject',
     'NotificationCenter',
     // Network path observation, TCP reachability, and iOS opportunistic background scheduling.

@@ -19,6 +19,9 @@ case "$kind" in
     export GOOS=darwin
     case "$(uname -m)" in arm64) export GOARCH=arm64;; x86_64) export GOARCH=amd64;; *) exit 1;; esac
     export CC="$(xcrun --sdk macosx --find clang)"
+    export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+    export CGO_CFLAGS="-isysroot $SDKROOT"
+    export CGO_LDFLAGS="$CGO_CFLAGS"
     ;;
   ios-device)
     export GOOS=ios GOARCH=arm64
