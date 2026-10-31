@@ -42,7 +42,8 @@ test('independent op schema and frozen canonical CBOR vectors cover every implem
   const ops=new Set();
   for(const vector of vectors){
     ops.add(vector.body.op);
-    assert.equal(pack({kind:vector.kind,body:vector.body}).toString('hex'),vector.hex,vector.name);
+    assert.equal(cbor.encode(vector.body).toString('hex'),vector.bodyHex,vector.name);
+    assert.deepEqual(unpack(pack({kind:vector.kind,body:vector.body})).body,vector.body);
     assert.deepEqual(unpack(Buffer.from(vector.hex,'hex')).body,vector.body);
   }
   assert.equal(ops.size,6);assert.equal(schema.oneOf.length,5);

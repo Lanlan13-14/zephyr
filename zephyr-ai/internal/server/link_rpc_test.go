@@ -33,7 +33,7 @@ func rpcFixture(t *testing.T) (*Server, *session.Store, string, string, agent.Re
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := agent.ResumeState{Kind: agent.PausePermission, UserID: "alice", SessionID: sess.ID, RunID: run.ID,
+	state := agent.ResumeState{Kind: agent.PausePermission,
 		DatabaseGeneration: "generation1", RunNonce: "nonce1", StrictLinkApproval: true,
 		PendingCalls: []provider.ToolCall{{ID: "call1", Name: "terminal.exec", Arguments: json.RawMessage(`{"command":"rm target"}`)}},
 		Ask:          &event.PermissionAsk{AskID: "call1", CallID: "call1", Name: "terminal.exec", Args: json.RawMessage(`{"command":"rm target"}`), Risk: "high"},

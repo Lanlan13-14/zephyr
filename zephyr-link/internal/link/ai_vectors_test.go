@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/Lanlan13-14/zephyr-ssh/zephyr-link/internal/codec"
 	"os"
+	"os/exec"
 	"testing"
 )
 
@@ -15,9 +16,10 @@ func TestAIGoldenNodeGoCBORInterop(t *testing.T) {
 	}
 	var golden struct {
 		Vectors []struct {
-			Name string          `json:"name"`
-			Body json.RawMessage `json:"body"`
-			Hex  string          `json:"hex"`
+			Name    string          `json:"name"`
+			Body    json.RawMessage `json:"body"`
+			Hex     string          `json:"hex"`
+			BodyHex string          `json:"bodyHex"`
 		} `json:"vectors"`
 	}
 	if err := json.Unmarshal(raw, &golden); err != nil {
@@ -47,8 +49,21 @@ func TestAIGoldenNodeGoCBORInterop(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if hex.EncodeToString(repacked) != vector.Hex {
-				t.Fatal("Go/Node CBOR bytes differ")
+			payload, err := codec.Encode(body)
+			if err != nil || hex.EncodeToString(payload) != vector.BodyHex || hex.EncodeToString(frame.Body) != vector.BodyHex {
+				t.Fatal("Go/Node canonical CBOR payload bytes differ", err)
+			}
+			// zstd encoders need not choose identical blocks. Re-decode the Go frame and then
+			// require Node to decode it too; never weaken interoperability to a prefix check.
+			goFrame, err := codec.Unpack(repacked)
+			if err != nil || hex.EncodeToString(goFrame.Body) != vector.BodyHex {
+				t.Fatal("Go re-encode failed", err)
+			}
+			command := exec.Command("node", "-e", `const {unpack}=require('./link-v2-codec');const {encode}=require('./link-v2-cbor');process.stdout.write(encode(unpack(Buffer.from(process.argv[1],'hex')).body).toString('hex'));`, hex.EncodeToString(repacked))
+			command.Dir = "../../.."
+			got, err := command.CombinedOutput()
+			if err != nil || string(got) != vector.BodyHex {
+				t.Fatalf("Node cannot decode Go frame: %s %v", got, err)
 			}
 			var want map[string]any
 			if err := json.Unmarshal(vector.Body, &want); err != nil {
