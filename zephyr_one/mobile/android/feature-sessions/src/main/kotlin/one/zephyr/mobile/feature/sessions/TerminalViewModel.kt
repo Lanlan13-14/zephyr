@@ -278,7 +278,9 @@ class TerminalViewModel(
                 // is a tab that has never dialled - and telling that user 连接中 would hide the one
                 // button that can help them.
                 transport = row?.transport ?: SessionTransport.DISCONNECTED,
-                dock = TerminalDockItem.forProtocol(connection.protocol),
+                dock = TerminalDockItem.forProtocol(connection.protocol).filter {
+                    !host.isPrimaryPty(sessionId) || it !in listOf(TerminalDockItem.FILES, TerminalDockItem.DOCKER, TerminalDockItem.STATS)
+                },
                 cleartextWarning = if (connection.protocol.isCleartext) CLEARTEXT_WARNING else null,
                 encoding = connection.encoding,
                 // Only Telnet negotiates a code page; SSH is UTF-8 and offering a picker would

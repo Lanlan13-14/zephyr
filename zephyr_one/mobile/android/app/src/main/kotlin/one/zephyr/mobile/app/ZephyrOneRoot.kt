@@ -1039,7 +1039,7 @@ private fun BoundRoot(
                     onCreateConnection = { route = RootRoute.ProtocolPicker },
                     onOpenNote = { id -> route = RootRoute.NoteEditor(id) },
                     onOpenDocker = { route = RootRoute.Ops(OpsSection.DOCKER) },
-                    sftpPort = managedSftp,
+                    sftpPort = if (terminalHost.isPrimaryPty(current.sessionId)) null else managedSftp,
                 )
             }
 

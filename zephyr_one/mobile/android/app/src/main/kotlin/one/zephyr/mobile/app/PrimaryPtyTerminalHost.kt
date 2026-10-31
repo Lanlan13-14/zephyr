@@ -139,6 +139,16 @@ internal class PrimaryPtyTerminalHost(
             }
         }
     }
+    override suspend fun measureLatency(sessionId: String): Long? = if (isPrimaryPty(sessionId)) null else owned.measureLatency(sessionId)
+    override suspend fun listDirectory(sessionId: String, path: String): Result<one.zephyr.mobile.protocol.ssh.SftpDirectory> =
+        if (isPrimaryPty(sessionId)) Result.failure(IllegalStateException("handoff_pty_only")) else owned.listDirectory(sessionId, path)
+    override suspend fun exec(sessionId: String, command: String): Result<one.zephyr.mobile.protocol.ssh.SshExecResult> =
+        if (isPrimaryPty(sessionId)) Result.failure(IllegalStateException("handoff_pty_only")) else owned.exec(sessionId, command)
+    override fun execStream(sessionId: String, command: String): Flow<one.zephyr.mobile.protocol.ssh.SshExecEvent> =
+        if (isPrimaryPty(sessionId)) emptyFlow() else owned.execStream(sessionId, command)
+    override fun execStreamIsolated(sessionId: String, connectionId: String, command: String): Flow<one.zephyr.mobile.protocol.ssh.SshExecEvent> =
+        if (isPrimaryPty(sessionId)) emptyFlow() else owned.execStreamIsolated(sessionId, connectionId, command)
+
     override suspend fun close(sessionId: String) {
         val lease = leases[sessionId] ?: return owned.close(sessionId)
         lease.closed = true

@@ -20,7 +20,11 @@ test('shipped browser parser + renderer ACK transfer one real SSH shell without 
                 shells++;
                 const stream = acceptShell(); streams.add(stream); stream.on('error', () => {});
                 stream.write('\x1b[2J\x1b[HBROWSER-PRIMARY\r\n\x1b[31mRED-CELL\x1b[0m\r\n');
-                stream.on('data', bytes => { inputs.push(bytes.toString()); stream.write('RECEIVED:' + bytes.toString()); });
+                let line = '';
+                stream.on('data', bytes => {
+                    inputs.push(bytes.toString()); line += bytes.toString();
+                    if (line.includes('\n') || line.includes('\r')) { stream.write('RECEIVED:' + line + '\r\n'); line = ''; }
+                });
             });
             session.on('exec', acceptExec => { const stream = acceptExec(); stream.on('error', () => {}); stream.exit(0); stream.end(); });
         }));
@@ -35,7 +39,7 @@ test('shipped browser parser + renderer ACK transfer one real SSH shell without 
             username: 'browser', password: 'server-only-password', connectionMode: 'direct',
         });
         assert.equal(connection.status, 200, JSON.stringify(connection.body));
-        const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+        const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'zh-CN' });
         await context.addCookies([{ name: 'zephyr_sid', value: cookie.split('=')[1], url: app.url('/') }]);
         await context.route('https://cdn.jsdelivr.net/**', route => route.abort());
         const source = await context.newPage();
@@ -45,7 +49,7 @@ test('shipped browser parser + renderer ACK transfer one real SSH shell without 
         const errors = [];
         source.on('pageerror', error => errors.push(error.message));
         await source.goto(app.url('/terminal.html?tabId=live-source'));
-        await source.waitForFunction(() => document.getElementById('statusText')?.textContent?.includes('已连接'), null, { timeout: 30000 });
+        await source.waitForFunction(() => document.getElementById('statusDot')?.classList.contains('connected'), null, { timeout: 30000 });
         await source.waitForFunction(() => document.querySelector('.wterm')?.textContent?.includes('BROWSER-PRIMARY') || document.body.textContent.includes('BROWSER-PRIMARY'), null, { timeout: 15000 });
         await source.locator('#handoffBtn').click();
         await source.getByRole('button', { name: '允许接力当前会话', exact: true }).click();
@@ -74,6 +78,15 @@ test('shipped browser parser + renderer ACK transfer one real SSH shell without 
         fs.mkdirSync('.link-evidence', { recursive: true });
         await receiver.screenshot({ path: '.link-evidence/primary-pty-receiver.png' });
         fs.writeFileSync('.link-evidence/primary-pty-browser.json', JSON.stringify({ oneUpstreamShell: shells, rendererAck: true, oldOwnerStopped: true, credentialFreeReceive: true, pageErrors: errors }));
+    } catch (error) {
+        fs.mkdirSync('.link-evidence', { recursive: true });
+        for (const [index, page] of browser.contexts().flatMap(context => context.pages()).entries()) {
+            try {
+                fs.writeFileSync(`.link-evidence/pty-failed-page-${index}.txt`, await page.locator('body').innerText());
+                await page.screenshot({ path: `.link-evidence/pty-failed-page-${index}.png` });
+            } catch {}
+        }
+        throw error;
     } finally {
         await browser.close();
         await app.cleanup();
