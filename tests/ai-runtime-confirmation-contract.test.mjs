@@ -13,7 +13,7 @@ const loop = readFileSync(path.join(root, 'zephyr-ai/internal/agent/loop.go'), '
 
 test('runtime auto-confirm settings cross browser, Node bridge and Go', () => {
   assert.match(app, /autoConfirm:\s*!!aiCfg\.sensitive\?\.autoConfirm/);
-  assert.match(server, /autoConfirm:\s*!!ai\.sensitive\?\.autoConfirm/);
+  assert.match(server, /autoConfirm:\s*!req\.linkAiStrict && !!ai\.sensitive\?\.autoConfirm/);
   assert.match(bridge, /autoConfirm:\s*!!payload\.autoConfirm/);
   assert.match(loop, /cfg\.AutoConfirm/);
 });

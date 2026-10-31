@@ -52,12 +52,13 @@ type Server struct {
 	captures *agent.CaptureStore
 	cell     *cell.WorkspaceAdapter
 
-	mu        sync.Mutex
-	tickets   map[string]*runTicket
-	cancels   map[string]context.CancelFunc
-	runDone   map[string]chan struct{}
-	emitters  map[string]*sseHub
-	frameHubs map[string]*frameHub
+	approvalMu sync.Mutex // serializes optional exact-input approval consumption
+	mu         sync.Mutex
+	tickets    map[string]*runTicket
+	cancels    map[string]context.CancelFunc
+	runDone    map[string]chan struct{}
+	emitters   map[string]*sseHub
+	frameHubs  map[string]*frameHub
 }
 
 type runTicket struct {
@@ -123,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /admin/runs/{id}/capture-image", s.admin(s.handleCaptureImage))
 	mux.HandleFunc("POST /admin/runs/{id}/capture", s.admin(s.handleCapture))
 	mux.HandleFunc("GET /admin/runs/{id}", s.admin(s.handleGetRun))
+	mux.HandleFunc("GET /admin/runs/{id}/rpc-snapshot", s.admin(s.handleRPCSnapshot))
 	mux.HandleFunc("POST /admin/mcp/connect", s.admin(s.handleMCPConnect))
 	mux.HandleFunc("POST /admin/providers/models", s.admin(s.handleProviderModels))
 	mux.HandleFunc("GET /v1/runs/{id}/events", s.handleSSE)    // ticket or admin
@@ -264,6 +266,7 @@ type startRunReq struct {
 	Options            map[string]any     `json:"options"`
 	MaxSteps           int                `json:"maxSteps"`
 	Permission         permission.Policy  `json:"permission"`
+	StrictLinkApproval bool               `json:"strictLinkApproval,omitempty"`
 	AutoConfirm        bool               `json:"autoConfirm"`
 	AutoConfirmDelayMS int                `json:"autoConfirmDelayMs"`
 	Mode               string             `json:"mode"` // standard|plan|goal
@@ -362,6 +365,12 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	}
 	reg = agent.FilterToolsForMode(reg, req.Mode)
 
+	if req.StrictLinkApproval {
+		req.Permission.Mode = permission.ModeAsk
+		req.Permission.Allow = nil
+		req.Permission.Ask = []permission.Rule{"*"}
+		req.AutoConfirm = false
+	}
 	// Permission engine + session grants as allow
 	eng := permission.NewEngine(req.Permission)
 	if grants, err := s.store.ListGrants(req.UserID, req.SessionID); err == nil && len(grants) > 0 {
@@ -410,6 +419,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		MaxSteps:            maxSteps,
 		ProviderConfig:      req.Provider,
 		PermissionPolicy:    req.Permission,
+		StrictLinkApproval:  req.StrictLinkApproval,
 		AutoConfirm:         req.AutoConfirm,
 		AutoConfirmDelayMS:  req.AutoConfirmDelayMS,
 		MCPServersJSON:      mcpJSON,
@@ -508,13 +518,13 @@ func (s *Server) buildToolRegistry(ctx context.Context, userID, sessionID, runID
 	if s.cell != nil && runID != "" {
 		if s.host != nil {
 			s.cell.SetBackend(&cell.PlatformL2Backend{
-				Host:              s.host,
-				UserID:            userID,
-				SessionID:         sessionID,
-				RunID:             runID,
+				Host:               s.host,
+				UserID:             userID,
+				SessionID:          sessionID,
+				RunID:              runID,
 				DatabaseGeneration: databaseGeneration,
-				RunNonce:          runNonce,
-				Context:           contextJSON,
+				RunNonce:           runNonce,
+				Context:            contextJSON,
 			})
 		}
 		s.cell.IssueLease(runID, sessionID, "binding_"+sessionID, "local", 30*time.Minute)
@@ -580,13 +590,16 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		CallID    string          `json:"callId"`
 		Tool      string          `json:"tool"`
 		Approve   bool            `json:"approve"`
-		Scope     string          `json:"scope"`    // once|session|user
-		Provider  provider.Config `json:"provider"` // Node re-injects API key
+		Scope     string          `json:"scope"`               // once|session|user
+		Provider  provider.Config `json:"provider"`            // Node re-injects API key
+		InputHash string          `json:"inputHash,omitempty"` // strict Link approval binding
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 400, map[string]any{"ok": false, "error": "bad json"})
 		return
 	}
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
 	runID := r.PathValue("id")
 	var st agent.ResumeState
 	if err := s.store.LoadRunResume(runID, &st); err != nil {
@@ -598,6 +611,20 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"ok": false, "error": "run_not_found"})
 		return
 	}
+	if st.StrictLinkApproval && body.InputHash == "" {
+		writeJSON(w, 403, map[string]any{"ok": false, "code": "approval_required", "error": "Device-bound exact-input approval required"})
+		return
+	}
+	if body.InputHash != "" {
+		hash, valid := permissionInputHash(&st)
+		waiting, _ := st.WaitingCall()
+		if !valid || run.Status != "waiting_permission" || hash != body.InputHash ||
+			body.UserID != run.UserID || body.SessionID != run.SessionID ||
+			body.CallID != waiting.ID || body.Tool != waiting.Name || body.Scope != "once" {
+			writeJSON(w, 409, map[string]any{"ok": false, "code": "approval_input_mismatch", "error": "Approval does not match current tool input"})
+			return
+		}
+	}
 	userID := body.UserID
 	if userID == "" {
 		userID = run.UserID
@@ -608,6 +635,13 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !body.Approve {
+		if body.InputHash != "" {
+			consumed, err := s.store.ConsumeRunResume(runID, st)
+			if err != nil || !consumed {
+				writeJSON(w, 409, map[string]any{"ok": false, "error": "approval_already_consumed"})
+				return
+			}
+		}
 		_ = s.store.UpdateRunStatus(runID, "aborted", "permission_denied", nil)
 		_ = s.store.ClearRunResume(runID)
 		// emit abort on hub if present
@@ -716,6 +750,7 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 		MaxSteps:            st.MaxSteps,
 		ProviderConfig:      pcfg,
 		PermissionPolicy:    pol,
+		StrictLinkApproval:  st.StrictLinkApproval,
 		AutoConfirm:         st.AutoConfirm,
 		AutoConfirmDelayMS:  st.AutoConfirmDelayMS,
 		MCPServersJSON:      st.MCPServers,
@@ -731,6 +766,14 @@ func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
 			CallID:    callID,
 			OnceGrant: onceGrant,
 		},
+	}
+	if body.InputHash != "" {
+		// Consume before launch. A crash is terminal/uncertain, never a reusable approval.
+		consumed, err := s.store.ConsumeRunResume(runID, st)
+		if err != nil || !consumed {
+			writeJSON(w, 409, map[string]any{"ok": false, "error": "approval_already_consumed"})
+			return
+		}
 	}
 	s.launchRun(runID, hub, cfg)
 	ticket := s.issueTicket(userID, runID, sessionID)
@@ -882,6 +925,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 		MaxSteps:            st.MaxSteps,
 		ProviderConfig:      pcfg,
 		PermissionPolicy:    pol,
+		StrictLinkApproval:  st.StrictLinkApproval,
 		AutoConfirm:         st.AutoConfirm,
 		AutoConfirmDelayMS:  st.AutoConfirmDelayMS,
 		MCPServersJSON:      st.MCPServers,

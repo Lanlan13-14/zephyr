@@ -108,6 +108,7 @@ type Config struct {
 	NormSink func(streamnorm.Event)
 	// Permission policy snapshot for resume state.
 	PermissionPolicy   permission.Policy
+	StrictLinkApproval bool
 	AutoConfirm        bool
 	AutoConfirmDelayMS int
 	MCPServersJSON     json.RawMessage
@@ -787,6 +788,7 @@ func (r *Runner) makeResumeState(cfg Config, metrics Metrics, kind PauseKind, ca
 		StepsDone:           metrics.Steps,
 		Provider:            pc,
 		PermissionMode:      string(pol.Mode),
+		StrictLinkApproval:  cfg.StrictLinkApproval,
 		AutoConfirm:         cfg.AutoConfirm,
 		AutoConfirmDelayMS:  cfg.AutoConfirmDelayMS,
 		MCPServers:          cfg.MCPServersJSON,

@@ -222,6 +222,22 @@ func (s *Store) LoadRunResume(runID string, dest any) error {
 	return json.Unmarshal([]byte(raw), dest)
 }
 
+// ConsumeRunResume matches the exact persisted JSON before irrevocably consuming an approval.
+// It is the SQLite arbiter even if another server process races this one. No state is restored
+// after a crash between consumption and launch: uncertain is safer than duplicate tool effects.
+func (s *Store) ConsumeRunResume(runID string, expected any) (bool, error) {
+	b, err := json.Marshal(expected)
+	if err != nil {
+		return false, err
+	}
+	result, err := s.db.Exec(`UPDATE ai_runs SET resume_json='',status='running',updated_at=? WHERE run_id=? AND status='waiting_permission' AND resume_json=?`, nowMS(), runID, string(b))
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
 func nowMS() int64 { return time.Now().UnixMilli() }
 
 func (s *Store) CreateSession(userID string, title string, meta map[string]any, generation ...string) (*Session, error) {
@@ -592,12 +608,19 @@ func (s *Store) AppendEvent(runID string, seq int64, typ string, payload any) er
 	return err
 }
 
-func (s *Store) ListEvents(runID string, afterSeq int64) ([]struct {
+func (s *Store) ListEvents(runID string, afterSeq int64, limits ...int) ([]struct {
 	Seq     int64
 	Type    string
 	Payload json.RawMessage
 }, error) {
-	rows, err := s.db.Query(`SELECT seq,type,payload_json FROM ai_events WHERE run_id=? AND seq>? ORDER BY seq ASC`, runID, afterSeq)
+	limit := -1 // existing SSE callers retain their replay semantics
+	if len(limits) > 0 {
+		limit = limits[0]
+		if limit < 1 || limit > 201 {
+			return nil, fmt.Errorf("invalid event page limit")
+		}
+	}
+	rows, err := s.db.Query(`SELECT seq,type,payload_json FROM ai_events WHERE run_id=? AND seq>? ORDER BY seq ASC LIMIT ?`, runID, afterSeq, limit)
 	if err != nil {
 		return nil, err
 	}

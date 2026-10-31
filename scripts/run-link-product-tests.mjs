@@ -31,6 +31,7 @@ const groups = {
     'ai-runtime-bridge-contract', 'ai-runtime-database-generation',
     'ai-runtime-confirmation-contract', 'ai-connection-tools-v1',
     'ai-session-exec', 'ai-host-isolation-contract',
+    'link-ai-dispatch-store', 'link-v2-ai-bridge', 'link-ai-production-wiring',
   ],
 };
 const group = process.env.LINK_TEST_GROUP;

@@ -1,0 +1,13 @@
+{
+  "channels": ["ai"],
+  "platforms": ["server", "desktop", "android", "ios", "agent"],
+  "dataDomains": ["owned"],
+  "states": ["bound", "offline", "revoked"],
+  "protocolImpact": ["breaking"],
+  "dataImpact": ["none"],
+  "requiredEvidence": ["L0", "L1", "L2", "L3", "L4", "L5"],
+  "failureInjections": ["cross-account-and-binding-replay", "same-request-changed-input", "inflight-concurrent-retry", "restart-after-reservation", "ambiguous-response-no-redispatch", "revocation-before-start-and-after-result", "old-https-permission-strict-run-bypass", "changed-command-after-preview", "expired-and-replayed-device-proof", "sqlite-approval-single-winner", "wrong-kind-and-private-token", "node-go-fixed-cbor-vectors"],
+  "compatibility": ["new-server", "new-client"],
+  "rollback": ["Deploy Node and both Go Link/AI services from the same revision.", "Revert source without deleting or rewriting user data or durable dispatch reservations.", "Do not reuse uncertain request IDs after rollback or runtime restart.", "Keep unsupported targets and incomplete full production vectors release-blocked."],
+  "evidenceLinks": ["docs/zephyr-link/contracts/ai-rpc-host-continuation.md", "docs/zephyr-link/contracts/ai-rpc-host-v1.schema.json", "docs/zephyr-link/contracts/ai-rpc-host-v1.golden.json", ".github/workflows/zephyr-link.yml", ".github/workflows/zephyr-one-mobile.yml"]
+}

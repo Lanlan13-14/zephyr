@@ -345,6 +345,7 @@ class AiRuntimeBridge {
             options: payload.options || {},
             maxSteps: payload.maxSteps || 0,
             permission: payload.permission || { mode: 'ask' },
+            strictLinkApproval: payload.strictLinkApproval === true,
             autoConfirm: !!payload.autoConfirm,
             autoConfirmDelayMs: Math.max(0, Math.min(Number(payload.autoConfirmDelayMs) || 0, 60000)),
             mode: payload.mode || 'standard',
@@ -541,6 +542,15 @@ class AiRuntimeBridge {
     async getRun(user, runId) {
         this._assertCurrentRun(user, runId);
         return this._fetchUnchecked(`/admin/runs/${encodeURIComponent(runId)}`);
+    }
+
+    async getRunSnapshot(user, runId, afterSeq = -1) {
+        this._assertCurrentRun(user, runId);
+        if (!Number.isSafeInteger(afterSeq) || afterSeq < -1) throw new HttpError(400, 'invalid_request', 'Invalid event cursor');
+        const query = new URLSearchParams({ userId: String(user.userId), afterSeq: String(afterSeq) });
+        const data = await this._fetchUnchecked(`/admin/runs/${encodeURIComponent(runId)}/rpc-snapshot?${query}`);
+        this._assertCurrentRun(user, runId);
+        return data;
     }
 
     async decidePermission(user, runId, body) {

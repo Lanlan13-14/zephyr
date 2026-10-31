@@ -56,6 +56,7 @@ type ResumeState struct {
 	Deny               []string `json:"deny,omitempty"`
 	Allow              []string `json:"allow,omitempty"`
 	AskRules           []string `json:"askRules,omitempty"`
+	StrictLinkApproval bool     `json:"strictLinkApproval,omitempty"`
 	AutoConfirm        bool     `json:"autoConfirm,omitempty"`
 	AutoConfirmDelayMS int      `json:"autoConfirmDelayMs,omitempty"`
 	// MCP servers to re-attach.

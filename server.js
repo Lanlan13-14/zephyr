@@ -156,6 +156,7 @@ const { LinkV2EnrollmentStore, createLinkV2EnrollmentApi } = require('./link-v2-
 const { createLinkV2GoProxy, proxyLinkV2Stream, stopLinkV2Go, linkTunnelDial, linkTunnelAttach } = require('./link-v2-go-proxy');
 const { OneLinkInitiator, OneLinkSyncSession } = require('./zephyr-one-link-embed');
 const { createLinkSyncBridge } = require('./link-v2-sync-bridge');
+const { createLinkAiBridge } = require('./link-v2-ai-bridge');
 const { createLinkFileBridge } = require('./link-v2-file-bridge');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
 const { MobileV1OutboxDispatcher } = require('./mobile-v1-outbox-dispatcher');
@@ -6123,8 +6124,11 @@ app.get('/api/ai/runtime/sessions/:id/usage', requireAiUser, async (req, res) =>
     } catch (err) { handleAiRuntimeError(res, err); }
 });
 
-app.post('/api/ai/runtime/runs', requireAiUser, async (req, res) => {
+app.post('/api/ai/runtime/runs', requireAiUser, handleCanonicalAiRun);
+
+async function handleCanonicalAiRun(req, res) {
     try {
+        req.assertLive?.();
         if (!aiRuntimeBridge.enabled) throw Object.assign(new Error('Go AI 运行时未启用'), { status: 503, code: 'ai_runtime_unavailable' });
         // Runtime knowledge must be resolved at the authenticated account
         // boundary. The legacy global arrays are ownerless and are never a
@@ -6195,10 +6199,10 @@ app.post('/api/ai/runtime/runs', requireAiUser, async (req, res) => {
         const bodyPerm = req.body?.permission && typeof req.body.permission === 'object' ? req.body.permission : {};
         const aiPerm = ai.permissions || {};
         const perm = {
-            mode: bodyPerm.mode || req.body?.permissionMode || aiPerm.mode || (ai.sensitive?.autoConfirm ? 'auto' : 'ask'),
+            mode: req.linkAiStrict ? 'ask' : (bodyPerm.mode || req.body?.permissionMode || aiPerm.mode || (ai.sensitive?.autoConfirm ? 'auto' : 'ask')),
             deny: Array.isArray(bodyPerm.deny) ? bodyPerm.deny : (Array.isArray(req.body?.deny) ? req.body.deny : (aiPerm.deny || [])),
-            allow: Array.isArray(bodyPerm.allow) ? bodyPerm.allow : (Array.isArray(req.body?.allow) ? req.body.allow : (aiPerm.allow || [])),
-            ask: Array.isArray(bodyPerm.ask) ? bodyPerm.ask : (Array.isArray(req.body?.ask) ? req.body.ask : (aiPerm.ask || [])),
+            allow: req.linkAiStrict ? [] : (Array.isArray(bodyPerm.allow) ? bodyPerm.allow : (Array.isArray(req.body?.allow) ? req.body.allow : (aiPerm.allow || []))),
+            ask: req.linkAiStrict ? ['*'] : (Array.isArray(bodyPerm.ask) ? bodyPerm.ask : (Array.isArray(req.body?.ask) ? req.body.ask : (aiPerm.ask || []))),
         };
 
         let sessionId = String(req.body?.sessionId || '').trim();
@@ -6305,6 +6309,7 @@ app.post('/api/ai/runtime/runs', requireAiUser, async (req, res) => {
                 }];
             }
         }
+        req.assertLive?.();
         const data = await aiRuntimeBridge.startRun(req.user, {
             sessionId,
             bootstrapMessages: canonicalBootstrapMessages,
@@ -6330,7 +6335,8 @@ app.post('/api/ai/runtime/runs', requireAiUser, async (req, res) => {
             }),
             maxSteps: req.body?.maxSteps || ai.context?.maxToolRounds || 0,
             permission: perm,
-            autoConfirm: !!ai.sensitive?.autoConfirm && req.body?.autoConfirm !== false,
+            strictLinkApproval: req.linkAiStrict === true,
+            autoConfirm: !req.linkAiStrict && !!ai.sensitive?.autoConfirm && req.body?.autoConfirm !== false,
             autoConfirmDelayMs: Number(req.body?.autoConfirmDelayMs ?? ai.sensitive?.autoConfirmDelayMs ?? 2500),
             mode: req.body?.mode || 'standard',
             systemCompose,
@@ -6365,6 +6371,7 @@ app.post('/api/ai/runtime/runs', requireAiUser, async (req, res) => {
                 || 0
             ),
         });
+        req.assertLive?.();
         // Rewrite SSE path through Node proxy if public AI URL not set
         const ssePath = data.ssePath || `/api/ai/runtime/runs/${data.runId}/events?ticket=${encodeURIComponent(data.ticket || '')}`;
         res.json({
@@ -6377,7 +6384,7 @@ app.post('/api/ai/runtime/runs', requireAiUser, async (req, res) => {
             sseProxyPath: `/api/ai/runtime/runs/${encodeURIComponent(data.runId)}/events?ticket=${encodeURIComponent(data.ticket || '')}`,
         });
     } catch (err) { handleAiRuntimeError(res, err); }
-});
+}
 
 app.post('/api/ai/runtime/runs/:id/abort', requireAiUser, async (req, res) => {
     try {
@@ -9432,6 +9439,35 @@ try {
             storage,
             adminToken: linkSyncAdminToken,
         });
+        const linkAiBridge = createLinkAiBridge({
+            resolveAuth: linkSyncBridge.resolveAuth, storage, runtime: aiRuntimeBridge,
+            adminToken: linkSyncAdminToken,
+            operational: () => !databaseMaintenance.active && !databaseMaintenance.fatal,
+            authorize: ({user}) => {
+                if (!userSettingsService.runtimeAi(user).enabled || aiPolicyService?.policyFor(user)?.mode === 'disabled') {
+                    throw Object.assign(new Error('AI disabled'), {status:403,code:'ai_disabled'});
+                }
+            },
+            startCanonical: async (user,body,assertLive) => {
+                let code = 200, result;
+                const reply = {
+                    status(value) { code = value; return this; },
+                    json(value) { result = value; return this; },
+                };
+                await handleCanonicalAiRun({user,body,linkAiStrict:true,assertLive},reply);
+                if (code >= 400 || !result?.runId) throw Object.assign(new Error('AI dispatch rejected'), {
+                    status:code >= 400 ? code : 502,code:result?.code || 'ai_dispatch_failed',
+                });
+                return result;
+            },
+        });
+        linkAiBridge.setProviderResolver((user,providerId,model) => {
+            const resolved = aiProviderService.resolveForUse(user,providerId || null,model || null);
+            const provider = resolved.provider;
+            return {id:provider.id,kind:provider.type || 'openai-compatible',apiKey:provider.apiKey || '',
+                baseUrl:provider.baseUrl || '',defaultModel:provider.defaultModel || resolved.model,
+                apiMode:provider.config?.apiMode || provider.apiMode || 'auto'};
+        });
         /* Owned-sync is a private loopback listener. It must not reuse the public
          * HTTP/HTTPS port: Docker sets HTTP_ENABLED=false so PORT (default 3000,
          * or whatever the operator mapped) never listens, and HTTPS_PORT is TLS.
@@ -9449,6 +9485,7 @@ try {
             next();
         });
         linkInternalApp.use('/internal/link', express.json({ limit: '4mb' }));
+        linkInternalApp.post('/internal/link/ai', databaseMaintenanceGate, (req,res) => linkAiBridge.handle(req,res));
         linkInternalApp.post('/internal/link/sync', (req, res) => linkSyncBridge.handle(req, res));
         const linkFileBridge = createLinkFileBridge({
             fileAgentManager,
@@ -9521,6 +9558,8 @@ try {
             adminToken: linkSyncAdminToken,
             syncBridgeUrlReady: linkInternalReady,
             syncBridgeToken: linkSyncAdminToken,
+            aiBridgeUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/ai')),
+            aiBridgeToken: linkSyncAdminToken,
             fileBridgeUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/file')),
             fileBridgeToken: linkSyncAdminToken,
             oneRelayAuthUrlReady: linkInternalReady.then((url) => url.replace(/\/sync$/, '/one-relay')),

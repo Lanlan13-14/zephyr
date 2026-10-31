@@ -30,8 +30,10 @@ const envAdminToken = "ZEPHYR_LINK_ADMIN_TOKEN"
 const envDevices = "ZEPHYR_LINK_DEVICES"        // path to a JSON list of enrolled device IDs
 const envSyncBridge = "ZEPHYR_LINK_SYNC_BRIDGE" // loopback Node sync-core bridge URL
 const envSyncToken = "ZEPHYR_LINK_SYNC_TOKEN"   // loopback shared secret for the bridge
-const envFileBridge = "ZEPHYR_LINK_FILE_BRIDGE" // loopback Node file bridge URL
-const envFileToken = "ZEPHYR_LINK_FILE_TOKEN"   // loopback shared secret for file bridge
+const envAIBridge = "ZEPHYR_LINK_AI_BRIDGE"
+const envAIToken = "ZEPHYR_LINK_AI_TOKEN"
+const envFileBridge = "ZEPHYR_LINK_FILE_BRIDGE"      // loopback Node file bridge URL
+const envFileToken = "ZEPHYR_LINK_FILE_TOKEN"        // loopback shared secret for file bridge
 const envOneRelayAuth = "ZEPHYR_LINK_ONE_RELAY_AUTH" // loopback Node one-relay auth URL
 
 func main() {
@@ -62,6 +64,13 @@ func main() {
 	if url := os.Getenv(envSyncBridge); url != "" {
 		node.RegisterSyncBridge(link.SyncBridgeConfig{URL: url, AdminToken: os.Getenv(envSyncToken)})
 		log.Info("owned-sync lane bridged to the Node sync core", "url", url)
+	}
+	if url := os.Getenv(envAIBridge); url != "" {
+		if err := node.RegisterAIBridge(link.AIBridgeConfig{URL: url, AdminToken: os.Getenv(envAIToken)}); err != nil {
+			log.Error("AI bridge configuration rejected")
+			os.Exit(1)
+		}
+		log.Info("AI lane bridged to the canonical Node AI service")
 	}
 	if url := os.Getenv(envFileBridge); url != "" {
 		node.RegisterFileBridge(link.FileBridgeConfig{URL: url, AdminToken: os.Getenv(envFileToken)})

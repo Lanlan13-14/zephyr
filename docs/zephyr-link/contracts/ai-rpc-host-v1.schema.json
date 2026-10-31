@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zephyr-link/ai-rpc-host-v1",
+  "title": "ZSL-AI-RPC/1 remote_host request subset",
+  "description": "Kind 15. Device/account identity comes from the proved Link session, never these bodies. Unknown properties are rejected.",
+  "$defs": {
+    "id": {"type":"string","minLength":1,"maxLength":200,"pattern":"^[^\\u0000]+$"},
+    "context": {"type":"object","additionalProperties":false,"required":["transport","connectionId"],"properties":{"transport":{"const":"SSH"},"connectionId":{"$ref":"#/$defs/id"}}}
+  },
+  "oneOf": [
+    {"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"const":"status"}}},
+    {"type":"object","additionalProperties":false,"required":["op","requestId","conversationId","prompt","executionTarget"],"properties":{
+      "op":{"const":"ai.command.dispatch"},"requestId":{"$ref":"#/$defs/id"},"conversationId":{"$ref":"#/$defs/id"},
+      "prompt":{"type":"string","minLength":1,"maxLength":64000,"pattern":"^[^\\u0000]+$"},"executionTarget":{"const":"remote_host"},
+      "providerId":{"$ref":"#/$defs/id"},"model":{"type":"string","minLength":1,"maxLength":300,"pattern":"^[^\\u0000]+$"},"context":{"$ref":"#/$defs/context"}
+    }},
+    {"type":"object","additionalProperties":false,"required":["op","requestId"],"properties":{
+      "op":{"enum":["ai.command.result","ai.stream.event"]},"requestId":{"$ref":"#/$defs/id"},"afterSeq":{"type":"integer","minimum":-1,"maximum":9007199254740991}
+    }},
+    {"type":"object","additionalProperties":false,"required":["op","requestId"],"properties":{"op":{"const":"ai.command.cancel"},"requestId":{"$ref":"#/$defs/id"}}},
+    {"type":"object","additionalProperties":false,"required":["op","requestId","approvalId","inputHash","approve","expiresAt","challenge","proof"],"properties":{
+      "op":{"const":"ai.approval.decision"},"requestId":{"$ref":"#/$defs/id"},"approvalId":{"$ref":"#/$defs/id"},
+      "inputHash":{"type":"string","pattern":"^[a-f0-9]{64}$"},"approve":{"type":"boolean"},"expiresAt":{"type":"integer","minimum":1,"maximum":9007199254740991},
+      "challenge":{"type":"string","pattern":"^[A-Za-z0-9_-]{32}$"},"proof":{"type":"string","pattern":"^[A-Za-z0-9+/]{86}==$"},
+      "providerId":{"$ref":"#/$defs/id"},"model":{"type":"string","minLength":1,"maxLength":300,"pattern":"^[^\\u0000]+$"}
+    }}
+  ]
+}
