@@ -1,5 +1,13 @@
 // swift-tools-version:5.9
 import PackageDescription
+import Foundation
+
+// The archive is built from the same checkout for each host/device target. There is deliberately
+// no prebuilt/stub fallback: without it the executable must fail to link, not fall back to HTTPS.
+let linkArchive = ProcessInfo.processInfo.environment["ZEPHYR_LINK_APPLE_ARCHIVE"]
+let linkSettings: [LinkerSetting] = linkArchive.map {
+    [.unsafeFlags([$0]), .linkedFramework("Security"), .linkedFramework("CoreFoundation"), .linkedLibrary("resolv")]
+} ?? []
 
 /*
  Zephyr One iOS.
@@ -87,13 +95,16 @@ let package = Package(
      ],
      targets: [
          .target(name: "ZephyrContracts"),
+         .target(name: "CZephyrLink", publicHeadersPath: "include"),
          .target(
              name: "ZephyrCore",
              dependencies: [
                  "ZephyrContracts",
+                 "CZephyrLink",
                  .product(name: "OpenSSL", package: "OpenSSL-Package"),
                  .product(name: "SQLiteCipher", package: "SQLiteCipher"),
-             ]
+             ],
+             linkerSettings: linkSettings
          ),
          .target(name: "ZephyrUI", dependencies: ["ZephyrCore", "ZephyrContracts"]),
          .testTarget(

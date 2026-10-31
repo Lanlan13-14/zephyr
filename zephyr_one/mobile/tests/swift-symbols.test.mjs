@@ -458,7 +458,9 @@ test('every type the Swift references is declared somewhere in the tree', () => 
   const PLATFORM = new Set([
     // modules
     'Foundation', 'CryptoKit', 'Security', 'SQLCipher', 'Network', 'BackgroundTasks',
-    'OpenSSL',
+    'OpenSSL', 'CZephyrLink',
+    // C ABI declarations are checked against the header and native archive in the runtime gate.
+    'ZephyrLinkCreate', 'ZephyrLinkCall', 'ZephyrLinkDestroy', 'ZephyrLinkBuildInfo', 'ZephyrLinkFree',
     'XCTest', 'PackageDescription',
     // the package's own modules, which are imported rather than declared
     ...Object.keys(TARGET_DIRS),

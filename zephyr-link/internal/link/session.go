@@ -31,6 +31,9 @@ func NewEndpoint(sess *zsl.Session) *Endpoint { return &Endpoint{sess: sess} }
 // Exporter binds application capabilities to this channel.
 func (e *Endpoint) Exporter() []byte { return e.sess.Exporter() }
 
+// Close irreversibly clears this endpoint's retained ZSL keys.
+func (e *Endpoint) Close() { e.sess.Close() }
+
 // Send packs a business frame and seals it for the peer.
 func (e *Endpoint) Send(kind int, body any, secret bool) (*Envelope, error) {
 	packed, err := codec.Pack(kind, body, secret)

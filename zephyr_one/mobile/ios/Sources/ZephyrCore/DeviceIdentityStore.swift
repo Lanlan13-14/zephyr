@@ -200,6 +200,21 @@ public final class DeviceIdentityStore: @unchecked Sendable {
         try signature(for: payload)
     }
 
+    /// The shared Go core requires prefix NUL deviceId NUL 32-byte transcript, ES256 P1363.
+    /// This uses the existing non-exportable key and its terminal generation lease.
+    func signLinkHandshake(_ transcript: Data) throws -> String {
+        guard transcript.count == 32, !deviceID.isEmpty,
+              !deviceID.unicodeScalars.contains(where: { $0.value == 0 }) else {
+            throw DeviceProofSigningError.invalidField("linkTranscript")
+        }
+        var payload = Data("zephyr-zsl2-handshake-v1\0".utf8)
+        payload.append(Data(deviceID.utf8))
+        payload.append(0)
+        payload.append(transcript)
+        let der = try signature(for: payload)
+        return try KeychainDeviceProofSigner.p1363Signature(fromDER: der).base64EncodedString()
+    }
+
     /// Signs the frozen DeviceProof message and returns a standard Base64 DER
     /// ECDSA signature, matching Java `SHA256withECDSA`.
     public func signRequestProof(

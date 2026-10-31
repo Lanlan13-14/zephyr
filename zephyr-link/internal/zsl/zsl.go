@@ -265,6 +265,7 @@ type Session struct {
 	recvAEAD cipher.AEAD
 	exporter []byte
 	bound    bool
+	closed   bool
 
 	mu      sync.Mutex
 	sendSeq uint64
@@ -273,7 +274,30 @@ type Session struct {
 }
 
 // Exporter returns the channel exporter, used to bind capabilities to this session.
-func (s *Session) Exporter() []byte { return append([]byte{}, s.exporter...) }
+func (s *Session) Exporter() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	return append([]byte{}, s.exporter...)
+}
+
+// Close overwrites retained key slices and irrevocably rejects all future operations. The
+// cipher implementation may retain an internal key schedule until GC; no stronger zeroization
+// guarantee is asserted for Go's AEAD implementation.
+func (s *Session) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	clear(s.master)
+	clear(s.sendKey)
+	clear(s.recvKey)
+	clear(s.exporter)
+	s.master, s.sendKey, s.recvKey, s.exporter = nil, nil, nil, nil
+	s.sendAEAD, s.recvAEAD, s.seen = nil, nil, nil
+	s.bound = false
+}
 
 // Bound reports whether BindTranscript has mixed the handshake proof into the
 // traffic keys. Enrolled sessions must be bound before they carry frames.
@@ -293,6 +317,9 @@ func (s *Session) BindTranscript(transcript []byte) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return errors.New("zsl: session closed")
+	}
 	if s.bound {
 		return errors.New("zsl: session already bound")
 	}
@@ -331,6 +358,9 @@ func (s *Session) aad(direction byte, seq uint64) []byte {
 func (s *Session) Seal(plaintext []byte) (*Frame, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errors.New("zsl: session closed")
+	}
 	if s.sendSeq == maxSeq {
 		return nil, errors.New("zsl: send sequence exhausted; rekey required")
 	}
@@ -350,6 +380,12 @@ func (s *Session) Seal(plaintext []byte) (*Frame, error) {
 func (s *Session) Open(f *Frame) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errors.New("zsl: session closed")
+	}
+	if f == nil {
+		return nil, errors.New("zsl: nil frame")
+	}
 	seq := f.Seq
 	if seq < s.recvSeq && s.recvSeq-seq > maxSkip {
 		return nil, errors.New("zsl: replay rejected (sequence too old)")

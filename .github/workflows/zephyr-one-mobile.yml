@@ -443,12 +443,23 @@ jobs:
     # contracts job already ran the static gate on ubuntu, so this job exists
     # purely to run a compiler over the same tree -- which is the step no
     # amount of source scanning can replace.
-    runs-on: macos-14
+    runs-on: macos-15
+    env:
+      ZEPHYR_LINK_APPLE_ARCHIVE: ${{ github.workspace }}/.link-apple-host/libzephyr_link.a
     defaults:
       run:
         working-directory: zephyr_one/mobile/ios
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.10'
+      - name: Build real in-process Go Link core for host and device
+        working-directory: .
+        run: |
+          brew list ripgrep >/dev/null 2>&1 || brew install ripgrep
+          bash scripts/rebuild-apple-link-runtime.sh host "$ZEPHYR_LINK_APPLE_ARCHIVE"
+          bash scripts/rebuild-apple-link-runtime.sh ios-device "$GITHUB_WORKSPACE/.link-apple-ios/libzephyr_link.a"
 
       # Compile before test, for the same reason the Android job does: a target
       # that does not build cannot report a meaningful test result.
@@ -489,6 +500,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '' }}
           EVENT_NAME: ${{ github.event_name }}
+          ZEPHYR_LINK_APPLE_ARCHIVE: ${{ github.workspace }}/.link-apple-ios/libzephyr_link.a
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
@@ -531,6 +543,19 @@ jobs:
               /tmp/ios-package-diagnostic.log 'locate unsigned iOS app'
             exit 1
           fi
+
+      - name: Upload Apple Link native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-link-native-evidence
+          include-hidden-files: true
+          path: |
+            .link-apple-host/*.txt
+            .link-apple-ios/*.txt
+            /tmp/swift-build.log
+            /tmp/swift-test.log
+          if-no-files-found: warn
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4

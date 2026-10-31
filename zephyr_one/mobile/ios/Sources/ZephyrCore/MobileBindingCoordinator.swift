@@ -37,6 +37,7 @@ public final class MobileBindingRuntime: @unchecked Sendable {
     private let connectivityMonitorFactory: (@Sendable () -> any ConnectivityMonitoring)?
     private let startAction: (@Sendable () async -> [SyncRoundResult])?
     private let dataPlaneGuard: MobileBindingDataPlaneGuard
+    private let ownedLinkChannel: AppleLinkChannel?
 
     init(
         summary: MobileBindingSummary,
@@ -51,7 +52,8 @@ public final class MobileBindingRuntime: @unchecked Sendable {
         scheduler: SyncScheduler,
         dataPlaneGuard: MobileBindingDataPlaneGuard = MobileBindingDataPlaneGuard(),
         connectivityMonitorFactory: (@Sendable () -> any ConnectivityMonitoring)?,
-        startAction: (@Sendable () async -> [SyncRoundResult])? = nil
+        startAction: (@Sendable () async -> [SyncRoundResult])? = nil,
+        ownedLinkChannel: AppleLinkChannel? = nil
     ) {
         self.summary = summary
         self.identity = identity
@@ -66,6 +68,7 @@ public final class MobileBindingRuntime: @unchecked Sendable {
         self.dataPlaneGuard = dataPlaneGuard
         self.connectivityMonitorFactory = connectivityMonitorFactory
         self.startAction = startAction
+        self.ownedLinkChannel = ownedLinkChannel
     }
 
     public func start() async -> [SyncRoundResult] {
@@ -111,6 +114,7 @@ public final class MobileBindingRuntime: @unchecked Sendable {
     func cancelAndJoin(reason: SyncSchedulerCancellationReason) async {
         disableDataPlane()
         await scheduler.cancelAndJoin(reason: reason)
+        await ownedLinkChannel?.close()
         await refreshController.cancelAndJoin()
     }
 
@@ -120,6 +124,7 @@ public final class MobileBindingRuntime: @unchecked Sendable {
 
     private func disableDataPlane() {
         dataPlaneGuard.disable()
+        ownedLinkChannel?.disable()
     }
 
     func removePrivateIdentityMaterial() -> [MobileBindingCleanupComponent] {
@@ -497,16 +502,34 @@ private final class ProductionMobileBindingEnvironment: MobileBindingEnvironment
                     clock: clock
                 )
                 let httpsTransport = RefreshingSyncTransport(api: api, refresh: refresh)
-                let transport: any SyncTransport
+                let ownedLink: AppleLinkChannel?
+                let activeChannel: any LinkChannel
                 if let linkChannel {
-                    transport = LinkSyncTransport(
-                        channel: linkChannel,
-                        deviceId: runtimeIdentity.deviceID,
-                        httpFallback: httpsTransport
-                    )
+                    ownedLink = nil
+                    activeChannel = linkChannel
                 } else {
-                    transport = httpsTransport
+                    let created = try AppleLinkChannel(
+                        serverURL: configuration.baseURL,
+                        deviceID: runtimeIdentity.deviceID,
+                        pins: configuration.sha256SPKIPins,
+                        native: try AppleLinkNativeRuntime(),
+                        sign: { transcript in
+                            // The Keychain credential generation lease is checked at the exact
+                            // signature boundary, not only when this graph was constructed.
+                            guard try credentials.credentials(for: sideEffectLease) != nil else {
+                                throw MobileBindingCoordinatorError.identityMismatch
+                            }
+                            return try signingIdentity.signLinkHandshake(transcript)
+                        }
+                    )
+                    ownedLink = created
+                    activeChannel = created
                 }
+                let transport: any SyncTransport = LinkSyncTransport(
+                    channel: activeChannel,
+                    deviceId: runtimeIdentity.deviceID,
+                    httpFallback: httpsTransport
+                )
                 let engine = SyncEngine(
                     identity: runtimeIdentity,
                     transport: transport,
@@ -537,7 +560,8 @@ private final class ProductionMobileBindingEnvironment: MobileBindingEnvironment
                     sideEffectLease: sideEffectLease,
                     engine: engine,
                     scheduler: scheduler,
-                    connectivityMonitorFactory: { ConnectivityMonitor() }
+                    connectivityMonitorFactory: { ConnectivityMonitor() },
+                    ownedLinkChannel: ownedLink
                 )
             }
         )
