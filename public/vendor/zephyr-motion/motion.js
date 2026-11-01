@@ -323,9 +323,12 @@ export const Motion = {
    */
   to(el, props, opts = {}) {
     const standard = opts.standard;
-    const p = standard != null
+    let p = standard != null
       ? (STANDARD_FALLBACKS[standard] || resolvePreset(opts.preset ?? opts))
       : resolvePreset(opts.preset ?? opts);
+    // Slow the standard's timeline without changing its normalized spring curve.
+    const timeScale = Math.max(0.25, Math.min(4, Number(opts.timeScale) || 1));
+    if (timeScale !== 1) p = { response: p.response * timeScale, damping: p.damping };
     const channels = Object.keys(props);
     if (!channels.length) return Promise.resolve();
     let pending = channels.length;
@@ -334,7 +337,7 @@ export const Motion = {
       const settle = () => { if (--pending === 0) res(); };
       for (const { ch, rec } of records) {
         if (!rec) { settle(); continue; }
-        if (standard != null) engine.configureStandard(rec.id, standard, p);
+        if (standard != null && timeScale === 1) engine.configureStandard(rec.id, standard, p);
         else engine.configure(rec.id, p.response, p.damping);
         const target = Number(props[ch]);
         const vel = typeof opts.velocity === 'number' ? opts.velocity : opts.velocity?.[ch];

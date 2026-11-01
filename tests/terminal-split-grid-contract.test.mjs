@@ -209,13 +209,38 @@ test('the card-flip handoff defers to the renderer too, after restoring the node
 
 test('the renderer remains the single owner of layout-N, slot-N and splitters', () => {
     const render = fnBody('renderTerminalWorkspace');
-    assert.match(render, /layout-\$\{Math\.min\(count, 3\)\}/);
+    assert.match(render, /layout-\$\{Math\.min\(count, 4\)\}/);
     assert.match(render, /slot-\$\{index \+ 1\}/);
-    assert.match(render, /workspace-splitter vertical/);
-    assert.match(render, /workspace-splitter horizontal/);
-    // Only these two call sites may assign the workspace class.
+    assert.match(render, /if \(count === 2\) \{\s*const splitterX = document\.createElement\('div'\);\s*splitterX\.className = 'workspace-splitter vertical';/);
+    // Three/four windows use the shared sliding canvas, not the retired
+    // three-pane horizontal splitter. Keep the renderer-to-layout handoff.
+    assert.doesNotMatch(render, /workspace-splitter horizontal/);
+    assert.match(render, /applySplitSlideState\(\{ animate: !isFlipPreparing \}\)/);
+    assert.match(render, /broadcastPaneSlotConstraints\(\)/);
+    // The renderer alone assigns the workspace layout class.
     const assigns = appJs.match(/workspace\.className = `terminal-workspace terminal-workspace-grid layout-/g) || [];
     assert.equal(assigns.length, 1, 'exactly one place may assign the workspace layout class');
+});
+
+test('desktop workspace defaults to four windows and clamps the configured limit', () => {
+    const configuredMax = new Function('settings', 'localStorage',
+        `${fnBody('getConfiguredTerminalMaxWindows')}; return getConfiguredTerminalMaxWindows();`);
+    const noStoredLimit = { getItem: () => null };
+    assert.equal(configuredMax({}, noStoredLimit), 4, 'desktop default must allow four windows');
+    for (const [value, expected] of [[1, 1], [3, 3], [4, 4], [5, 4], [-1, 1], ['invalid', 4]]) {
+        assert.equal(configuredMax({ terminal: { maxWindows: value } }, noStoredLimit), expected,
+            `configured maxWindows=${value}`);
+    }
+    assert.equal(configuredMax({}, { getItem: () => '4' }), 4, 'stored four-window preference');
+
+    const effectiveMax = new Function('isCompactTerminalWorkspace', 'getConfiguredTerminalMaxWindows',
+        `${fnBody('getEffectiveTerminalMaxWindows')}; return getEffectiveTerminalMaxWindows();`);
+    assert.equal(effectiveMax(() => false, () => 4), 4, 'desktop retains four slots');
+    assert.equal(effectiveMax(() => true, () => 4), 1, 'compact workspace remains single-window');
+    const enforce = fnCode('enforceTerminalWorkspaceLimit');
+    assert.match(enforce, /const maxWindows = getEffectiveTerminalMaxWindows\(\)/);
+    assert.match(enforce, /while \(visibleTerminalTabs\(\)\.length > maxWindows\)/);
+    assert.match(enforce, /minimizeTerminalSession\(oldestVisible, \{ activateNext: false, animated: false \}\)/);
 });
 
 test('layout-1 defensively pins any in-flow window to the single cell', () => {
@@ -366,10 +391,13 @@ test('app shell assets are cache-busted for the split-grid change', () => {
     const appHtml = readFileSync(join(root, 'public/app.html'), 'utf8');
     const sw = readFileSync(join(root, 'public/sw.js'), 'utf8');
     const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js references');
+    assert.equal(appVersion, '20261101-ui133-batchexec26', 'split-grid shell release revision');
     assertAssetVersion(appHtml, 'style.css', appVersion, 'app shell style');
+    assertAssetVersion(appHtml, 'zephyr-terminal-spec.css', appVersion, 'app shell terminal spec');
     assert.equal(cacheNameVersion(sw), appVersion);
     assertAssetVersion(sw, 'app.js', appVersion, 'service worker app.js');
     assertAssetVersion(sw, 'style.css', appVersion, 'service worker style.css');
+    assertAssetVersion(sw, 'zephyr-terminal-spec.css', appVersion, 'service worker terminal spec');
 
     // Versioned URLs are immutable and cache-first. Bare module dependencies
     // are network-first so a previously cached unversioned file cannot live

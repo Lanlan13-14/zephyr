@@ -36,9 +36,10 @@ test('open splits matched geometry and dual-face rotation across Go springs', ()
   assert.match(open, /setTimeout\(resolve, 700\)/);
   assert.match(open, /Motion\.set\(rotor, \{ rotateY: -180 \}\)/);
   assert.doesNotMatch(open, /Motion\.cssVars\(nav, \{ '--terminal-card-shelf-padding'/);
-  assert.match(open, /response:\s*0\.22, damping:\s*1/);
-  assert.match(open, /Motion\.set\(nav, \{ y: shelfFrom - shelfTo \}/);
-  assert.match(open, /Motion\.to\(nav, \{ y: 0 \}/);
+  assert.match(open, /applySwitchViewCore\('terminal', \{ enteringAnimated: true \}\)/);
+  assert.match(open, /syncTerminalSmartbarTop\(\)/);
+  assert.match(open, /syncTerminalShelfLineState\(\)/);
+  assert.match(fn('settleTerminalShelfForCardFlip'), /--terminal-nav-height/);
   assert.match(open, /transformOrigin:\s*'50% 50%'/);
   assert.match(open, /const x0\s*=\s*\(origin\.left\s*\+\s*origin\.width\s*\/\s*2\)/);
   assert.match(open, /const y0\s*=\s*\(origin\.top\s*-\s*topBound\s*\+\s*origin\.height\s*\/\s*2\)/);
@@ -130,8 +131,10 @@ test('terminal close uses one Motion path before removal', () => {
   assert.match(close, /await Promise\.all\(\[[\s\S]*closeMotion/);
   assert.match(close, /await closeMotion/);
   assert.ok(close.indexOf('const closeMotion = playTerminalWindowCloseMotion(win)') < close.indexOf('terminalTabs = terminalTabs.filter'));
-  assert.match(motion, /Motion\.tween\(win,[\s\S]*scaleX: 0\.01,[\s\S]*scaleY: 0\.01,[\s\S]*opacity: 0/);
-  assert.match(motion, /duration: 360/); assert.match(motion, /bezier: \[0\.32, 0\.72, 0, 1\]/);
+  assert.match(motion, /M\.to\(win,[\s\S]*scaleX: 0\.86,[\s\S]*scaleY: 0\.86,[\s\S]*opacity: 0/);
+  assert.match(motion, /response: 0\.20, damping: 0\.98/);
+  assert.match(motion, /Motion\.tween\(win,[\s\S]*scaleX: 0\.86,[\s\S]*scaleY: 0\.86,[\s\S]*opacity: 0/);
+  assert.match(motion, /duration: 220/); assert.match(motion, /bezier: \[0\.32, 0\.72, 0, 1\]/);
   assert.match(css, /terminal-window\.motion-closing/);
   assert.doesNotMatch(css, /terminal-window\.closing\s*\{/);
 });

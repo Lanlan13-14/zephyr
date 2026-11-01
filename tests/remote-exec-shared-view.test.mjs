@@ -55,10 +55,11 @@ test('batch workspace omits both the English eyebrow and Chinese page title', ()
 test('promoting never deletes remote owner or detaches its live iframe', async () => {
     const start = app.indexOf('async function promoteRemoteWindowToFullTerminal(');
     const end = app.indexOf('// One control/resize owner', start);
-    const remote = { id: 'pty', connectionId: 'server', frame: { contentWindow: {} } };
+    const remote = { id: 'pty', connectionId: 'server', frame: { contentWindow: {}, closest: () => null } };
     const context = vm.createContext({ remoteExecSessions: new Map([['pty', remote]]),
+        window: { matchMedia: () => ({ matches: true }) }, document: { querySelectorAll: () => [] }, CSS: { escape: value => value },
         activeRemoteTab: 'pty', openTerminalConnection: async () => 'pty',
-        switchView() {}, scheduleTerminalLayoutStabilize() {}, scheduleWorkspaceSave() {},
+        switchView(view, options) { context.switched = [view, options]; }, scheduleTerminalLayoutStabilize() {}, scheduleWorkspaceSave() {},
         toast(message) { throw Error(message); } });
     vm.runInContext(app.slice(start, end), context);
     assert.equal(await context.promoteRemoteWindowToFullTerminal('pty'), true);
@@ -86,6 +87,22 @@ test('shared PTY control belongs to exactly one workspace and restores to remote
     assert.equal(policy('pty', remoteWindow).shared, true);
     assert.equal(policy('pty', remoteWindow).canControl, true);
     assert.equal(context.remoteExecSessions.size, 1);
+});
+
+test('reverse promotion adapts to the shared card-flip open and handoff contract', () => {
+    const flipTestSrc = app.slice(app.indexOf('async function animateRemoteExecPromoteFlip'), app.indexOf('async function promoteRemoteWindowToFullTerminal'));
+    assert.match(flipTestSrc, /await playTerminalCardFlipOpen\(remoteWin, \{/);
+    assert.match(flipTestSrc, /liveWindow: terminalWin/);
+    assert.match(flipTestSrc, /originRect: origin/);
+    assert.match(flipTestSrc, /direction: 'reverse'/);
+    assert.match(flipTestSrc, /timeScale: 1\.5/);
+    assert.match(flipTestSrc, /paintFront: \(front\) => createRemoteExecFlipFace\(remoteWin, front, origin\.width, origin\.height\)/);
+    assert.match(flipTestSrc, /if \(!flipped\) return false;\s*await finishTerminalCardFlipOpenHandoff\(\)/);
+    assert.match(flipTestSrc, /finally\s*\{[\s\S]*restoreCardFlipHostedWindow\(\)[\s\S]*releaseCardFlipWindowPins\(terminalWin\)[\s\S]*resetTerminalCardFlipSurface\(sshKeyMotion\.engine\)[\s\S]*phase = 'settled'/);
+    assert.doesNotMatch(flipTestSrc, /Motion\.to\(|rotateY:|iosCardFlipOpen|createRemoteExecFlipFace\(terminalWin|appendChild\(remoteWin\)|appendChild\(terminalWin\)/);
+    assert.match(flipTestSrc, /prefers-reduced-motion/);
+    assert.match(app, /animateRemoteExecPromoteFlip\(remoteWin, fullTarget\)/);
+    assert.match(app, /switchView\('terminal', \{ skipCardFlip: true \}\)/);
 });
 
 test('closing a promoted full-terminal view stays in Terminal and keeps only the remote PTY owner alive', () => {

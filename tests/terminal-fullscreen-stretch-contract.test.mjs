@@ -12,7 +12,7 @@ const motionJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/motio
 const presetsJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/presets.js'), 'utf8');
 const appHtml = readFileSync(path.join(root, 'public/app.html'), 'utf8');
 const swJs = readFileSync(path.join(root, 'public/sw.js'), 'utf8');
-const MOTION_CACHE = '20260731-motion-mobile-fix2';
+const motionIndexJs = readFileSync(path.join(root, 'public/vendor/zephyr-motion/index.js'), 'utf8');
 
 test('Motion.stretchExpand is Go-standard driven (no CSS transition)', () => {
     assert.match(motionJs, /async stretchExpand\(el, opts = \{\}\)/);
@@ -68,10 +68,15 @@ test('mobile fullscreen exit reveals nav through Motion and serializes close/min
     assert.match(styleCss, /terminal-custom-fullscreen-open\.terminal-fullscreen-exiting \.main-nav/);
 });
 
-test('cache revision covers app + motion module', () => {
+test('cache revision covers app assets and consistent shared motion imports', () => {
     const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
+    assert.equal(appVersion, '20261101-ui133-batchexec26', 'app shell release revision');
     assertAssetVersion(appHtml, 'style.css', appVersion, 'app shell style.css');
-    assert.match(appHtml, new RegExp(`zephyr-motion/index\\.js\\?v=${MOTION_CACHE}`));
     assertAssetVersion(swJs, 'app.js', appVersion, 'service worker app.js');
-    assert.match(appJs, new RegExp(`zephyr-motion/index\\.js\\?v=${MOTION_CACHE}`));
+
+    // Motion has its own release cadence. Every app import must agree with the
+    // preload, and the entry point must load that same revision of motion.js.
+    const motionVersion = singleAssetVersion(appHtml, 'vendor/zephyr-motion/index.js', 'motion preload');
+    assertAssetVersion(appJs, 'vendor/zephyr-motion/index.js', motionVersion, 'app motion imports');
+    assertAssetVersion(motionIndexJs, 'motion.js', motionVersion, 'motion implementation import');
 });

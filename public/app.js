@@ -4,7 +4,7 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
 import { createNotesController } from './notes.js?v=20261028-ui132';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261028-ui132';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261101-ui133-batchexec26';
 import { localizeActivityMessage } from './activity-i18n.js?v=20261028-ui132';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20261028-ui132';
 
@@ -670,7 +670,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261101-cardflip22');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -3190,7 +3190,9 @@ function paintTerminalCardFlipBack(options = {}) {
         overflow:'hidden', boxShadow:'none', opacity:'1', visibility:'visible', pointerEvents:'none',
         animation:'none', transition:'none', transform:'none', filter:'none',
     });
-    back.appendChild(liveWin);
+    // Preserve the live browsing context, matching the restore path.
+    if (typeof back.moveBefore === 'function') back.moveBefore(liveWin, null);
+    else back.appendChild(liveWin);
     return true;
 }
 function restoreCardFlipHostedWindow() {
@@ -3257,6 +3259,8 @@ function resetTerminalCardFlipSurface(Motion) {
         src.style.visibility = '';
         delete src.dataset.motionHidden;
     }
+    document.querySelectorAll('#terminalWorkspace > .card-flip-sibling')
+        .forEach(pane => pane.classList.remove('card-flip-sibling'));
     if (front) front.innerHTML = '';
     if (back) back.innerHTML = '';
     if (surface) {
@@ -3326,7 +3330,8 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     terminalCardFlipMotion.sourceEl = sourceEl || null;
     terminalCardFlipMotion.connectionId = options.connectionId || null;
     document.body.classList.add('terminal-card-flip-animating', 'terminal-card-flip-open');
-    paintTerminalCardFlipFront(sourceEl);
+    if (options.paintFront) options.paintFront(front, origin);
+    else paintTerminalCardFlipFront(sourceEl);
     if (!paintTerminalCardFlipBack({ liveWindow })) return false;
 
     const target = terminalCardFlipTargetRect(origin);
@@ -3393,6 +3398,12 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     applySwitchViewCore('terminal', { enteringAnimated: true });
     try {
         const ws = document.getElementById('terminalWorkspace');
+        // A sibling must remain visible after its avoidance spring settles,
+        // not disappear until the slower card flip releases the body gate.
+        ws?.querySelectorAll(':scope > .terminal-window:not(.minimized-keepalive)').forEach((pane) => {
+            pane.classList.add('card-flip-sibling');
+            pane.style.animation = 'none';
+        });
         const { vw, vh, wsLeft, wsWidth } = getTerminalWorkspaceStageMetrics();
         if (ws && vw >= 761 && Motion?.terminalWindowAvoidance) {
             const padX = 16;
@@ -3470,22 +3481,41 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     // One cadence for the whole gesture. Geometry and rotation are separate
     // DOM responsibilities but use the same Go flip standard and start frame.
     const S = cardFlipStandards(Motion);
+    const reverse = options.direction === 'reverse';
+    const timeScale = Math.max(1, Math.min(2, Number(options.timeScale) || 1));
+    const flipTiming = { standard: S.iosCardFlipOpen, timeScale };
     const jobs = [
-        Motion.to(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1, radius }, { standard: S.iosCardFlipOpen }),
-        Motion.to(rotor, { rotateY: -180 }, { standard: S.iosCardFlipOpen }),
-        scrim ? Motion.to(scrim, { opacity: 0.55 }, { standard: S.iosCardFlipOpen }) : Promise.resolve(),
+        timeScale === 1
+            ? Motion.to(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1, radius }, { standard: S.iosCardFlipOpen })
+            : Motion.to(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1, radius }, flipTiming),
+        reverse
+            ? Motion.to(rotor, { rotateY: 180 }, flipTiming)
+            : Motion.to(rotor, { rotateY: -180 }, { standard: S.iosCardFlipOpen }),
+        scrim ? Motion.to(scrim, { opacity: 0.55 }, flipTiming) : Promise.resolve(),
     ];
     // Reference motion visually finishes around 0.7s. Do not keep the flip
     // layer alive for the spring's sub-pixel/sub-degree numerical tail; that
     // makes the real page feel faster than the animation. At the visual end,
     // snap the same Go channels to their exact target and hand off this node.
-    await new Promise((resolve) => window.setTimeout(resolve, 700));
+    if (timeScale === 1) await new Promise((resolve) => window.setTimeout(resolve, 700));
+    else {
+        await new Promise((resolve) => window.setTimeout(resolve, Math.round(700 * timeScale)));
+        // A busy renderer may have advanced fewer spring ticks than wall time.
+        // Never cut a visibly half-turned large card straight to its final slot.
+        const deadline = performance.now() + 3500;
+        while (cycle === terminalCardFlipMotion.cycle
+            && Math.abs(Motion.value(rotor, 'rotateY') - (reverse ? 180 : -180)) > 1
+            && performance.now() < deadline) {
+            await new Promise(requestAnimationFrame);
+        }
+    }
     if (cycle !== terminalCardFlipMotion.cycle) return false;
     Motion.stop(surface);
     Motion.stop(rotor);
     if (scrim) Motion.stop(scrim);
     Motion.set(surface, { x: 0, y: 0, scaleX: 1, scaleY: 1, opacity: 1, radius });
-    Motion.set(rotor, { rotateY: -180 });
+    if (reverse) Motion.set(rotor, { rotateY: 180 });
+    else Motion.set(rotor, { rotateY: -180 });
     if (scrim) Motion.set(scrim, { opacity: 0.55 });
     Promise.allSettled([...jobs, ...shelfJobs]).catch(() => {});
 
@@ -3537,6 +3567,9 @@ async function finishTerminalCardFlipOpenHandoff() {
     renderTerminalWorkspace();
     document.body.classList.remove('terminal-card-flip-preparing', 'terminal-card-flip-animating', 'terminal-card-flip-handoff');
     releaseCardFlipWindowPins(win);
+    if (shouldSettleCardFlipIntoSlot(win, stageRect)) {
+        animateTerminalWindowLayoutFrom(new Map([[win.dataset.window, stageRect]]), { reason: 'card-flip-settle' });
+    }
     if (Motion && surface) {
         Motion.stop(surface);
         if (scrim) Motion.stop(scrim);
@@ -5651,8 +5684,8 @@ function captureVisibleWorkspaceWindowRects(excludeId = null) {
 }
 function syncVisualLayout() {
     visualLayout = computeDefaultVisualLayout();
-    if (!activeTerminalTab || !getTerminalSession(activeTerminalTab) || getTerminalSession(activeTerminalTab)?.minimized) {
-        activeTerminalTab = visualLayout[0] || terminalTabs[0]?.id || null;
+    if (!activeTerminalTab || !getTerminalSession(activeTerminalTab) || closingTerminalTabs.has(activeTerminalTab) || getTerminalSession(activeTerminalTab)?.minimized) {
+        activeTerminalTab = visualLayout[0] || terminalTabs.find(t => !closingTerminalTabs.has(t.id))?.id || null;
     }
 }
 function minimizeTerminalSession(id, { activateNext = true, animated = true } = {}) {
@@ -5875,7 +5908,7 @@ function activateTerminalPaneById(tabId) {
     const ws = document.getElementById('terminalWorkspace');
     if (!ws) return false;
     const targetWin = ws.querySelector(`:scope > .terminal-window[data-window="${CSS.escape(String(tabId))}"]`);
-    if (!targetWin || targetWin.classList.contains('minimized-keepalive')) return false;
+    if (!targetWin || !getTerminalSession(String(tabId)) || closingTerminalTabs.has(String(tabId)) || targetWin.classList.contains('minimized-keepalive')) return false;
     activeTerminalTab = String(tabId);
     touchTerminalSession(activeTerminalTab);
     ws.querySelectorAll(':scope > .terminal-window').forEach((w) => {
@@ -6465,12 +6498,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&v=20261101-batchexec14&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&v=20261101-ui133-batchexec26&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&v=20261101-batchexec14&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&v=20261101-ui133-batchexec26&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batchexec14`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batchexec14`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-ui133-batchexec26`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-ui133-batchexec26`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -6525,6 +6558,23 @@ function mountMobileDockToggle(workspace) {
         toggle.style.display = isCompactTerminalWorkspace() && workspace?.classList.contains('custom-fullscreen') ? 'grid' : '';
     });
 }
+// A removed window must return its finite Motion channels; weak DOM keys do not
+// release engine slots. Also retire stale layout fills before measuring new slots.
+function resetTerminalWindowLayoutMotion(win, { dispose = false } = {}) {
+    if (!win) return;
+    try {
+        for (const animation of win.getAnimations?.() || []) animation.cancel();
+        const M = sshKeyMotion.engine || window.Motion;
+        if (dispose) M?.release?.(win);
+        else M?.stop?.(win, ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h']);
+    } catch (err) { console.warn('[terminal] layout cleanup failed', err); }
+    win.classList.remove('terminal-window-morphing', 'layout-morphing', 'layout-morphing-radius');
+    for (const key of ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h']) win.style.removeProperty(key);
+}
+function removeTerminalWindowElement(win) {
+    resetTerminalWindowLayoutMotion(win, { dispose: true });
+    win?.remove();
+}
 function renderTerminalWorkspace() {
     const visibleSessions = terminalTabs.filter((t) => !t.minimized && !closingTerminalTabs.has(t.id));
     const visible = [
@@ -6550,7 +6600,7 @@ function renderTerminalWorkspace() {
         workspace.querySelectorAll(':scope > .terminal-window').forEach((el) => {
             if (!keepAliveIds.has(el.dataset.window)) {
                 console.info('[terminal-keepalive]', 'unload terminal iframe', { tabId: el.dataset.window, reason: 'no-visible-and-not-kept' });
-                el.remove();
+                removeTerminalWindowElement(el);
             }
         });
         document.body.classList.add('terminal-empty-state');
@@ -6586,13 +6636,13 @@ function renderTerminalWorkspace() {
     workspace.querySelectorAll(':scope > .terminal-window').forEach((el) => {
         if (!keepAliveIds.has(el.dataset.window)) {
             console.info('[terminal-keepalive]', 'unload terminal iframe', { tabId: el.dataset.window, reason: 'outside-visible-and-minimized-keepalive' });
-            el.remove();
+            removeTerminalWindowElement(el);
         }
     });
     visible.forEach((t, index) => {
         const matches = Array.from(workspace.querySelectorAll(`:scope > .terminal-window[data-window="${CSS.escape(t.id)}"]`));
         if (matches.length > 1) {
-            matches.slice(1).forEach((dup) => dup.remove());
+            matches.slice(1).forEach((dup) => removeTerminalWindowElement(dup));
         }
         let win = matches[0] || (terminalCardFlipMotion?.hostedWindow?.dataset?.window === String(t.id) ? terminalCardFlipMotion.hostedWindow : null);
         if (!win) {
@@ -6700,23 +6750,30 @@ function exitTerminalFullscreen({ renderAfter = true } = {}) {
 
 async function playTerminalWindowCloseMotion(win) {
     if (!win) return false;
+    let deadline;
+    const bounded = job => Promise.race([job, new Promise(resolve => { deadline = window.setTimeout(resolve, 900); })]);
+    resetTerminalWindowLayoutMotion(win);
     win.classList.add('motion-closing');
     win.style.transformOrigin = '50% 50%';
     try {
         const M = sshKeyMotion.engine || window.Motion;
         if (M?.to && M?.set) {
             M.set(win, { scaleX: 1, scaleY: 1, opacity: 1 });
-            await M.to(win, { scaleX: 0.86, scaleY: 0.86, opacity: 0 }, { preset: { response: 0.20, damping: 0.98 } });
+            await bounded(M.to(win, { scaleX: 0.86, scaleY: 0.86, opacity: 0 }, { preset: { response: 0.20, damping: 0.98 } }));
             return true;
         }
-        await Motion.tween(win, { scaleX: 0.86, scaleY: 0.86, opacity: 0 }, {
+        await bounded(Motion.tween(win, { scaleX: 0.86, scaleY: 0.86, opacity: 0 }, {
             duration: 220,
             bezier: [0.32, 0.72, 0, 1]
-        });
+        }));
         return true;
     } catch (e) {
         console.warn('[terminal] close motion failed', e);
         return false;
+    } finally {
+        window.clearTimeout(deadline);
+        // Stop writers now, release slots when the DOM owner is removed.
+        try { (sshKeyMotion.engine || window.Motion)?.stop?.(win); } catch {}
     }
 }
 
@@ -6759,6 +6816,11 @@ async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
     if (ephemeralConnectionId && !retainedRemote) {
         disposeEphemeralConnection(ephemeralConnectionId, { reason: `tab-close:${reason}` });
     }
+    resetTerminalWindowLayoutMotion(win, { dispose: true });
+    pinnedStateByTabId.delete(tabId);
+    minimizingTerminalTabs.delete(tabId);
+    dockLaunchAnimatingWindows.delete(tabId);
+    dockSwapAnimatingWindows.delete(tabId);
     terminalTabs = terminalTabs.filter((t) => t.id !== tabId);
     openOrderStack = openOrderStack.filter((id) => id !== tabId);
     visualLayout = visualLayout.filter((id) => id !== tabId);
@@ -6774,7 +6836,11 @@ async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
     }
     sessionStorage.removeItem(`zephyr_remote_desktop_params_${tabId}`);
     removeTerminalSnapshot(tabId);
-    if (activeTerminalTab === tabId) activeTerminalTab = visualLayout[0] || terminalTabs.find((t) => !t.minimized)?.id || terminalTabs[0]?.id || null;
+    if (activeTerminalTab === tabId || closingTerminalTabs.has(activeTerminalTab)) {
+        const selectable = terminalTabs.filter(t => !closingTerminalTabs.has(t.id));
+        activeTerminalTab = visualLayout.find(id => selectable.some(t => t.id === id && !t.minimized))
+            || selectable.find(t => !t.minimized)?.id || selectable[0]?.id || null;
+    }
     if (!terminalTabs.length) {
         activeTerminalTab = null;
         visualLayout = [];
@@ -6789,15 +6855,22 @@ async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
     const remainingBeforeRects = new Map();
     document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach((w) => {
         const wid = w.dataset.window;
-        if (wid && wid !== tabId) {
+        if (wid && wid !== tabId && !closingTerminalTabs.has(wid)) {
             const r = w.getBoundingClientRect();
             if (r.width > 20 && r.height > 20) remainingBeforeRects.set(wid, { left: r.left, top: r.top, width: r.width, height: r.height });
         }
+    });
+    // Retire a previous avoidance/WAAPI fill before rendering and measuring.
+    // Otherwise a fixed half-width presentation becomes the new target even
+    // though the workspace class is already layout-1.
+    document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach(w => {
+        if (!closingTerminalTabs.has(w.dataset.window)) resetTerminalWindowLayoutMotion(w);
     });
     renderTerminalTabs();
     applySplitSlideState({ animate: false });
     if (remainingBeforeRects.size > 0 && window.Motion?.terminalWindowAvoidance) {
         document.querySelectorAll('#terminalWorkspace > .terminal-window:not(.minimized-keepalive)').forEach((w) => {
+            if (closingTerminalTabs.has(w.dataset.window)) return;
             const fromBox = remainingBeforeRects.get(w.dataset.window);
             const toR = w.getBoundingClientRect();
             if (fromBox && toR && toR.width > 20) {
@@ -6950,7 +7023,7 @@ function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change'
     const workspace = $('#terminalWorkspace');
     if (!workspace || !beforeRects?.size) return;
     window.cancelAnimationFrame(animateTerminalWindowLayoutFrom._raf);
-    animateTerminalWindowLayoutFrom._raf = window.requestAnimationFrame(() => {
+    const start = () => {
         const animations = [];
         // Live handles, so the watchdog below can cancel a fill that never
         // resolved (interrupted render, tab hidden mid-morph, …).
@@ -7040,7 +7113,11 @@ function animateTerminalWindowLayoutFrom(beforeRects, { reason = 'layout-change'
             workspace.querySelectorAll('.terminal-window.layout-morphing, .terminal-window.layout-morphing-radius')
                 .forEach((el) => el.classList.remove('layout-morphing', 'layout-morphing-radius'));
         }, 720);
-    });
+    };
+    // Install the full-stage first keyframe before the flip overlay is removed.
+    // Other layout changes still coalesce on rAF as before.
+    if (reason === 'card-flip-settle') start();
+    else animateTerminalWindowLayoutFrom._raf = window.requestAnimationFrame(start);
 }
 
 function resetTerminalWorkspaceKeyboard({ force = false, notifyIframe = false } = {}) {
@@ -15621,7 +15698,7 @@ function createRemoteExecWindowElement(session) {
     frame.dataset.frame = session.id;
     frame.title = remoteExecLabel(session);
     frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
-    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-batchexec14`;
+    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-ui133-batchexec26`;
     frame.addEventListener('load', () => initializeRemoteExecFrame(session));
     session.frame = frame;
     session.element = article;
@@ -15816,24 +15893,110 @@ async function openTerminalConnection(connectionId, options = {}) {
     renderTerminalTabs({ rebuildWorkspace: true });
     return tabId;
 }
+function createRemoteExecFlipFace(win, face, width, height) {
+    // Presentation only: do not move/reload either live iframe or attach another PTY.
+    const clone = win.cloneNode(true);
+    const sourceFrames = [...win.querySelectorAll('iframe')];
+    const clonedFrames = [...clone.querySelectorAll('iframe')];
+    clonedFrames.forEach((frame, i) => {
+        const viewport = document.createElement('div');
+        Object.assign(viewport.style, { width: '100%', height: '100%', overflow: 'hidden', pointerEvents: 'none' });
+        frame.replaceWith(viewport);
+        const doc = sourceFrames[i]?.contentDocument;
+        if (!doc?.documentElement) return;
+        const shadow = viewport.attachShadow({ mode: 'open' });
+        const sheet = document.createElement('style');
+        sheet.textContent = [...doc.styleSheets].map(s => { try { return [...s.cssRules].map(r => r.cssText).join('\n'); } catch { return ''; } }).join('\n');
+        const html = doc.documentElement.cloneNode(true);
+        // :root rules do not match the nested html inside a shadow tree. Carry
+        // resolved tokens explicitly so a light terminal never flashes black.
+        const computedRoot = doc.defaultView.getComputedStyle(doc.documentElement);
+        for (const name of computedRoot) {
+            if (name.startsWith('--')) html.style.setProperty(name, computedRoot.getPropertyValue(name));
+        }
+        html.querySelectorAll('script, link, style, iframe, audio, video').forEach(el => el.remove());
+        const oldRect = sourceFrames[i].getBoundingClientRect();
+        const sw = Math.max(1, oldRect.width || doc.defaultView.innerWidth || width);
+        const sh = Math.max(1, oldRect.height || doc.defaultView.innerHeight || height - 42);
+        html.style.cssText += `;width:${sw}px!important;height:${sh}px!important;position:absolute!important;inset:0!important;transform-origin:0 0!important;transform:scale(${width / sw},${Math.max(1, height - 42) / sh})!important;pointer-events:none!important`;
+        const canvases = [...doc.querySelectorAll('canvas')];
+        html.querySelectorAll('canvas').forEach((canvas, n) => {
+            try { canvas.getContext('2d')?.drawImage(canvases[n], 0, 0); } catch {}
+        });
+        shadow.append(sheet, html);
+    });
+    clone.removeAttribute('id');
+    clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    clone.classList.remove('motion-entering', 'motion-closing', 'terminal-window-morphing', 'layout-morphing');
+    clone.setAttribute('aria-hidden', 'true');
+    clone.style.cssText = 'position:absolute!important;inset:0!important;width:100%!important;height:100%!important;margin:0!important;max-width:none!important;min-width:0!important;min-height:0!important;opacity:1!important;visibility:visible!important;pointer-events:none!important;transform:none!important;filter:none!important;animation:none!important;transition:none!important;overflow:hidden!important;border-radius:inherit!important';
+    face.replaceChildren(clone);
+}
+
+async function animateRemoteExecPromoteFlip(remoteWin, terminalWin) {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+        || !remoteWin?.isConnected || !terminalWin?.isConnected) return false;
+    const source = remoteWin.getBoundingClientRect();
+    if (source.width < 1 || source.height < 1) return false;
+    const sourceStyle = remoteWin.getAttribute('style');
+    const previousView = currentAppView;
+    const origin = { left: source.left, top: source.top, width: source.width, height: source.height };
+    terminalCardFlipMotion.fromView = 'remote';
+    document.body.classList.add('terminal-card-flip-preparing');
+    try {
+        // Use the same stage, live back face, multi-window avoidance and final
+        // slot handoff as Dashboard. Only the source snapshot and cadence differ.
+        const flipped = await playTerminalCardFlipOpen(remoteWin, {
+            liveWindow: terminalWin,
+            originRect: origin,
+            connectionId: remoteWin.dataset.connectionId,
+            radiusFrom: terminalCardSourceRadius(remoteWin),
+            direction: 'reverse',
+            timeScale: 1.5,
+            paintFront: (front) => createRemoteExecFlipFace(remoteWin, front, origin.width, origin.height),
+        });
+        if (!flipped) return false;
+        await finishTerminalCardFlipOpenHandoff();
+        return true;
+    } catch (error) {
+        console.warn('[remote-exec-card-flip] shared animation failed', error);
+        applySwitchViewCore(previousView, { enteringAnimated: true });
+        return false;
+    } finally {
+        if (terminalCardFlipMotion.hostedWindow) restoreCardFlipHostedWindow();
+        releaseCardFlipWindowPins(terminalWin);
+        if (sourceStyle == null) remoteWin.removeAttribute('style');
+        else remoteWin.setAttribute('style', sourceStyle);
+        delete remoteWin.dataset.motionHidden;
+        document.body.classList.remove('terminal-card-flip-preparing', 'terminal-card-flip-animating', 'terminal-card-flip-handoff');
+        resetTerminalCardFlipSurface(sshKeyMotion.engine);
+        terminalCardFlipMotion.phase = 'settled';
+    }
+}
+
 async function promoteRemoteWindowToFullTerminal(tabId = activeRemoteTab) {
     tabId = String(tabId || '');
-    const session = remoteExecSessions.get(String(tabId));
-    if (!session) return false;
-    if (session.sharedView) return false;
-    if (session.promoting) return false;
+    const session = remoteExecSessions.get(tabId);
+    if (!session || session.promoting) return false;
+    const previousSharedView = !!session.sharedView;
     session.promoting = true;
     session.sharedView = true;
-    // Keep the remote document mounted and subscribed. The server attaches the
-    // full view to the same PTY and replays its canonical framebuffer; no /open,
-    // second shell, destructive disconnect, or iframe reparenting is involved.
     try {
+        // Mount the full terminal on the same PTY first, while keeping the batch
+        // workspace visible. The reverse flip then shows both live views as faces.
         await openTerminalConnection(session.connectionId, { sessionId: tabId, tabId, remoteExecHandoff: session, skipViewSwitch: true });
-        switchView('terminal');
+        const remoteWin = session.frame?.closest?.('.terminal-window');
+        const fullTarget = [...document.querySelectorAll('#terminalWorkspace iframe.terminal-frame')]
+            .find(frame => frame.dataset.frame === tabId)?.closest('.terminal-window');
+        const shouldFlip = !!(remoteWin?.isConnected && fullTarget?.isConnected
+            && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+        const flipped = shouldFlip && await animateRemoteExecPromoteFlip(remoteWin, fullTarget);
+        if (!flipped) switchView('terminal', { skipCardFlip: true });
         scheduleTerminalLayoutStabilize('remote-promote', { focus: true, tabId });
         scheduleWorkspaceSave('promote-remote-exec', { immediate: true });
         return true;
     } catch (error) {
+        session.sharedView = previousSharedView;
         toast(error.message);
         return false;
     } finally {
@@ -17074,7 +17237,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2')
+        return import('./vendor/zephyr-motion/index.js?v=20261101-cardflip22')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -17681,7 +17844,7 @@ function bindEvents() {
             return;
         }
         const win = e.target.closest?.('[data-window]');
-        if (win) { activeTerminalTab = win.dataset.window; touchTerminalSession(activeTerminalTab); renderTerminalTabs({ rebuildWorkspace: false }); }
+        if (win && activateTerminalPaneById(win.dataset.window)) renderTerminalTabs({ rebuildWorkspace: false });
     });
     $('#terminalWorkspace').addEventListener('pointerdown', (e) => {
         if (e.target.closest?.('[data-window-action]')) {

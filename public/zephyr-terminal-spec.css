@@ -4034,13 +4034,14 @@ body.terminal-card-flip-preparing #terminalWorkspace:has(.terminal-window-morphi
   visibility: visible !important;
   opacity: 1 !important;
 }
-body.terminal-card-flip-preparing #terminalWorkspace > .terminal-window:not(.terminal-window-morphing),
-body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window:not(.terminal-window-morphing) {
+body.terminal-card-flip-preparing #terminalWorkspace > .terminal-window:not(.terminal-window-morphing):not(.card-flip-sibling),
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window:not(.terminal-window-morphing):not(.card-flip-sibling) {
   opacity: 0 !important;
   pointer-events: none !important;
 }
 body.terminal-card-flip-preparing #terminalWorkspace > .terminal-window.terminal-window-morphing,
-body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window.terminal-window-morphing {
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window.terminal-window-morphing,
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window.card-flip-sibling {
   opacity: 1 !important;
   visibility: visible !important;
   pointer-events: none !important;
@@ -4510,7 +4511,8 @@ html body.app-body.terminal-mode #sessionTabs.smartbar-dragging-outside .smartba
 
 /* 卡片翻转期间背景避让窗口 z-index 严格处于翻转舞台（80）之下 */
 body.terminal-card-flip-preparing #terminalWorkspace > .terminal-window.terminal-window-morphing,
-body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window.terminal-window-morphing {
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window.terminal-window-morphing,
+body.terminal-card-flip-animating.terminal-card-flip-open #terminalWorkspace > .terminal-window.card-flip-sibling {
   z-index: 18 !important;
 }
 

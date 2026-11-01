@@ -56,10 +56,11 @@ test('client.js uses i18n runtime for user-facing strings', () => {
 test('failed catalog loads are retried instead of freezing the locale runtime', async () => {
     const originalFetch = globalThis.fetch;
     let calls = 0;
-    globalThis.fetch = async () => {
+    globalThis.fetch = async (url) => {
         calls += 1;
         if (calls <= 2) throw new Error('temporary network failure');
-        return { ok: true, json: async () => ({ '请求失败': 'Request failed after retry' }) };
+        const message = String(url).includes('/zh-CN.json') ? '请求失败' : 'Request failed after retry';
+        return { ok: true, json: async () => ({ '请求失败': message }) };
     };
     try {
         const mod = await import(pathToFileURL(path.join(root, 'public/i18n/runtime.js')).href + `?retry=${Date.now()}`);

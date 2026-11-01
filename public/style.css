@@ -7012,7 +7012,9 @@ body.smartbar-trash-hover .smartbar-trash-target {
 
 /* macOS-like terminal window layout morph */
 .terminal-workspace.terminal-layout-morphing {
-    contain: layout paint;
+    /* Sibling avoidance uses fixed viewport geometry. Paint/layout containment
+       would rebase those panes when the incoming card starts its slot settle. */
+    contain: none;
 }
 .terminal-workspace.terminal-layout-morphing .terminal-window {
     will-change: transform, filter, box-shadow;
