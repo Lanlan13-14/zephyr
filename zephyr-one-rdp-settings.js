@@ -11,12 +11,10 @@
  * The native shell sends the selected directory directly to the embedded core.
  * This page receives only a display label and whether a mapping exists.
  *
- * Why the picker is a polled handoff rather than a Tauri invoke:
- *   The WebView navigates to the loopback core, so the page is a *remote* origin
- *   to Tauri and cannot invoke a command. Granting IPC to a loopback origin would
- *   hand it to any process that can bind a local port. So the page files a
- *   request and the Rust shell claims it. The core persists the result before
- *   the page sees the non-sensitive completion response.
+ * Why the picker uses an authenticated polled handoff:
+ *   The page submits a request to the loopback core, and Electron's watcher
+ *   claims it with a per-process MAC before opening the OS dialog. The core
+ *   persists the result before returning non-sensitive display metadata.
  *
  * Reading #connectionId rather than app.js's `editingId`:
  *   app.js keeps `editingId` in module scope but mirrors it into the

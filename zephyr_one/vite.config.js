@@ -32,16 +32,14 @@ export default defineConfig({
     hmr: host
       ? { protocol: 'ws', port: 1421 }
       : undefined,
-    watch: {
-      ignored: ['**/src-tauri/**'],
-    },
   },
   envPrefix: ['VITE_', 'ELECTRON_'],
   base: './',
   build: {
-    target: process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari14',
-    minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,
-    sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    // Electron 37 embeds Chromium 138 on every desktop platform.
+    target: 'chrome138',
+    minify: process.env.ELECTRON_DEV_DEBUG ? false : 'esbuild',
+    sourcemap: !!process.env.ELECTRON_DEV_DEBUG,
     outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: {

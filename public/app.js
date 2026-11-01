@@ -4,7 +4,7 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
 import { createNotesController } from './notes.js?v=20261028-ui132';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261101-ui133-batchexec26';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261101-cold-start27';
 import { localizeActivityMessage } from './activity-i18n.js?v=20261028-ui132';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20261028-ui132';
 
@@ -3352,11 +3352,13 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     const radius = Number.isFinite(Number(options.radiusFrom)) ? Number(options.radiusFrom) : terminalCardSourceRadius(sourceEl);
     const radiusCss = `${radius}px`;
 
-    stage.classList.add('is-active');
-    stage.setAttribute('aria-hidden', 'false');
+    // Cold boot may await module/WASM work. Never expose an unseeded full-size
+    // overlay while the engine is loading; the source card remains the first frame.
+    stage.classList.remove('is-active');
+    stage.setAttribute('aria-hidden', 'true');
     surface.classList.add('is-live');
     Object.assign(surface.style, {
-        visibility: 'visible', pointerEvents: 'none', transformOrigin: '50% 50%', overflow: 'visible',
+        visibility: 'hidden', pointerEvents: 'none', transformOrigin: '50% 50%', overflow: 'visible',
         isolation: 'auto', background: 'transparent', border: 'none', boxShadow: 'none',
         transition: 'none', borderRadius: radiusCss,
     });
@@ -3365,7 +3367,7 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     front.style.cssText = `position:absolute;inset:0;border-radius:${radiusCss};overflow:hidden;opacity:1;backface-visibility:hidden;-webkit-backface-visibility:hidden;transform:rotateY(0deg);background:var(--surface);pointer-events:none;border:1px solid var(--border);box-shadow:var(--shadow-lift,0 18px 50px rgba(0,0,0,.16));transition:none`;
     back.style.cssText = `position:absolute;inset:0;border-radius:${radiusCss};overflow:hidden;opacity:1;backface-visibility:hidden;-webkit-backface-visibility:hidden;transform:rotateY(180deg);background:var(--surface);pointer-events:none;border:1px solid var(--border);box-shadow:var(--shadow-lift,0 18px 50px rgba(0,0,0,.16));transition:none`;
     if (scrim) {
-        scrim.style.visibility = 'visible';
+        scrim.style.visibility = 'hidden';
         scrim.style.transition = 'none';
         scrim.classList.add('is-open');
         scrim.setAttribute('aria-hidden', 'false');
@@ -3379,6 +3381,11 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     Motion.set(surface, { x: x0, y: y0, scaleX: sx0, scaleY: sy0, opacity: 1, radius });
     Motion.set(rotor, { rotateY: 0 });
     if (scrim) Motion.set(scrim, { opacity: 0 });
+    // Reveal atomically only after source geometry and rotation have been written.
+    stage.classList.add('is-active');
+    stage.setAttribute('aria-hidden', 'false');
+    surface.style.visibility = 'visible';
+    if (scrim) scrim.style.visibility = 'visible';
 
     // The seeded layer now exactly replaces the source card. Hide the source
     // atomically; the dashboard remains behind the single flipping card.
@@ -3498,8 +3505,8 @@ async function playTerminalCardFlipOpen(sourceEl, options = {}) {
     // makes the real page feel faster than the animation. At the visual end,
     // snap the same Go channels to their exact target and hand off this node.
     if (timeScale === 1) await new Promise((resolve) => window.setTimeout(resolve, 700));
-    else {
-        await new Promise((resolve) => window.setTimeout(resolve, Math.round(700 * timeScale)));
+    else await new Promise((resolve) => window.setTimeout(resolve, Math.round(700 * timeScale)));
+    {
         // A busy renderer may have advanced fewer spring ticks than wall time.
         // Never cut a visibly half-turned large card straight to its final slot.
         const deadline = performance.now() + 3500;
@@ -6498,12 +6505,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&v=20261101-ui133-batchexec26&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&v=20261101-cold-start27&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&v=20261101-ui133-batchexec26&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&v=20261101-cold-start27&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-ui133-batchexec26`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-ui133-batchexec26`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-cold-start27`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-cold-start27`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -15698,7 +15705,7 @@ function createRemoteExecWindowElement(session) {
     frame.dataset.frame = session.id;
     frame.title = remoteExecLabel(session);
     frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
-    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-ui133-batchexec26`;
+    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-cold-start27`;
     frame.addEventListener('load', () => initializeRemoteExecFrame(session));
     session.frame = frame;
     session.element = article;
@@ -19012,6 +19019,9 @@ function startBrowserChangeWake() {
 
 async function init() {
     document.documentElement.dataset.appInit = 'start';
+    // Non-blocking warmup, including the very first installed launch. The flip
+    // itself still gates visibility on readiness, so a fast click is also safe.
+    void sshKeyMotion._ensure();
     try {
         await initI18n({ applyDom: true });
         syncLocaleSelectsValue(getLocale());

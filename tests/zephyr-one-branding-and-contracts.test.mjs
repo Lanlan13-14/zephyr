@@ -325,7 +325,7 @@ test('the shipped .ico has no wordmark smear in its small frames', () => {
     /* The behavioural assertion, on the bytes that ship. A generator change that
      * looked right but regenerated the frames wrongly would pass the source
      * checks above and fail here. */
-    const frames = icoFrames(fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/icons/icon.ico')));
+    const frames = icoFrames(fs.readFileSync(path.join(root, 'zephyr_one/platform_assets/desktop/icons/icon.ico')));
     assert.deepEqual([...frames.keys()].sort((a, b) => a - b), [16, 32, 48, 64, 128, 256]);
 
     for (const size of [16]) {
@@ -346,7 +346,7 @@ test('the wordmark is the only thing the small frames lose', () => {
      * strokes are the mark itself, so a small frame that lost them would be
      * blank rather than simplified. Compared as total opaque coverage outside
      * the wordmark box, which the strokes dominate. */
-    const frames = icoFrames(fs.readFileSync(path.join(root, 'zephyr_one/src-tauri/icons/icon.ico')));
+    const frames = icoFrames(fs.readFileSync(path.join(root, 'zephyr_one/platform_assets/desktop/icons/icon.ico')));
     for (const size of [16]) {
         const { width, height, pixels } = decodePng(frames.get(size));
         let opaque = 0;

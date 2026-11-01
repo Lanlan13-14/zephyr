@@ -47,7 +47,7 @@ export class ZephyrApi {
       credentials: 'omit', // we manage cookie/sid manually for cross-origin native client
     });
 
-    // Capture Set-Cookie if exposed (often blocked in browser; Tauri http may allow)
+    // Capture Set-Cookie only if the injected fetch implementation exposes it.
     const setCookie = res.headers.get('set-cookie') || res.headers.get('Set-Cookie');
     if (setCookie) {
       const m = String(setCookie).match(/zephyr_sid=([^;]+)/);

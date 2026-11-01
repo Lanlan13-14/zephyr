@@ -25,8 +25,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(path.join(root, rel), 'utf8');
 
 const ONE_ICON_DIR = 'zephyr_one/platform_assets/icons';
-const RUNTIME_ICON_DIR = 'zephyr_one/src-tauri/runtime-icons';
-const BUNDLE_ICON_DIR = 'zephyr_one/src-tauri/icons';
+const RUNTIME_ICON_DIR = 'zephyr_one/platform_assets/desktop/runtime-icons';
+const BUNDLE_ICON_DIR = 'zephyr_one/platform_assets/desktop/icons';
 const PALETTES = ['frost', 'lava', 'asagi', 'cyber'];
 
 /* ── minimal DOM ─────────────────────────────────────────────────────── */
@@ -339,7 +339,7 @@ test('the Electron shell ships one artwork per palette and defaults to frost', (
     const main = read('zephyr_one/electron/main.mjs');
     for (const palette of PALETTES) {
         assert.ok(
-            existsSync(path.join(root, 'zephyr_one/src-tauri/runtime-icons', `zephyr-one-${palette}.png`)),
+            existsSync(path.join(root, 'zephyr_one/platform_assets/desktop/runtime-icons', `zephyr-one-${palette}.png`)),
             `${palette} artwork must exist`,
         );
     }

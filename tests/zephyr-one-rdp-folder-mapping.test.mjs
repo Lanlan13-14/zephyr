@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
  * b0e5a9c removed the sidecar RDP helper and took two things with it that were
  * never helper-specific, only mounted there: the per-connection mapping store
  * and the folder-picker handoff. That left three live references dangling —
- * src-tauri/src/rdp_picker/mod.rs polling GET /api/one/rdp/picker-queue every
+ * Electron's watcher polling GET /api/one/rdp/picker-queue every
  * 300ms against a route that no longer existed, the #rdpStorageFolder /
  * #rdpStorageDeviceName / #rdpStourceFolderPickBtn controls in app.html with no
  * handler, and a 文件夹映射 switch that still persisted while nothing honoured it.

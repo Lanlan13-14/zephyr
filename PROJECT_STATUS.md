@@ -1,5 +1,9 @@
 # 项目现状记录（Project Status Snapshot）
 
+> 以下是 2026-08-12 的历史快照，不是当前桌面构建指引。桌面现仅 Electron；
+> Tauri/Rust 宿主与相关路径已移除。当前活动契约见 `zephyr_one/README.md`
+> 和 `zephyr_one/ARCHITECTURE.md`，下文保留作历史审计。
+
 - 记录日期：2026-08-12
 - 仓库：Lanlan13-14/zephyr-ssh，分支 main
 - 本文件按可验证的事实记录，不夸大进度；未验证的事项明确标注为“未验证”。

@@ -1,7 +1,7 @@
 /**
  * Embedded Zephyr core runtime for the Electron shell.
  *
- * Port of the former Tauri runtime: spawn a loopback Node child, exchange a
+ * Spawn a loopback Node child, exchange a
  * one-time startup challenge for an HttpOnly session cookie, then load the
  * product UI in the trusted BrowserWindow.
  */

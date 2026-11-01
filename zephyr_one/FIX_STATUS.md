@@ -1,5 +1,8 @@
 # Zephyr One 修复状态（2026-08-07）
 
+> 历史修复日志，不是当前宿主契约。桌面现仅 Electron；Tauri/Rust 路径、
+> API 和构建说明仅记录当时实现。当前说明见 `README.md`、`ARCHITECTURE.md`。
+
 本文件记录当前真实状态，只写已验证的内容。
 
 **Zephyr One 现在是桌面专用产品（Windows / macOS / Linux）。** Android 与 iOS 的

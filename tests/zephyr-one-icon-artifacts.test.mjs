@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
  */
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ICONS_DIR = 'zephyr_one/src-tauri/icons';
+const ICONS_DIR = 'zephyr_one/platform_assets/desktop/icons';
 const readIcon = (rel) => fs.readFileSync(path.join(root, rel));
 
 /** PNG dimensions straight from the IHDR, or null when not a PNG. */
@@ -294,10 +294,10 @@ test('every bundle icon named by electron-builder exists at its stated size', ()
   const listed = [
     pkg.build?.win?.icon,
     pkg.build?.mac?.icon,
-    'src-tauri/icons/32x32.png',
-    'src-tauri/icons/128x128.png',
-    'src-tauri/icons/128x128@2x.png',
-    'src-tauri/icons/icon.ico',
+    'platform_assets/desktop/icons/32x32.png',
+    'platform_assets/desktop/icons/128x128.png',
+    'platform_assets/desktop/icons/128x128@2x.png',
+    'platform_assets/desktop/icons/icon.ico',
   ].filter(Boolean);
   assert.ok(listed.length > 0, 'electron-builder must name icon artefacts');
 
@@ -326,7 +326,7 @@ test('each palette has a runtime icon compiled into the shell', () => {
     'utf8',
   );
   for (const theme of ['frost', 'lava', 'asagi', 'cyber']) {
-    const rel = 'zephyr_one/src-tauri/runtime-icons/zephyr-one-' + theme + '.png';
+    const rel = 'zephyr_one/platform_assets/desktop/runtime-icons/zephyr-one-' + theme + '.png';
     assert.ok(fs.existsSync(path.join(root, rel)), rel + ' must exist');
     const size = pngSize(readIcon(rel));
     assert.ok(size, rel + ' must be a PNG');

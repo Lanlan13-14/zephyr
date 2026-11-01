@@ -14,9 +14,8 @@
  *   1. POST /__zephyr_one/recover  - swap a still-valid (but capability-less)
  *      session for a fresh one. No shell involvement, works for pure
  *      in-memory capability loss.
- *   2. zephyr-one:restart          - ask the Tauri shell to restart the core
- *      and re-provision from scratch. The iframe cannot invoke Tauri commands
- *      from the loopback origin, so it posts to the trusted shell document.
+ *   2. Electron runtime_restart   - restart the core and re-provision via the
+ *      preload bridge. The development iframe layout uses a parent message.
  */
 'use strict';
 
@@ -59,7 +58,7 @@
         }, RESTART_TIMEOUT_MS);
         /* Electron product window is top-level, so parent postMessage never
          * reaches the boot shell. Prefer the preload bridge; fall back to the
-         * iframe message used by older Tauri/dev layouts. */
+         * iframe message supported by the development shell layout. */
         if (window.zephyrOne && typeof window.zephyrOne.invoke === 'function') {
             window.zephyrOne.invoke('runtime_restart').then(function () {
                 enterApp();

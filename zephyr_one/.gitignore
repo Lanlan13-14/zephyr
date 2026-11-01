@@ -6,13 +6,10 @@ release/
 zephyr-core/
 desktop-runtime/
 third_party/
-src-tauri/target/
-src-tauri/gen/
 .DS_Store
 *.log
 .vscode/
 .idea/
-.tauri/
 *.apk
 *.aab
 __pycache__/

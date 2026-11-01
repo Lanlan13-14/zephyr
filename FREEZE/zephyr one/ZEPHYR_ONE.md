@@ -1,5 +1,9 @@
 # Zephyr One 统一产品、架构、体验、安全与交付合同
 
+> [KNOWN] 当前桌面宿主覆盖决定：仅 Electron + 本地 Zephyr Node core；旧 Tauri/Rust
+> 桌面宿主已移除。下文未逐项重写的 Tauri 路径/估算仅是审计基线历史，不能作为构建指引。
+> 移动端仍为 Kotlin/Swift 原生工程。活动桌面契约见 `../../zephyr_one/ARCHITECTURE.md`。
+>
 > [KNOWN] 状态：新的唯一权威规格；用户最新要求高于历史冻结文本。
 >
 > [KNOWN] 范围：Zephyr One Desktop、Android、iOS，以及 Zephyr 主端为 One 提供的 Zephyr Link、共享 broker 和兼容服务。
@@ -28,7 +32,7 @@
 | --- | --- | --- |
 | [KNOWN] Android | Kotlin + Jetpack Compose | 原生页面、原生导航、原生终端/Remote Surface、Android 文件授权、生物识别、预测性返回和后台生命周期。 |
 | [KNOWN] iOS | Swift + SwiftUI，必要平台桥接使用 UIKit/Metal/LocalAuthentication | 原生页面、interactive swipe-back、security-scoped files、Keychain/Secure Enclave 和系统生命周期。 |
-| [KNOWN] Desktop | Tauri 2 + Rust shell + 本地 Zephyr Node core；协议核心含 C/原生库 | 视觉与成熟 Zephyr 页面最小变化，但启动、凭据、Link、workspace 和 shared 安全底座必须升级。 |
+| [KNOWN] Desktop | Electron shell + 本地 Zephyr Node core；协议核心含 C/原生库 | 视觉与成熟 Zephyr 页面最小变化，但启动、凭据、Link、workspace 和 shared 安全底座必须升级。 |
 
 - [KNOWN] 移动端不以整页 WebView 冒充原生客户端。
 - [INFERRED] 桌面“最小变化”是产品和视觉策略，不代表旧 pull-only、启动等待页或不安全凭据路径可以保留。

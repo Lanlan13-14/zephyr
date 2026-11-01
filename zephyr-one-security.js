@@ -29,19 +29,16 @@
  * never chose, and there is no second factor to fall back on. Asking for it
  * would train the user to type a password that protects nothing.
  *
- * The OS authenticator is the honest challenge. Windows Hello / Touch ID / the
- * device PIN is a credential the user actually holds and One cannot forge, and
- * `src-tauri/src/auth/mod.rs` already implements it - it was simply never
- * reachable from the product UI, only from the Tauri shell's own boot screen.
+ * The OS authenticator is the honest challenge: Windows Hello / Touch ID / the
+ * device PIN is a credential the user actually holds and One cannot forge.
+ * `zephyr_one/electron/auth.mjs` implements the platform prompt.
  *
- * 3. WHY A POLLED HANDOFF RATHER THAN A TAURI INVOKE
+ * 3. WHY AN AUTHENTICATED POLLED HANDOFF
  *
- * The WebView navigates to the loopback core, so to Tauri the product page is a
- * *remote* origin and cannot invoke a command. Granting IPC to a loopback
- * origin would hand it to any process that can bind a local port. So the page
- * files a request, the Rust shell claims it, runs the OS prompt, and posts the
- * result back - the same shape the colour-scheme watcher and the RDP folder
- * picker already use.
+ * The product runs on the loopback core's origin. Native authority must not be
+ * granted merely because a page can reach a local port. Instead the page files
+ * a request; `electron/watchers.mjs` claims it with a per-process MAC, runs the
+ * OS prompt, and posts the result back. Folder picking uses the same pattern.
  *
  * 4. WHAT A SUCCESSFUL UNLOCK BUYS
  *
@@ -92,7 +89,7 @@ function signedShellMessage(action, timestamp, nonce, shellInstance, fields = []
 }
 
 /**
- * Authenticates the private loopback API used by the Tauri shell.
+ * Authenticates the private loopback API used by the Electron shell.
  *
  * A normal One request is automatically adopted as the local user, so the web
  * session is deliberately not an authority here. The shell and its Node child

@@ -6,8 +6,8 @@
  * They are not helper-specific — the helper only happened to be where they were
  * mounted — and removing them left three live references dangling:
  *
- *   1. src-tauri/src/rdp_picker/mod.rs still polls GET /api/one/rdp/picker-queue
- *      every 300ms and now 404s forever.
+ *   1. zephyr_one/electron/watchers.mjs polls GET /api/one/rdp/picker-queue
+ *      using the per-process authenticated shell identity.
  *   2. public/app.html still ships #rdpStorageFolder, #rdpStorageDeviceName and
  *      #rdpStorageFolderPickBtn, none of which had a handler afterwards.
  *   3. The 文件夹映射 switch still persisted, promising a mapping nothing honoured.
@@ -19,15 +19,12 @@
  *   client can ever write. The mapping therefore lives in One's own data dir and
  *   the shared schema is left untouched.
  *
- * Why the picker is a polled handoff rather than a Tauri invoke:
- *   The WebView navigates to the loopback core, so the page is a *remote* origin
- *   to Tauri and cannot invoke a command. Granting IPC to a loopback origin
- *   would hand it to any process that can bind a local port. So the page files a
- *   request, the Rust shell claims it, opens the OS dialog, and posts the path
- *   back — the same shape the shell already uses to follow the colour scheme.
- *   The native queue is authenticated separately from the adopted web session.
- *   The core stores the selected path atomically and returns only display
- *   metadata to the page.
+ * Why the picker uses an authenticated polled handoff:
+ *   A loopback port alone does not prove native authority. The page files a
+ *   request; Electron's watcher claims it with a per-process MAC, opens the OS
+ *   dialog, and posts the selected path back. The native queue is authenticated
+ *   separately from the adopted web session. The core persists the result
+ *   atomically and returns only display metadata to the page.
  *
  * What the remote session actually receives:
  *   One runs the same WASM RDP engine as browser Zephyr, whose redirection path
@@ -151,7 +148,7 @@ function publicMapping(mapping) {
 }
 
 /**
- * Folder-picker handoff between the WebView page and the Tauri shell.
+ * Folder-picker handoff between the product page and the Electron shell.
  *
  * States: pending (filed, unclaimed) -> claimed (shell has the dialog open)
  * -> done (path or error recorded). poll() removes a done entry as it is read,

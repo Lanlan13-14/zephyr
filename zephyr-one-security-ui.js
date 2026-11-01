@@ -22,11 +22,10 @@
  *   teaches the user to type a meaningless secret. Windows Hello / Touch ID /
  *   the device PIN is a credential the user actually holds.
  *
- * Why a polled handoff instead of a Tauri invoke:
- *   The WebView is on the loopback core's origin, which Tauri treats as remote,
- *   so this page cannot invoke a command. Granting IPC to a loopback origin
- *   would hand it to any process that can bind a local port. Same shape as the
- *   RDP folder picker: file a request, the shell claims it and runs the prompt.
+ * Why a polled handoff instead of exposing native authority to the page:
+ *   The product runs on the loopback core origin. A local port is not proof of
+ *   native authority. Electron's watcher claims the queued request using a
+ *   per-process MAC, then runs the OS prompt; the folder picker does the same.
  */
 'use strict';
 

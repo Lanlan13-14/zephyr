@@ -217,14 +217,14 @@ let aiHostServer = null;
 /* ── Zephyr One embedded surface ───────────────────────────────────────
  * Zephyr One runs this core as a local child process reachable only over
  * loopback, and the real product gate is the OS unlock (Biometric /
- * Windows Hello / LocalAuthentication) the Tauri shell performs before the
+ * Windows Hello / LocalAuthentication) the Electron shell performs before the
  * WebView loads. The browser-era credential wall — password login, forced
  * default-password rotation, TOTP, passkeys, email codes — is redundant
  * there: it asks the user to authenticate a second time and gates the whole
  * product behind a web flow the native shell cannot drive.
  *
  * EMBEDDED_LISTEN_HOST pins the listener to loopback in the same mode. The
- * listener still requires a one-time nonce inherited from the Tauri parent;
+ * listener still requires a one-time nonce inherited from the Electron parent;
  * loopback reachability by itself never grants an account session. */
 const ZEPHYR_ONE_EMBEDDED = process.env.ZEPHYR_ONE_EMBEDDED === '1';
 const EMBEDDED_BOOTSTRAP_PATH = '/__zephyr_one/bootstrap';
@@ -9026,7 +9026,7 @@ app.get('/motion-feel', requireMotionDemoEnabled, requireSuperAdmin, serveMotion
  * pages would bounce "/" -> "/app.html" -> "/" forever (a WebView can outlive
  * the core and carry a revoked cookie), so this tiny document breaks the loop:
  * it first asks the core to re-mint a live-but-capability-less session and,
- * failing that, asks the Tauri shell to restart and re-provision the core.
+ * failing that, asks the Electron shell to restart and re-provision the core.
  * Deliberately separate from sendEmbeddedAppPage - this page must never
  * require auth. */
 function sendEmbeddedRecoveryPage(req, res) {
@@ -9097,7 +9097,7 @@ app.get(['/app.html', '/app'], requirePageAuth, (req, res, next) => {
  * window.__zephyrOneUnlock bridge app.js calls before revealing any stored
  * secret. Same reasoning as the RDP overlay below - served from a route rather
  * than public/ so browser Zephyr never ships a file for a handoff it cannot
- * perform (there is no Tauri shell to claim an unlock request), and the
+ * perform (there is no Electron shell to claim an unlock request), and the
  * injected tag only exists in embedded mode anyway. */
 app.get('/zephyr-one-security-ui.js', (req, res, next) => {
     if (!ZEPHYR_ONE_EMBEDDED) return next();
@@ -9706,7 +9706,7 @@ function handleHttpUpgrade(req, socket, head) {
     }
 
     /* Desktop One uses the same WASM RDP client as the Web product. The
-     * previous FreeRDP-only path is gone with the Tauri shell; blocking the
+     * retired native-only path is not staged; blocking the
      * proxy here would leave RDP with no working engine. */
 
     const targetWss = pathname === '/ssh'

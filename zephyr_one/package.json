@@ -68,12 +68,12 @@
         "to": "desktop-runtime"
       },
       {
-        "from": "src-tauri/runtime-icons",
+        "from": "platform_assets/desktop/runtime-icons",
         "to": "runtime-icons"
       }
     ],
     "win": {
-      "icon": "src-tauri/icons/icon.ico",
+      "icon": "platform_assets/desktop/icons/icon.ico",
       "target": [
         "nsis",
         "portable",
@@ -90,7 +90,7 @@
       "artifactName": "zephyr-one-windows-portable-${version}.exe"
     },
     "mac": {
-      "icon": "src-tauri/icons/icon.icns",
+      "icon": "platform_assets/desktop/icons/icon.icns",
       "category": "public.app-category.utilities",
       "target": [
         "dmg",
@@ -100,7 +100,7 @@
       "x64ArchFiles": "Contents/Resources/desktop-runtime/**"
     },
     "linux": {
-      "icon": "src-tauri/icons",
+      "icon": "platform_assets/desktop/icons",
       "category": "Utility",
       "maintainer": "Zephyr <noreply@users.noreply.github.com>",
       "target": [

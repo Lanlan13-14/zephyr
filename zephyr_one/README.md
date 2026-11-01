@@ -41,6 +41,17 @@ npm run electron:dev
 
 `stage:desktop` = `stage:core` + `stage-desktop-runtime.mjs`。后者把**当前 Node 可执行文件**拷进 `desktop-runtime/`。
 
+桌面仅支持 Electron，不再保留旧 Rust 宿主、ACL/permissions 或另一套打包入口。
+`npm run icons` 从 `platform_assets/icons/` 的 SVG 生成 `platform_assets/desktop/`
+中的 bundle 与 runtime 图标；需 Pillow 及 librsvg (`rsvg-convert`) 或 resvg-py。
+发布态 runtime 图标通过 `extraResources` 放在 `process.resourcesPath/runtime-icons`。
+
+旧 `CURRENT_STATUS.md`、`FIX_STATUS.md` 和 FREEZE 中的宿主路径是历史记录。
+旧原生 FreeRDP overlay 没有接入 Electron renderer/staging/CI，已移除；RDP 仍走
+`public/rdp.html`、WASM 和 `/rdp-proxy`。`native/` 中移动端共用的 C/FreeRDP 库保留。
+`src/js/agent/agent-client.js` 是保留的可注入协议模块，不是已注册 `agent_fs_*` IPC；
+现行 Agent 跳板/文件同步走本地核心的 Web/Link 路径，不把不存在的 IPC 当作产品能力。
+
 ## 目录
 
 ```
@@ -49,6 +60,6 @@ zephyr_one/
   src/                 # One 壳（可选系统解锁 / 启动本地核心）
   zephyr-core/         # build 时 stage，不进 git
   desktop-runtime/     # build 时 stage 的 Node 可执行文件，不进 git
-  platform_assets/     # 图标
+  platform_assets/     # SVG masters；desktop/icons + desktop/runtime-icons 为生成资产
   scripts/
 ```

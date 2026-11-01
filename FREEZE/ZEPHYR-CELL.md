@@ -1,5 +1,9 @@
 # Zephyr Cell 技术文档
 
+> 桌面宿主勘误：文中的 Tauri/sidecar 桌面壳描述是历史基线；当前 One
+> 仅 Electron（见 `../zephyr_one/ARCHITECTURE.md`）。此变化不删除或替代
+> Cell、移动原生引擎与平台无关协议/安全设计。
+
 > **一份 SDK，六端同构。给 AI 一台真实、安全、随处可用的计算机。**
 >
 > 平台：Windows · macOS · Linux · iOS · Android · **Web（Docker 部署，浏览器使用）**

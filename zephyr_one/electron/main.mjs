@@ -56,7 +56,13 @@ function emitRuntimeProgress(pct, message) {
 
 function iconsDir() {
   if (app.isPackaged) return path.join(process.resourcesPath, 'runtime-icons');
-  return path.join(oneRoot, 'src-tauri', 'runtime-icons');
+  return path.join(oneRoot, 'platform_assets', 'desktop', 'runtime-icons');
+}
+
+function windowIconPath() {
+  // Packaged assets live outside app.asar; bundle artwork is only a build input.
+  if (app.isPackaged) return path.join(iconsDir(), 'zephyr-one-frost.png');
+  return path.join(oneRoot, 'platform_assets', 'desktop', 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 }
 
 function preloadPath() {
@@ -84,7 +90,7 @@ function createMainWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: windowBackgroundColor(),
-    icon: path.join(oneRoot, 'src-tauri', 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+    icon: windowIconPath(),
     frame: mac,
     titleBarStyle: mac ? 'hiddenInset' : 'default',
     trafficLightPosition: mac ? { x: 14, y: 14 } : undefined,
@@ -125,7 +131,7 @@ function createProductWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: windowBackgroundColor(),
-    icon: path.join(oneRoot, 'src-tauri', 'icons', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+    icon: windowIconPath(),
     frame: mac,
     titleBarStyle: mac ? 'hiddenInset' : 'default',
     trafficLightPosition: mac ? { x: 14, y: 14 } : undefined,

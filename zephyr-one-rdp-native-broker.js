@@ -72,8 +72,8 @@ function nativeAuthorization(connection, binding) {
 /**
  * Mount the only secret-bearing desktop RDP bridge.
  *
- * `requireUser` binds the request to the Rust-retained embedded app session;
- * `verifyShellRequest` binds it to this exact Tauri process and atomically
+ * `requireUser` binds the request to the embedded app session;
+ * `verifyShellRequest` binds it to the authenticated shell process and atomically
  * consumes the request nonce. A normal page has the first authority but never
  * the second.
  */

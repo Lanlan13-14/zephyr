@@ -1,7 +1,7 @@
 /**
  * Zephyr Agent client (protocol v2 + ZFT2).
- * Port of zephyr_agent AgentController — runs in Tauri webview;
- * file IO is delegated to Rust commands for native FS access.
+ * Port of zephyr_agent AgentController — reusable protocol client;
+ * file IO is delegated to the injected native FS adapter.
  */
 
 import { agentWebSocketUriForServerUrl, normalizeServerUrl } from './url.js';
@@ -143,7 +143,7 @@ export class AgentClient {
   }
 
   _sendHello() {
-    const platform = this.config.platformHint || 'tauri';
+    const platform = this.config.platformHint || 'electron';
     this._sendJson({
       type: 'hello',
       protocolVersion: 2,

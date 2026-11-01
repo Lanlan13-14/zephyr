@@ -81,7 +81,7 @@ test('only fullscreen terminal shells are square', () => {
 
 test('SSH, Telnet, RDP and VNC load the same refreshed shell and spec stylesheets', () => {
     const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
-    assert.equal(appVersion, '20261101-ui133-batchexec26', 'terminal shell release revision');
+    assert.equal(appVersion, '20261101-cold-start27', 'terminal shell release revision');
     for (const [label, source] of [
         ['app shell', appHtml], ['SSH page', terminalHtml], ['Telnet page', telnetHtml],
         ['RDP page', rdpHtml], ['VNC page', vncHtml], ['service worker', sw],
@@ -93,7 +93,7 @@ test('SSH, Telnet, RDP and VNC load the same refreshed shell and spec stylesheet
 
 test('protocol iframe revisions follow the shell while terminal scripts keep independent revisions', () => {
     const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js references');
-    assert.equal(appVersion, '20261101-ui133-batchexec26', 'protocol iframe release revision');
+    assert.equal(appVersion, '20261101-cold-start27', 'protocol iframe release revision');
     for (const page of ['terminal.html', 'telnet-terminal.html', 'rdp.html', 'novnc.html']) {
         // Includes both the regular SSH iframe and the lite/preview iframe.
         assertAssetVersion(appJs, page, appVersion, `${page} iframe references`);

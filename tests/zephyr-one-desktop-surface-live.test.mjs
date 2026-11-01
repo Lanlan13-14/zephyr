@@ -7,7 +7,7 @@
 // in-app icon is not the ZephyrOne icon" -- were both invisible to CI.
 //
 // This boots the real server in embedded mode and drives /app.html the way the
-// Tauri webview does.
+// Electron product window does.
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";

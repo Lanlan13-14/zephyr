@@ -31,7 +31,7 @@ test('Zephyr One uses one unified narrative contract and keeps reviewed copies',
 
 test('the unified contract freezes all platforms, parity and one-second startup', () => {
   includesAll([
-    'Kotlin + Jetpack Compose', 'Swift + SwiftUI', 'Tauri 2 + Rust',
+    'Kotlin + Jetpack Compose', 'Swift + SwiftUI', 'Electron shell + 本地 Zephyr Node core',
     'SSH、Telnet、RDP、VNC、SFTP', 'capability parity manifest',
     '不得超过 1,000ms', '真实可操作产品页面', '不得出现应用自建 Splash',
     'BootGate', 'Android ready 空白门',

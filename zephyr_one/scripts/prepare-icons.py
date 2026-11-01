@@ -5,17 +5,15 @@ Inputs
     platform_assets/icons/zephyr-one-<theme>.svg   (frost | lava | asagi | cyber)
 
 Outputs
-    src-tauri/icons/*                      bundle icon set, rendered from frost
-    src-tauri/runtime-icons/*.png          one per theme, for Electron setIcon
+    platform_assets/desktop/icons/*        bundle icon set, rendered from frost
+    platform_assets/desktop/runtime-icons/*.png  one per theme, for Electron setIcon
 
 Why two output sets
     The bundle icon is baked into the installer and the .app / .exe resource, so
     it cannot change per theme. frost ("凝霜蓝") is the product default and is
-    therefore what ships. The runtime set is what `window_set_theme_icon` hands
-    to WebviewWindow::set_icon so Windows and Linux can follow the chosen
-    palette live. macOS has no window icon at all (tao: "iOS / Android / macOS:
-    Unsupported"), so it keeps the bundled frost icon — matching the rule that
-    any platform without live switching falls back to frost.
+    therefore what ships. Electron's BrowserWindow.setIcon uses the runtime set
+    on Windows and Linux. macOS keeps the bundled frost icon because per-window
+    live switching is unsupported; platforms without live switching use frost.
 
 Why the SVG keeps its white plate here
     The masters carry `<rect rx="44" fill="#ffffff"/>`. That plate stays for the
@@ -25,12 +23,9 @@ Why the SVG keeps its white plate here
     hole in a dark UI.
 
 Runtime PNG size
-    128×128. tao sets ICON_SMALL/ICON_BIG from this buffer and Windows scales
-    down from there; 128 is a multiple of both 16 and 32, so the common 16/32/48
-    presentations land on clean ratios, and it still has headroom for HiDPI
-    title bars. Each file is a few KB, and they are compiled in with
-    include_bytes! rather than shipped as resources — resource-path resolution
-    is exactly what broke the desktop-runtime lookup before.
+    128×128. Windows scales this buffer for the common 16/32/48 presentations;
+    128 leaves headroom for HiDPI title bars. The PNGs ship as electron-builder
+    extraResources and resolve through process.resourcesPath in release builds.
 """
 from __future__ import annotations
 
@@ -44,8 +39,8 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 SVG_DIR = ROOT / "platform_assets" / "icons"
-BUNDLE_OUT = ROOT / "src-tauri" / "icons"
-RUNTIME_OUT = ROOT / "src-tauri" / "runtime-icons"
+BUNDLE_OUT = ROOT / "platform_assets" / "desktop" / "icons"
+RUNTIME_OUT = ROOT / "platform_assets" / "desktop" / "runtime-icons"
 
 THEMES = ("frost", "lava", "asagi", "cyber")
 DEFAULT_THEME = "frost"

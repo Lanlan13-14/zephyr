@@ -141,7 +141,7 @@ cat > "$OUT/ZEPHYR_ONE_CORE.json" <<EOF
 EOF
 
 # Desktop One keeps the Web WASM RDP client. FreeRDP staging is gone with the
-# Tauri shell; public/rdp.html and rdp-wasm-* stay in the staged core so the
+# retired desktop shell; public/rdp.html and rdp-wasm-* stay in the staged core so the
 # embedded UI matches hosted Zephyr.
 
 echo "Staged core OK: $OUT"

@@ -1,4 +1,8 @@
-# Zephyr One 当前现状记录
+# Zephyr One 历史现状记录
+
+> 历史快照（2026-08-10），不再代表活动桌面契约。当前桌面仅 Electron，
+> 见 `README.md`、`ARCHITECTURE.md`；旧 Tauri/Rust 宿主与原生 RDP 注入链已移除。
+> Electron 保留 Web/WASM RDP，不执行下文历史 Rust 构建指引。
 
 > 记录时间：2026-08-10（Asia/Singapore）。本文件是当前状态的快照，与 `FIX_STATUS.md` 的过程日志分开维护。
 

@@ -1,5 +1,5 @@
 /**
- * OS unlock for Zephyr One. Same product rule as the old Tauri shell:
+ * OS unlock for Zephyr One's Electron shell:
  * Windows Hello / macOS LocalAuthentication only; Linux reports unavailable.
  */
 import { execFile } from 'node:child_process';

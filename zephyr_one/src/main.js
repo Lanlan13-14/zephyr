@@ -274,8 +274,8 @@ function openSecurity() {
   refreshCapabilityHints();
 }
 
-/* The iframe lives on the loopback core's origin and cannot invoke Tauri
-   commands, so a core that lost its session asks for a restart by message.
+/* The optional development iframe lives on the loopback core's origin and
+   asks its parent shell for a restart by message after losing its session.
    Only the exact origin of the runtime we started is trusted. */
 let coreRestartInFlight = null;
 window.addEventListener('message', (event) => {

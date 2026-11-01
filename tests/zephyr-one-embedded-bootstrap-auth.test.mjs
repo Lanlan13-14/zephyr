@@ -250,8 +250,8 @@ test('embedded loopback requires a one-time bootstrap capability', { timeout: 18
             cookie,
             origin: base,
         });
-        assert.equal(embeddedRdpProxy, 404,
-            'embedded mode must never expose the browser/WASM RDP proxy fallback');
+        assert.equal(embeddedRdpProxy, 101,
+            'Electron keeps the authenticated Web/WASM RDP proxy as its desktop engine');
         const cookieWithoutOrigin = await fetch(`${base}/api/proxies/missing/open`, {
             method: 'POST',
             headers: { cookie, 'content-type': 'application/json' },
