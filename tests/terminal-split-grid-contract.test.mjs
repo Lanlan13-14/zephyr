@@ -391,7 +391,7 @@ test('app shell assets are cache-busted for the split-grid change', () => {
     const appHtml = readFileSync(join(root, 'public/app.html'), 'utf8');
     const sw = readFileSync(join(root, 'public/sw.js'), 'utf8');
     const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js references');
-    assert.equal(appVersion, '20261101-batch-tools35', 'split-grid shell release revision');
+    assert.equal(appVersion, '20261102-disclosure36', 'split-grid shell release revision');
     assertAssetVersion(appHtml, 'style.css', appVersion, 'app shell style');
     assertAssetVersion(appHtml, 'zephyr-terminal-spec.css', appVersion, 'app shell terminal spec');
     assert.equal(cacheNameVersion(sw), appVersion);

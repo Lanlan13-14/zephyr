@@ -70,7 +70,7 @@ test('mobile fullscreen exit reveals nav through Motion and serializes close/min
 
 test('cache revision covers app assets and consistent shared motion imports', () => {
     const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
-    assert.equal(appVersion, '20261101-batch-tools35', 'app shell release revision');
+    assert.equal(appVersion, '20261102-disclosure36', 'app shell release revision');
     assertAssetVersion(appHtml, 'style.css', appVersion, 'app shell style.css');
     assertAssetVersion(swJs, 'app.js', appVersion, 'service worker app.js');
 

@@ -4,13 +4,13 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
 import { createNotesController } from './notes.js?v=20261028-ui132';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261101-batch-tools35';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261102-disclosure36';
 import { localizeActivityMessage } from './activity-i18n.js?v=20261028-ui132';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20261028-ui132';
-import { createRemoteExecTools } from './remote-exec-tools.js?v=20261101-batch-tools35';
-import { createTerminalShortcutSettings } from './terminal-shortcut-settings.js?v=20261101-default-closed34';
-import { encodeShortcutKeys } from './terminal-shortcuts.js?v=20261101-batch-tools35';
-import { createRemoteToolDispatcher } from './remote-exec-tool-dispatch.js?v=20261101-batch-tools35';
+import { createRemoteExecTools } from './remote-exec-tools.js?v=20261102-disclosure36';
+import { createTerminalShortcutSettings } from './terminal-shortcut-settings.js?v=20261102-disclosure36';
+import { encodeShortcutKeys } from './terminal-shortcuts.js?v=20261102-disclosure36';
+import { createRemoteToolDispatcher } from './remote-exec-tool-dispatch.js?v=20261102-disclosure36';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -6510,12 +6510,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&v=20261101-batch-tools35&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&v=20261102-disclosure36&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&v=20261101-batch-tools35&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&v=20261102-disclosure36&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batch-tools35`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batch-tools35`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261102-disclosure36`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261102-disclosure36`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -15710,7 +15710,7 @@ function createRemoteExecWindowElement(session) {
     frame.dataset.frame = session.id;
     frame.title = remoteExecLabel(session);
     frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
-    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-batch-tools35`;
+    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261102-disclosure36`;
     frame.addEventListener('load', () => initializeRemoteExecFrame(session));
     session.frame = frame;
     session.element = article;

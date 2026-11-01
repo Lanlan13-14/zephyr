@@ -326,7 +326,7 @@ export function createTerminalShortcutSettings({ root, getValue, onSave, openEdi
 
   function showEditor(id = null, trigger = null) {
     if (saving || editor) return;
-    cancelDrag(); finishAnimations();
+    cancelDrag(); finishAnimations(); finishKeyGroups();
     const item = draft.find((entry) => entry.id === id);
     editor = { id: item?.id || null, keys: [...(item?.keys || [])], label: item?.label || '', capturing: false, query: '' };
     confirmation = null; renderConfirmation();
@@ -372,10 +372,12 @@ export function createTerminalShortcutSettings({ root, getValue, onSave, openEdi
       toggle.classList.add('tss-group-toggle');
       const grid = el('div', 'tss-key-grid'); grid.id = `${prefix}-group-${group}`;
       grid.hidden = !expanded;
+      const content = el('div', 'tss-key-grid-content');
       for (const key of keys) {
         const pick = button('pick-key', key); pick.dataset.key = key;
-        pick.setAttribute('aria-pressed', 'false'); grid.append(pick);
+        pick.setAttribute('aria-pressed', 'false'); content.append(pick);
       }
+      grid.append(content);
       section.append(toggle, grid); groups.append(section);
     }
     const noKeys = el('p', 'tss-no-keys tss-muted', tr('noKeys')); noKeys.hidden = true;
@@ -438,6 +440,7 @@ export function createTerminalShortcutSettings({ root, getValue, onSave, openEdi
   }
   function filterKeys(query) {
     if (!editor) return;
+    finishKeyGroups(false);
     editor.query = query.trim().toLowerCase();
     let found = false;
     for (const section of editorHost.querySelectorAll('.tss-key-group')) {
@@ -459,7 +462,7 @@ export function createTerminalShortcutSettings({ root, getValue, onSave, openEdi
     const id = editor?.id;
     editor = null; detail = ''; ++editorCycle;
     const trigger = editorTrigger;
-    const finish = () => { if (!editor) editorHost.replaceChildren(); };
+    const finish = () => { if (!editor) { finishKeyGroups(); editorHost.replaceChildren(); } };
     if (typeof closeEditorModal === 'function') void Promise.resolve(closeEditorModal({ modal, card, inner, trigger })).then(finish);
     else { modal.classList.remove('show', 'app-visible'); modal.setAttribute('aria-hidden', 'true'); finish(); }
     renderList();
@@ -593,18 +596,48 @@ export function createTerminalShortcutSettings({ root, getValue, onSave, openEdi
     animateRows(before); focusRow(current.id);
   }
   const groupCycles = new WeakMap();
+  const activeGroups = new Set();
+  const groupArrows = new Set();
+  const disclosurePreset = { response: 0.2, damping: 1 };
+  function finishKeyGroups(releaseArrows = true) {
+    for (const grid of activeGroups) {
+      groupCycles.set(grid, (groupCycles.get(grid) || 0) + 1);
+      const collapsed = grid.previousElementSibling?.getAttribute('aria-expanded') === 'false';
+      Motion.release(grid);
+      grid.hidden = collapsed;
+      grid.style.height = ''; grid.style.opacity = ''; grid.style.overflow = '';
+    }
+    activeGroups.clear();
+    if (releaseArrows) {
+      for (const arrow of groupArrows) Motion.release(arrow);
+      groupArrows.clear();
+    }
+  }
   async function animateKeyGroup(grid, expanded) {
     const cycle = (groupCycles.get(grid) || 0) + 1; groupCycles.set(grid, cycle);
+    const running = activeGroups.has(grid);
     const from = grid.hidden ? 0 : grid.getBoundingClientRect().height;
-    Motion.stop(grid); Motion.release(grid); grid.hidden = false;
-    grid.style.height = 'auto'; const to = expanded ? grid.getBoundingClientRect().height : 0;
+    const opacity = grid.hidden ? 0 : Number.parseFloat(win.getComputedStyle(grid).opacity);
+    grid.hidden = false;
+    // Measure the stable inner grid, not auto-height on the animated box.
+    // Keeping the live channels on reversal preserves both position and velocity.
+    const content = grid.firstElementChild;
+    let to = 0;
+    if (expanded) {
+      if (content?.classList.contains('tss-key-grid-content')) to = content.getBoundingClientRect().height;
+      else { grid.style.height = 'auto'; to = grid.getBoundingClientRect().height; }
+    }
     grid.style.overflow = 'hidden';
-    Motion.set(grid, { h: from, opacity: expanded ? 0 : 1 });
-    try { await Motion.to(grid, { h: to, opacity: expanded ? 1 : 0 }, { preset: 'snappy' }); }
+    if (!running) Motion.set(grid, { h: from, opacity: Number.isFinite(opacity) ? opacity : 1 });
+    activeGroups.add(grid);
+    try { await Motion.to(grid, { h: to, opacity: expanded ? 1 : 0 }, { preset: disclosurePreset }); }
     finally {
       if (groupCycles.get(grid) !== cycle) return;
-      Motion.release(grid); grid.style.height = ''; grid.style.opacity = ''; grid.style.overflow = '';
+      activeGroups.delete(grid);
+      // Hide before releasing the height channel: never paint the natural grid
+      // between a zero-height last frame and display:none.
       grid.hidden = !expanded;
+      Motion.release(grid); grid.style.height = ''; grid.style.opacity = ''; grid.style.overflow = '';
     }
   }
   function click(event) {
@@ -649,7 +682,10 @@ export function createTerminalShortcutSettings({ root, getValue, onSave, openEdi
         const expanded = target.getAttribute('aria-expanded') !== 'true';
         target.setAttribute('aria-expanded', String(expanded));
         const arrow = target.querySelector('.tss-icon');
-        if (arrow) { Motion.stop(arrow); void Motion.to(arrow, { rotate: expanded ? 180 : 0 }, { preset: 'snappy' }); }
+        if (arrow) {
+          groupArrows.add(arrow);
+          void Motion.to(arrow, { rotate: expanded ? 180 : 0 }, { preset: disclosurePreset });
+        }
         void animateKeyGroup(target.nextElementSibling, expanded); break;
       }
       case 'capture': toggleCapture(!editor.capturing); break;
@@ -694,7 +730,7 @@ export function createTerminalShortcutSettings({ root, getValue, onSave, openEdi
     refresh,
     destroy() {
       if (destroyed) return;
-      destroyed = true; cancelDrag(); finishAnimations();
+      destroyed = true; cancelDrag(); finishAnimations(); finishKeyGroups();
       for (const cleanup of cleanups.splice(0)) cleanup();
       for (const row of rows.values()) Motion.release(row);
       rows.clear(); editor = null; host.remove(); portal.remove();

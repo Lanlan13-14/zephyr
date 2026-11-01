@@ -2,6 +2,7 @@
 <html lang="zh-CN" data-theme="dark"><head><meta charset="utf-8"><link rel="stylesheet" href="/public/zephyr-tokens.css"><link rel="stylesheet" href="/public/terminal-shortcut-settings.css"></head><body><section id="host"><form id="neighbour"><input name="layout" value="unchanged"></form><div id="mount"></div></section><pre id="out"></pre><script type="module">
 import { createTerminalShortcutSettings } from '/public/terminal-shortcut-settings.js';
 import { DEFAULT_TERMINAL_SHORTCUTS } from '/public/terminal-shortcuts.js';
+import { Motion } from '/public/vendor/zephyr-motion/index.js';
 const results = [];
 const check = (name, ok, detail = '') => results.push({ name, ok: !!ok, detail: String(detail) });
 const sleep = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
@@ -37,6 +38,31 @@ try {
   check('engine disclosure grows the real key-grid height instead of a zero-height fade', !letterGrid.hidden && letterGrid.getBoundingClientRect().height > 60, letterGrid.style.cssText);
   disclosure.click(); await sleep(900);
   check('engine disclosure settles closed and hides its content', letterGrid.hidden || letterGrid.getBoundingClientRect().height < 15, letterGrid.style.cssText);
+  const arrow = disclosure.querySelector('.tss-icon');
+  check('arrow has one animation driver, no CSS transform transition', !getComputedStyle(arrow).transitionProperty.includes('transform'));
+  disclosure.click(); await sleep(55);
+  const beforeReverse = { h: letterGrid.getBoundingClientRect().height, opacity: +getComputedStyle(letterGrid).opacity, angle: Motion.value(arrow, 'rotate') };
+  disclosure.click();
+  const afterReverse = { h: letterGrid.getBoundingClientRect().height, opacity: +getComputedStyle(letterGrid).opacity, angle: Motion.value(arrow, 'rotate') };
+  check('mid-open reversal preserves height, opacity and arrow angle synchronously', Math.abs(beforeReverse.h-afterReverse.h)<0.5 && Math.abs(beforeReverse.opacity-afterReverse.opacity)<0.01 && Math.abs(beforeReverse.angle-afterReverse.angle)<0.5, JSON.stringify({beforeReverse,afterReverse}));
+  await sleep(25); disclosure.click(); await sleep(320);
+  check('rapid open-close-open settles naturally without stale hide', !letterGrid.hidden && Math.abs(letterGrid.getBoundingClientRect().height-letterGrid.firstElementChild.getBoundingClientRect().height)<1 && Math.abs(Motion.value(arrow,'rotate')-180)<1);
+  disclosure.click();
+  const collapseFrames=[]; const start=performance.now();
+  while(performance.now()-start<650){await new Promise(requestAnimationFrame);collapseFrames.push({h:letterGrid.getBoundingClientRect().height,hidden:letterGrid.hidden});}
+  check('collapse approaches zero before hide, without padded-height final snap', collapseFrames.some(f=>!f.hidden&&f.h<2) && collapseFrames.at(-1).hidden, JSON.stringify(collapseFrames));
+  for(let i=0;i<6;i++){disclosure.click();await sleep(12);}
+  await sleep(650);
+  check('repeated reversal leaves no hidden-state or running-channel leak', letterGrid.hidden && !Motion.isAnimating(letterGrid) && !Motion.isAnimating(arrow));
+  disclosure.click(); await sleep(35);
+  const searchField=editor.querySelector('[data-field="search"]');
+  searchField.value='A';searchField.dispatchEvent(new Event('input',{bubbles:true}));
+  await sleep(80);
+  check('search interrupts an expanding group without stale height or hidden cleanup', !letterGrid.hidden && !letterGrid.style.height);
+  searchField.value='';searchField.dispatchEvent(new Event('input',{bubbles:true}));
+  Motion.setReducedMotion(true);disclosure.click();await sleep(35);
+  check('reduced-motion collapse completes with correct visibility and arrow', letterGrid.hidden && Math.abs(Motion.value(arrow,'rotate'))<1);
+  Motion.setReducedMotion(false);
   editor.querySelector('[data-field="label"]').value = '<svg onload=alert(1)> & shell';
   editor.querySelector('[data-field="label"]').dispatchEvent(new Event('input', { bubbles: true }));
   const pick = key => {
