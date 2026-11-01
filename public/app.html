@@ -7,16 +7,16 @@
     <title>Zephyr</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20261101-ui133-batchexec6">
-    <link rel="modulepreload" href="app.js?v=20261101-ui133-batchexec6">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20261101-ui133-batchexec17">
+    <link rel="modulepreload" href="app.js?v=20261101-ui133-batchexec17">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
     <link rel="stylesheet" href="native-ui.css?v=20261026-native1">
-    <link rel="stylesheet" href="style.css?v=20261101-ui133-batchexec6">
-    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261101-ui133-batchexec6">
-    <script src="liquid-glass-renderer.js?v=20261101-ui133-batchexec6" defer></script>
-    <script src="liquid-glass-tab-layout.js?v=20261101-ui133-batchexec6" defer></script>
-    <script src="liquid-glass-nav.js?v=20261101-ui133-batchexec6" defer></script>
-    <script src="liquid-glass-slider.js?v=20261101-ui133-batchexec6" defer></script>
+    <link rel="stylesheet" href="style.css?v=20261101-ui133-batchexec17">
+    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261101-ui133-batchexec17">
+    <script src="liquid-glass-renderer.js?v=20261101-ui133-batchexec17" defer></script>
+    <script src="liquid-glass-tab-layout.js?v=20261101-ui133-batchexec17" defer></script>
+    <script src="liquid-glass-nav.js?v=20261101-ui133-batchexec17" defer></script>
+    <script src="liquid-glass-slider.js?v=20261101-ui133-batchexec17" defer></script>
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
     <script src="native-ui.js?v=20261026-native1" defer></script>
     <script src="native-select.js?v=20261026-native1" defer></script>
@@ -135,12 +135,14 @@
                             </div>
                             <textarea id="remoteCommand" placeholder="例如：uname -a && uptime" data-i18n-placeholder="例如：uname -a && uptime"></textarea>
                             <div class="remote-command-meta-row">
-                                <label class="remote-timeout-toggle" for="remoteTimeoutEnabled">
-                                    <input id="remoteTimeoutEnabled" type="checkbox">
-                                    <span data-i18n="超时自动关闭">超时自动关闭</span>
+                                <label class="remote-timeout-toggle settings-switch-option" for="remoteTimeoutEnabled">
+                                    <span class="settings-switch-copy"><strong data-i18n="超时自动关闭">超时自动关闭</strong></span>
+                                    <span class="connection-share-switch"><input id="remoteTimeoutEnabled" type="checkbox"><span aria-hidden="true"></span></span>
                                 </label>
-                                <label for="remoteTimeout" data-i18n="超时（秒）">超时（秒）</label>
-                                <input id="remoteTimeout" type="number" value="30" min="1" max="300" disabled>
+                                <div class="remote-timeout-field">
+                                    <label for="remoteTimeout" data-i18n="超时（秒）">超时（秒）</label>
+                                    <input id="remoteTimeout" type="number" value="30" min="1" max="300" disabled>
+                                </div>
                             </div>
                             <div class="remote-batch-quick-actions" role="group" aria-label="批量快捷操作" data-i18n-aria-label="批量快捷操作">
                                 <button type="button" class="tool-btn remote-batch-chip" id="remoteBatchCtrlCBtn" title="向所有打开窗口发送 Ctrl+C 中断" data-i18n-title="向所有打开窗口发送 Ctrl+C 中断" aria-label="批量中断 Ctrl+C" data-i18n-aria-label="批量中断 Ctrl+C">Ctrl+C</button>
@@ -1772,9 +1774,9 @@
     </div>
 
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
-<script src="preview-mock.js?v=20261101-ui133-batchexec6" type="module"></script>
+<script src="preview-mock.js?v=20261101-ui133-batchexec17" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20261101-ui133-batchexec6" type="module"></script>
+<script src="app.js?v=20261101-ui133-batchexec17" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

@@ -14150,16 +14150,22 @@ window.addEventListener('message', (ev) => {
             pendingRemoteExecQueue.push({ payload, rawText });
         }
     } else if (d.source === 'zephyr-app' && d.type === 'remote-exec-timeout') {
-        if (!getRemoteExecViewPolicy().shared) {
-            userClosedConnection = true;
+        // Stop the running foreground command, not the SSH connection. Ctrl+C is
+        // the terminal's interrupt byte; leave the shell, iframe and window alive.
+        const connected = !!(wsConnection && wsConnection.readyState === WebSocket.OPEN && isConnected);
+        const canControl = !!getRemoteExecViewPolicy().canControl;
+        const queuedIndex = pendingRemoteExecQueue.length - 1;
+        if (!connected || !canControl) {
+            if (queuedIndex >= 0) pendingRemoteExecQueue.splice(queuedIndex, 1);
+            try { window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'remote-exec-timeout-failed', tabId: params?.tabId }, '*'); } catch {}
+        } else {
             try {
-                if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-                    wsConnection.send(JSON.stringify({ type: 'disconnect' }));
-                    wsConnection.close(1000, 'remote-exec-timeout');
-                }
-            } catch {}
+                sendData(String.fromCharCode(3), { source: 'remote-exec-timeout', forceFollow: false, applyModifiers: false });
+                window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'remote-exec-timeout-stopped', tabId: params?.tabId }, '*');
+            } catch {
+                try { window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'remote-exec-timeout-failed', tabId: params?.tabId }, '*'); } catch {}
+            }
         }
-        try { window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'remote-exec-timeout-stopped', tabId: params?.tabId }, '*'); } catch {}
     } else if (d.source === 'zephyr-app' && d.type === 'disconnect-terminal') {
         userClosedConnection = true;
         try {

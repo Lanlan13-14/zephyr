@@ -4912,6 +4912,166 @@ export const Motion = {
   },
 
   /**
+   * Critically-damped horizontal pill glide for Batch Execution stage tabs (#remoteStageTabs).
+   */
+  async remoteStageTabSlide(tabsEl, fromRect, toRect, { preset = { response: 0.22, damping: 1.0 } } = {}) {
+    if (!tabsEl || !fromRect || !toRect) return false;
+    if (fromRect.width < 10 || toRect.width < 10) return false;
+    const dx = Math.round(fromRect.left - toRect.left);
+    const dw = Math.abs(Math.round(fromRect.width - toRect.width));
+    if (Math.abs(dx) < 2 && dw < 2) return false;
+
+    const token = this._bump(tabsEl);
+    const units = { '--remote-pill-dx': 'px', '--remote-pill-w': 'px' };
+    this.stop(tabsEl, ['--remote-pill-dx', '--remote-pill-w']);
+    tabsEl.classList.add('remote-pill-sliding');
+    tabsEl.style.setProperty('--remote-pill-dx', dx + 'px');
+    tabsEl.style.setProperty('--remote-pill-w', Math.round(fromRect.width) + 'px');
+    this.cssVars(tabsEl, {
+      '--remote-pill-dx': dx,
+      '--remote-pill-w': Math.round(fromRect.width),
+    }, { immediate: true, units });
+
+    const guard = withSettleSafetyGuard(tabsEl, 340, () => {
+      if (this._genOf(tabsEl) === token) {
+        tabsEl.classList.remove('remote-pill-sliding');
+        tabsEl.style.removeProperty('--remote-pill-dx');
+        tabsEl.style.removeProperty('--remote-pill-w');
+      }
+    });
+    try {
+      await this.cssVars(tabsEl, {
+        '--remote-pill-dx': 0,
+        '--remote-pill-w': Math.round(toRect.width),
+      }, { preset, units });
+    } finally {
+      guard();
+      if (this._genOf(tabsEl) === token) {
+        tabsEl.classList.remove('remote-pill-sliding');
+        tabsEl.style.removeProperty('--remote-pill-dx');
+        tabsEl.style.removeProperty('--remote-pill-w');
+      }
+    }
+    return true;
+  },
+
+  /**
+   * Spring staggered window/card entrance driven by zephyr_motion.wasm.
+   * Cleans up inline transform/motion vars on settle so backdrop-filter stays unpolluted.
+   */
+  async playStaggerEntrance(els, {
+    step = 0.04,
+    preset = { response: 0.34, damping: 0.92 },
+    fromScale = 0.93,
+    fromY = 12,
+    fromOpacity = 0,
+  } = {}) {
+    const list = (els && typeof els[Symbol.iterator] === 'function')
+      ? Array.from(els).filter(Boolean)
+      : (els ? [els] : []);
+    if (!list.length) return false;
+    if (engine.reducedMotion) return true;
+
+    await Promise.all(list.map(async (el, idx) => {
+      const token = this._bump(el);
+      this.stop(el, ['opacity', 'scaleX', 'scaleY', 'y']);
+      el.classList?.add?.('motion-entering');
+      if (el.style) el.style.transformOrigin = '50% 50%';
+      this.set(el, {
+        opacity: fromOpacity,
+        scaleX: fromScale,
+        scaleY: fromScale,
+        y: fromY,
+      });
+      const cleanup = () => {
+        if (this._genOf(el) === token) {
+          this.stop(el, ['opacity', 'scaleX', 'scaleY', 'y']);
+          el.classList?.remove?.('motion-entering');
+          try { this.release(el); } catch {}
+          if (el.style) {
+            el.style.removeProperty('transform-origin');
+            el.style.removeProperty('opacity');
+            el.style.removeProperty('transform');
+          }
+        }
+      };
+      const guard = withSettleSafetyGuard(el, 620 + Math.round(idx * step * 1000), cleanup);
+      try {
+        await this.to(el, {
+          opacity: 1,
+          scaleX: 1,
+          scaleY: 1,
+          y: 0,
+        }, { preset, delay: idx * step });
+      } finally {
+        guard();
+        cleanup();
+      }
+    }));
+    return true;
+  },
+
+  /**
+   * Immediate tactile spring press-and-release for action buttons and chips.
+   */
+  async buttonPress(el, {
+    scale = 0.95,
+    preset = { response: 0.20, damping: 0.82 },
+  } = {}) {
+    if (!el || engine.reducedMotion) return false;
+    const token = this._bump(el);
+    this.stop(el, ['scaleX', 'scaleY']);
+    el.classList?.add?.('motion-pressing');
+    if (el.style) el.style.transformOrigin = '50% 50%';
+    this.set(el, { scaleX: scale, scaleY: scale });
+    const cleanup = () => {
+      if (this._genOf(el) === token) {
+        this.stop(el, ['scaleX', 'scaleY']);
+        el.classList?.remove?.('motion-pressing');
+        try { this.release(el); } catch {}
+        if (el.style) {
+          el.style.removeProperty('transform-origin');
+          el.style.removeProperty('transform');
+        }
+      }
+    };
+    const guard = withSettleSafetyGuard(el, 320, cleanup);
+    try {
+      await this.to(el, { scaleX: 1, scaleY: 1 }, { preset });
+    } finally {
+      guard();
+      cleanup();
+    }
+    return true;
+  },
+
+  /**
+   * Spring shrink-and-fade window close driven by zephyr_motion.wasm.
+   */
+  async remoteWindowClose(win, { preset = { response: 0.20, damping: 0.98 } } = {}) {
+    if (!win || engine.reducedMotion) return false;
+    const token = this._bump(win);
+    this.stop(win, ['scaleX', 'scaleY', 'opacity', 'y']);
+    win.classList?.add?.('motion-closing');
+    if (win.style) win.style.transformOrigin = '50% 50%';
+    this.set(win, { scaleX: 1, scaleY: 1, opacity: 1, y: 0 });
+    const guard = withSettleSafetyGuard(win, 340, () => {
+      if (this._genOf(win) === token) {
+        try { this.release(win); } catch {}
+      }
+    });
+    try {
+      await this.to(win, { scaleX: 0.88, scaleY: 0.88, opacity: 0, y: 6 }, { preset });
+    } finally {
+      guard();
+      if (this._genOf(win) === token) {
+        try { this.release(win); } catch {}
+      }
+    }
+    return true;
+  },
+
+  /**
    * Google M3 Emphasized Decelerate / critically-damped (damping: 1.0, zero bounce/overshoot) view transition.
    * Synchronous frame-0 seed + subtle 6px single-axis micro-glide + non-flashing opacity dissolve (0.76 -> 1.0).
    */

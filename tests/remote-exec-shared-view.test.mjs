@@ -18,13 +18,22 @@ test('remote workspace click only focuses; double click zooms and promotion stay
 });
 
 
-test('optional timeout is unchecked by default and sends a destructive stop only on expiry', () => {
+test('timeout interrupts the current command with Ctrl+C and preserves SSH session/window', () => {
     assert.match(appHtml, /id="remoteTimeoutEnabled" type="checkbox"/);
     assert.match(appHtml, /id="remoteTimeout" type="number"[^>]*disabled/);
     assert.match(app, /session\.pendingTimeoutSeconds = timeoutEnabled \? timeoutSeconds : null/);
     assert.match(app, /data\.type === 'remote-exec-sent'[\s\S]*session\.timeoutTimer = setTimeout/);
     assert.match(app, /type: 'remote-exec-timeout'/);
-    assert.match(terminal, /d\.type === 'remote-exec-timeout'[\s\S]*JSON\.stringify\(\{ type: 'disconnect' \}\)/);
+    assert.match(app, /命令已超时，已发送 Ctrl\+C 停止/);
+    assert.match(app, /命令超时，但终端未确认 Ctrl\+C/);
+    const timeoutBranch = terminal.slice(terminal.indexOf("d.type === 'remote-exec-timeout'"), terminal.indexOf("} else if (d.source === 'zephyr-app' && d.type === 'disconnect-terminal')"));
+    assert.match(timeoutBranch, /const canControl = !!getRemoteExecViewPolicy\(\)\.canControl/);
+    assert.match(timeoutBranch, /if \(!connected \|\| !canControl\)/);
+    assert.match(timeoutBranch, /sendData\(String\.fromCharCode\(3\)/);
+    assert.doesNotMatch(timeoutBranch, /type: 'disconnect'|wsConnection\.close\(/);
+    assert.match(timeoutBranch, /remote-exec-timeout-stopped/);
+    assert.match(timeoutBranch, /remote-exec-timeout-failed/);
+    assert.doesNotMatch(app, /remote-exec-timeout-stopped'[\s\S]{0,400}closeRemoteExecWindow/);
 });
 
 test('closing a batch-only pane destroys its PTY and next open gets a unique session identity', () => {

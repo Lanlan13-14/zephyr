@@ -149,8 +149,9 @@ test('public/app.js implements Multi-Window Live Remote Execution Workspace cont
     }
 
     assert.ok(
-        /Motion(?:\?\.)?\.playStaggerEntrance\b/.test(appJs),
-        'public/app.js must use Motion.playStaggerEntrance for window card entrance'
+        /Motion(?:\?\.)?\.terminalWindowAvoidance\b/.test(appJs)
+            && /function\s+animateRemoteWindowLayoutFrom\s*\(/.test(appJs),
+        'public/app.js must animate batch panes with the same Motion.terminalWindowAvoidance box morph the Terminal page uses'
     );
     assert.ok(
         /Motion(?:\?\.)?\.buttonPress\b/.test(appJs),

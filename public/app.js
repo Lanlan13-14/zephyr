@@ -6465,12 +6465,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&v=20261101-batchexec6&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&v=20261101-batchexec14&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&v=20261101-batchexec6&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&v=20261101-batchexec14&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batchexec6`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batchexec6`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batchexec14`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batchexec14`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -15209,6 +15209,142 @@ let remoteWorkspaceBound = false;
 let remoteWorkspaceResizeObserver = null;
 let remoteExecSessionGeneration = 0;
 
+function getRemoteMotionEngine() {
+    return window.Motion || sshKeyMotion?.engine || null;
+}
+
+function captureRemoteWorkspaceRects(workspace = document.getElementById('remoteWorkspace')) {
+    const rects = new Map();
+    if (!workspace) return rects;
+    workspace.querySelectorAll('.terminal-window[data-remote-tab]').forEach((win) => {
+        const id = win.dataset.remoteTab || win.dataset.window;
+        if (!id || win.classList.contains('is-zoom-hidden') || win.classList.contains('motion-closing')) return;
+        const r = win.getBoundingClientRect();
+        if (r.width > 4 && r.height > 4) {
+            rects.set(id, {
+                left: r.left,
+                top: r.top,
+                width: r.width,
+                height: r.height,
+                // Position inside the scrollable stage, independent of scrollTop:
+                // the stage may auto-scroll between capture and render.
+                contentTop: r.top - workspace.getBoundingClientRect().top + workspace.scrollTop,
+            });
+        }
+    });
+    return rects;
+}
+
+const REMOTE_PANE_MIN_W = 420;
+const REMOTE_PANE_MIN_H = 300;
+const REMOTE_PANE_GAP = 12;
+/**
+ * Pick columns/rows from the stage's real area instead of a fixed 2x2.
+ * Panes never shrink below REMOTE_PANE_MIN_*: once they would, the grid keeps
+ * a fixed row height and only the stage scrolls (sidebar/toolbar stay put).
+ */
+function computeRemoteGrid(count, width, height) {
+    const gap = REMOTE_PANE_GAP;
+    const W = Math.max(1, width);
+    const H = Math.max(1, height);
+    const maxCols = Math.max(1, Math.floor((W + gap) / (REMOTE_PANE_MIN_W + gap)));
+    const maxRows = Math.max(1, Math.floor((H + gap) / (REMOTE_PANE_MIN_H + gap)));
+    if (count <= 0) return { cols: 1, rows: 1, rowH: H, scroll: false };
+    let cols = Math.max(1, Math.round(Math.sqrt(count * W / H)));
+    cols = Math.min(cols, maxCols, count);
+    let rows = Math.ceil(count / cols);
+    if (rows > maxRows) {
+        cols = Math.min(maxCols, count);
+        rows = Math.ceil(count / cols);
+    }
+    const scroll = rows > maxRows;
+    const rowH = scroll
+        ? REMOTE_PANE_MIN_H
+        : Math.floor((H - (rows - 1) * gap) / rows);
+    return { cols, rows, rowH, scroll };
+}
+function applyRemoteGridLayout(workspace, wins) {
+    const grid = computeRemoteGrid(wins.length, workspace.offsetWidth, workspace.offsetHeight);
+    workspace.style.setProperty('--remote-cols', String(grid.cols));
+    workspace.style.setProperty('--remote-row-h', grid.rowH + 'px');
+    workspace.classList.toggle('remote-grid-auto', wins.length > 0);
+    workspace.classList.toggle('remote-grid-scroll', grid.scroll);
+    // Explicit cell per window: a pane that leaves flow (position:fixed while it
+    // animates) must NOT let its neighbours auto-place into its cell.
+    wins.forEach((win, i) => {
+        const col = i % grid.cols;
+        const row = Math.floor(i / grid.cols);
+        win.style.setProperty('--remote-gc', String(col + 1));
+        win.style.setProperty('--remote-gr', String(row + 1));
+        win.dataset.remoteRow = String(row + 1);
+    });
+    return grid;
+}
+function revealRemoteWindow(workspace, win) {
+    if (!workspace || !win) return;
+    const top = win.offsetTop;
+    const bottom = top + win.offsetHeight;
+    if (top < workspace.scrollTop) workspace.scrollTop = Math.max(0, top - REMOTE_PANE_GAP);
+    else if (bottom > workspace.scrollTop + workspace.clientHeight) workspace.scrollTop = bottom - workspace.clientHeight + REMOTE_PANE_GAP;
+}
+function animateRemoteWindowLayoutFrom(prevRects, { enteringEls = [], preset = { response: 0.42, damping: 0.98 } } = {}) {
+    const Motion = getRemoteMotionEngine();
+    if (!Motion?.terminalWindowAvoidance) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    const workspace = document.getElementById('remoteWorkspace');
+    if (!workspace) return;
+    const stage = workspace.getBoundingClientRect();
+    const inside = (b) => b.left >= stage.left - 2 && b.top >= stage.top - 2
+        && b.left + b.width <= stage.right + 2 && b.top + b.height <= stage.bottom + 2;
+    const wins = [...workspace.querySelectorAll(':scope > .terminal-window[data-remote-tab]')]
+        .filter((w) => !w.classList.contains('is-zoom-hidden') && !w.classList.contains('motion-closing'));
+    const entering = new Set(enteringEls);
+    const vw = window.innerWidth || document.documentElement.clientWidth || 1280;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 800;
+    const jobs = [];
+    wins.forEach((win) => {
+        const id = String(win.dataset.remoteTab || '');
+        const r = win.getBoundingClientRect();
+        if (r.width < 20 || r.height < 20) return;
+        const toBox = { left: r.left, top: r.top, width: r.width, height: r.height };
+        // A morphing pane is position:fixed on the viewport, so it would paint
+        // over the toolbar/sidebar if it were scrolled partly out of the stage.
+        if (!inside(toBox)) return;
+        if (entering.has(win)) {
+            if (wins.length === 1) {
+                jobs.push(Motion.terminalWindowReplaceMorph?.(win, toBox, toBox, { preset: { response: 0.36, damping: 0.94 } }));
+                return;
+            }
+            const fromBox = Number(win.dataset.remoteRow) > 1
+                ? { left: toBox.left, top: vh + 24, width: toBox.width, height: toBox.height }
+                : { left: vw + 24, top: toBox.top, width: toBox.width, height: toBox.height };
+            jobs.push(Motion.terminalWindowAvoidance(win, fromBox, toBox, { preset }));
+            return;
+        }
+        let fromBox = prevRects?.get(id);
+        if (!fromBox || !inside(fromBox)) return;
+        // Panes only ever move *along their own row, towards the left/up* when
+        // a neighbour closes, so two panes never cross each other:
+        //  - same row: straight horizontal/size morph (order preserved).
+        //  - different row (pane wraps up to the previous row's end): the old
+        //    straight diagonal sweeps over everything in between, so instead the
+        //    pane slides in from the stage edge it is *entering* its new lane from.
+        const toContentTop = toBox.top - stage.top + workspace.scrollTop;
+        const fromContentTop = Number.isFinite(fromBox.contentTop) ? fromBox.contentTop : fromBox.top - stage.top + workspace.scrollTop;
+        if (Math.abs(fromContentTop - toContentTop) > toBox.height * 0.5) {
+            fromBox = {
+                left: stage.right + 24,
+                top: toBox.top, width: toBox.width, height: toBox.height,
+            };
+        }
+        const dist = Math.abs(fromBox.left - toBox.left) + Math.abs(fromBox.top - toBox.top)
+            + Math.abs(fromBox.width - toBox.width) + Math.abs(fromBox.height - toBox.height);
+        if (dist < 6) return;
+        jobs.push(Motion.terminalWindowAvoidance(win, fromBox, toBox, { preset }));
+    });
+    Promise.allSettled(jobs).then(() => stabilizeRemoteWorkspaceFrames('remote-layout-morph', { focus: false }));
+}
+
 function remoteExecTabId(connectionId) {
     const id = String(connectionId);
     if (!remoteExecConnectionToTab.has(id)) {
@@ -15258,14 +15394,24 @@ function renderRemoteServers() {
         const input = document.createElement('input');
         input.type = 'checkbox';
         input.value = String(c.id);
+        const iconKey = (typeof detectConnectionIconKey === 'function') ? detectConnectionIconKey(c) : 'linux';
+        const iconSvg = (typeof CONNECTION_OS_ICONS !== 'undefined' && CONNECTION_OS_ICONS[iconKey]) || (typeof CONNECTION_OS_ICONS !== 'undefined' ? CONNECTION_OS_ICONS.unknown : '');
+        const iconCapsule = document.createElement('span');
+        iconCapsule.className = `distro-icon-capsule os-${iconKey} server-check-icon`;
+        iconCapsule.innerHTML = iconSvg || '';
+        const meta = document.createElement('span');
+        meta.className = 'server-check-meta';
         const name = document.createElement('span');
+        name.className = 'server-check-name';
         name.textContent = formatProtectedName(c.name, c.protocol, settings);
-        label.append(input, name);
+        meta.appendChild(name);
         if (!isIpProtectionEnabled(settings)) {
             const host = document.createElement('em');
-            host.textContent = c.host || '';
-            label.appendChild(host);
+            host.className = 'server-check-host';
+            host.textContent = c.host ? `${c.host}:${c.port || 22}` : '';
+            meta.appendChild(host);
         }
+        label.append(input, iconCapsule, meta);
         fragment.appendChild(label);
     });
     if (!ssh.length) {
@@ -15331,7 +15477,7 @@ function openRemoteExecWindow(connectionId, { render = true } = {}) {
     const session = { id: tabId, tabId, sessionId: tabId, connectionId: c.id, name: c.name, host: c.host, protocol: 'SSH', status: 'connecting', createdAt: Date.now(), pending: [], suppressedBroadcasts: [], loaded: false, params };
     remoteExecSessions.set(tabId, session);
     activeRemoteTab = tabId;
-    if (render) renderRemoteWorkspace();
+    if (render) renderRemoteWorkspace({ animateAvoidance: true });
     return tabId;
 }
 function detachRemoteExecFrame(frame, { destroySession = false } = {}) {
@@ -15345,9 +15491,19 @@ function detachRemoteExecFrame(frame, { destroySession = false } = {}) {
     } catch (_) {}
     frame.remove();
 }
-function closeRemoteExecWindow(tabId, { render = true } = {}) {
+async function closeRemoteExecWindow(tabId, { render = true, animated = true } = {}) {
     const session = remoteExecSessions.get(String(tabId));
     if (!session) return false;
+    const win = session.element;
+    const beforeRects = render ? captureRemoteWorkspaceRects() : null;
+    if (animated && win?.isConnected && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        if (typeof playTerminalWindowCloseMotion === 'function') {
+            await playTerminalWindowCloseMotion(win);
+        } else {
+            const Motion = getRemoteMotionEngine();
+            if (Motion?.remoteWindowClose) await Motion.remoteWindowClose(win);
+        }
+    }
     remoteExecSessions.delete(session.id);
     detachRemoteExecFrame(session.frame, { destroySession: !session.sharedView });
     session.element?.remove();
@@ -15363,37 +15519,101 @@ function closeRemoteExecWindow(tabId, { render = true } = {}) {
     if (activeRemoteTab === session.id) activeRemoteTab = [...remoteExecSessions.keys()].at(-1) || null;
     if (remoteZoomedTabId === session.id) remoteZoomedTabId = null;
     syncRemoteServerSelection();
-    if (render) renderRemoteWorkspace({ animateAvoidance: false });
+    if (render) renderRemoteWorkspace({ animateAvoidance: false, beforeRects });
     return true;
 }
 function createRemoteExecWindowElement(session) {
+    const c = connections.find((item) => String(item.id) === String(session.connectionId)) || session;
+    const proto = String(session.protocol || c?.protocol || 'SSH').toUpperCase();
+    const hostBadge = isIpProtectionEnabled(settings)
+        ? ''
+        : (c.host ? `${c.host}:${c.port || 22}` : (session.host || ''));
+    const probe = terminalProbeLatency.get(session.id);
+    const latencyMs = probe?.ms ?? session.latencyMs ?? null;
+
     const article = document.createElement('article');
     article.className = 'terminal-window remote-exec-window';
     article.dataset.window = session.id;
     article.dataset.remoteTab = session.id;
+
     const titlebar = document.createElement('div');
     titlebar.className = 'terminal-window-titlebar remote-window-titlebar';
-    const title = document.createElement('span');
+
+    const leftMeta = document.createElement('div');
+    leftMeta.className = 'z1-tb-left remote-tb-left';
+
+    const dot = document.createElement('span');
+    dot.className = `proto-dot ${terminalProtocolClass(proto)}`;
+    dot.dataset.remoteDot = '';
+
+    const title = document.createElement('strong');
     title.className = 'terminal-window-title';
     title.dataset.remoteTitle = '';
-    titlebar.appendChild(title);
+    title.textContent = remoteExecLabel(session);
+
+    const protoBadge = document.createElement('span');
+    protoBadge.className = 'z1-badge z1-proto-badge';
+    protoBadge.textContent = proto;
+
+    leftMeta.append(dot, title, protoBadge);
+
+    if (hostBadge) {
+        const hostEl = document.createElement('span');
+        hostEl.className = 'z1-badge z1-host z1-host-badge';
+        hostEl.dataset.remoteHost = '';
+        hostEl.textContent = hostBadge;
+        leftMeta.appendChild(hostEl);
+    }
+
+    const ping = document.createElement('span');
+    ping.className = 'z1-ping';
+    ping.dataset.z1Ping = session.id;
+    if (probe?.level) ping.dataset.level = probe.level;
+    ping.textContent = latencyMs == null ? '' : `${latencyMs}ms`;
+    leftMeta.appendChild(ping);
+
     const status = document.createElement('span');
     status.className = 'remote-lite-badge';
     status.dataset.remoteStatus = '';
-    titlebar.appendChild(status);
+    status.textContent = session.status || 'connecting';
+    leftMeta.appendChild(status);
+
+    const grip = document.createElement('button');
+    grip.type = 'button';
+    grip.className = 'terminal-grip terminal-window-center-dots';
+    grip.dataset.remoteGrip = session.id;
+    grip.title = t('双击放大 / 单击聚焦');
+    grip.setAttribute('aria-label', t('窗口手柄'));
+    grip.innerHTML = '<span></span>';
+
     const quick = document.createElement('div');
     quick.className = 'remote-tb-quick';
-    for (const [action, label] of [['ctrl-c', 'Ctrl+C'], ['clear', '清屏'], ['reconnect', '重连'], ['promote', '进入终端页'], ['close', '关闭']]) {
+
+    const actions = [
+        ['ctrl-c', 'Ctrl+C', '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6"/></svg>', 'Ctrl+C'],
+        ['clear', '清屏', '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/></svg>', '清屏'],
+        ['reconnect', '重连', '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6"/><path d="M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>', '重连'],
+        ['promote', '进入终端页', '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>', '终端'],
+        ['close', '关闭', '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" aria-hidden="true"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>', ''],
+    ];
+
+    for (const [action, label, svg, shortText] of actions) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'tool-btn remote-tb-chip';
+        button.className = `tool-btn remote-tb-chip remote-tb-chip-${action}${action === 'close' ? ' remote-tb-close' : ''}`;
         button.dataset.remoteAction = action;
-        button.textContent = t(label);
         button.title = t(label);
         button.setAttribute('aria-label', t(label));
+        if (action === 'close') {
+            button.innerHTML = svg;
+        } else {
+            button.innerHTML = `${svg}<span>${t(shortText || label)}</span>`;
+        }
         quick.appendChild(button);
     }
-    titlebar.appendChild(quick);
+
+    titlebar.append(leftMeta, grip, quick);
+
     const body = document.createElement('div');
     body.className = 'terminal-window-body';
     const frame = document.createElement('iframe');
@@ -15401,7 +15621,7 @@ function createRemoteExecWindowElement(session) {
     frame.dataset.frame = session.id;
     frame.title = remoteExecLabel(session);
     frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
-    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-batchexec6`;
+    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-batchexec14`;
     frame.addEventListener('load', () => initializeRemoteExecFrame(session));
     session.frame = frame;
     session.element = article;
@@ -15409,10 +15629,11 @@ function createRemoteExecWindowElement(session) {
     article.append(titlebar, body);
     return article;
 }
-function renderRemoteWorkspace({ animateAvoidance = true } = {}) {
+function renderRemoteWorkspace({ animateAvoidance = true, beforeRects = null } = {}) {
     const workspace = document.getElementById('remoteWorkspace');
     if (!workspace) return;
     bindRemoteWorkspaceEvents();
+    const prevRects = beforeRects || (animateAvoidance ? captureRemoteWorkspaceRects(workspace) : null);
     if (!remoteExecSessions.has(activeRemoteTab)) activeRemoteTab = remoteExecSessions.keys().next().value || null;
     if (!remoteExecSessions.has(remoteZoomedTabId)) remoteZoomedTabId = null;
     const count = remoteExecSessions.size;
@@ -15424,23 +15645,44 @@ function renderRemoteWorkspace({ animateAvoidance = true } = {}) {
     workspace.classList.toggle('remote-zoomed', Boolean(remoteZoomedTabId));
     workspace.classList.toggle('broadcast-input-active', remoteBroadcastInputActive);
     const entering = [];
+    let slotIndex = 0;
     for (const session of remoteExecSessions.values()) {
+        slotIndex += 1;
         if (!session.element?.isConnected) {
             workspace.appendChild(createRemoteExecWindowElement(session));
             entering.push(session.element);
         }
         const win = session.element;
+        for (const cls of [...win.classList]) if (/^remote-slot-\d+$/.test(cls)) win.classList.remove(cls);
+        if (count <= 4) win.classList.add(`remote-slot-${slotIndex}`);
         win.classList.toggle('active', session.id === activeRemoteTab);
         win.classList.toggle('background', session.id !== activeRemoteTab);
         win.classList.toggle('is-zoomed', session.id === remoteZoomedTabId);
         win.classList.toggle('is-zoom-hidden', Boolean(remoteZoomedTabId && session.id !== remoteZoomedTabId));
-        win.querySelector('[data-remote-title]').textContent = remoteExecLabel(session);
+        const titleEl = win.querySelector('[data-remote-title]');
+        if (titleEl) titleEl.textContent = remoteExecLabel(session);
+        const dot = win.querySelector('[data-remote-dot]');
+        if (dot) {
+            dot.className = `proto-dot ${session.status === 'connected' ? 'ssh' : (session.status === 'running' ? 'running' : (session.status === 'error' ? 'error' : 'connecting'))}`;
+        }
         const badge = win.querySelector('[data-remote-status]');
-        badge.textContent = session.status || 'connecting';
-        badge.classList.toggle('is-connected', session.status === 'connected');
-        badge.classList.toggle('is-running', session.status === 'running');
+        if (badge) {
+            badge.textContent = session.status || 'connecting';
+            badge.classList.toggle('is-connected', session.status === 'connected');
+            badge.classList.toggle('is-running', session.status === 'running');
+        }
+        const probe = terminalProbeLatency.get(session.id);
+        const pingEl = win.querySelector(`[data-z1-ping="${CSS.escape(session.id)}"]`);
+        if (pingEl && probe?.ms != null) {
+            pingEl.textContent = `${probe.ms}ms`;
+            if (probe.level) pingEl.dataset.level = probe.level;
+            else delete pingEl.dataset.level;
+        }
         session.frame.classList.toggle('active', session.id === activeRemoteTab);
     }
+    applyRemoteGridLayout(workspace, [...remoteExecSessions.values()].map((x) => x.element).filter(Boolean));
+    if (entering.length) revealRemoteWindow(workspace, entering[entering.length - 1]);
+    else if (!count) workspace.scrollTop = 0;
     workspace.querySelectorAll('[data-remote-placeholder]').forEach((node) => node.remove());
     if (!count) {
         const empty = document.createElement('div');
@@ -15448,10 +15690,12 @@ function renderRemoteWorkspace({ animateAvoidance = true } = {}) {
         empty.dataset.remotePlaceholder = '';
         const card = document.createElement('div');
         card.className = 'terminal-empty-minimal terminal-empty-card remote-empty-card';
+        const dot = document.createElement('span');
+        dot.className = 'terminal-empty-dot';
         const text = document.createElement('span');
         text.className = 'terminal-empty-text';
         text.textContent = t('在左侧勾选服务器，即可开启多窗口实时终端并查看实时执行');
-        card.appendChild(text);
+        card.append(dot, text);
         empty.appendChild(card);
         workspace.appendChild(empty);
     }
@@ -15484,26 +15728,27 @@ function renderRemoteWorkspace({ animateAvoidance = true } = {}) {
         const button = document.getElementById(id);
         if (button) button.disabled = !count;
     }
-    if (entering.length && animateAvoidance) {
-        const Motion = window.Motion || sshKeyMotion?.engine;
-        if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-            try {
-                const result = Motion?.playStaggerEntrance
-                    ? Motion.playStaggerEntrance(entering)
-                    : Motion?.stagger?.(entering, { opacity: [0, 1], y: [8, 0] }, { preset: 'mac', step: 0.03 });
-                Promise.resolve(result).catch(() => {});
-            } catch (_) {}
-        }
-    }
+    if (animateAvoidance || beforeRects) animateRemoteWindowLayoutFrom(prevRects, { enteringEls: entering });
     stabilizeRemoteWorkspaceFrames('render-remote-workspace', { focus: false });
 }
 function activateRemoteExecWindow(tabId, { focusTerminal = true } = {}) {
     const session = remoteExecSessions.get(String(tabId));
     if (!session) return false;
     if (activeRemoteTab !== session.id) {
+        const tabsEl = document.getElementById('remoteStageTabs');
+        const prevTabEl = tabsEl?.querySelector?.(`.remote-stage-tab[data-remote-tab="${CSS.escape(activeRemoteTab || '')}"]`);
+        const prevRect = prevTabEl ? { left: prevTabEl.offsetLeft, width: prevTabEl.offsetWidth } : null;
+
         activeRemoteTab = session.id;
         if (remoteZoomedTabId) remoteZoomedTabId = session.id;
         renderRemoteWorkspace({ animateAvoidance: false });
+
+        const nextTabEl = tabsEl?.querySelector?.(`.remote-stage-tab[data-remote-tab="${CSS.escape(session.id)}"]`);
+        const nextRect = nextTabEl ? { left: nextTabEl.offsetLeft, width: nextTabEl.offsetWidth } : null;
+        const Motion = getRemoteMotionEngine();
+        if (tabsEl && prevRect && nextRect && Motion?.remoteStageTabSlide && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+            void Motion.remoteStageTabSlide(tabsEl, prevRect, nextRect);
+        }
     }
     if (focusTerminal) postRemoteExecMessage(session, { type: 'focus-terminal' });
     return true;
@@ -15681,34 +15926,62 @@ function bindRemoteWorkspaceEvents() {
         else closeRemoteExecWindow(remoteExecConnectionToTab.get(String(input.value)));
         syncRemoteServerSelection();
     });
-    document.getElementById('remoteSelectAllBtn')?.addEventListener('click', () => {
+    document.getElementById('remoteSelectAllBtn')?.addEventListener('click', (event) => {
+        const Motion = getRemoteMotionEngine();
+        if (Motion?.buttonPress) void Motion.buttonPress(event.currentTarget);
+        const beforeRects = captureRemoteWorkspaceRects();
         connections.filter((c) => String(c.protocol).toUpperCase() === 'SSH').forEach((c) => openRemoteExecWindow(c.id, { render: false }));
-        renderRemoteWorkspace();
+        renderRemoteWorkspace({ animateAvoidance: true, beforeRects });
     });
-    document.getElementById('remoteClearSelectionBtn')?.addEventListener('click', () => {
-        [...remoteExecSessions.keys()].forEach((id) => closeRemoteExecWindow(id, { render: false }));
+    document.getElementById('remoteClearSelectionBtn')?.addEventListener('click', async (event) => {
+        const btn = event.currentTarget;
+        const Motion = getRemoteMotionEngine();
+        if (Motion?.buttonPress) void Motion.buttonPress(btn);
+        const allWins = [...document.querySelectorAll('#remoteWorkspace .terminal-window')];
+        if (allWins.length && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+            if (typeof playTerminalWindowCloseMotion === 'function') {
+                await Promise.all(allWins.map((w) => playTerminalWindowCloseMotion(w)));
+            } else if (Motion?.remoteWindowClose) {
+                await Promise.all(allWins.map((w) => Motion.remoteWindowClose(w)));
+            }
+        }
+        [...remoteExecSessions.keys()].forEach((id) => closeRemoteExecWindow(id, { render: false, animated: false }));
         renderRemoteWorkspace({ animateAvoidance: false });
     });
     const timeoutEnabled = document.getElementById('remoteTimeoutEnabled');
     const timeoutInput = document.getElementById('remoteTimeout');
     timeoutEnabled?.addEventListener('change', () => { if (timeoutInput) timeoutInput.disabled = !timeoutEnabled.checked; });
     for (const [id, action] of [['remoteBatchCtrlCBtn', 'ctrl-c'], ['remoteBatchClearBtn', 'clear'], ['remoteBatchReconnectBtn', 'reconnect']]) {
-        document.getElementById(id)?.addEventListener('click', () => runRemoteExecAction(action));
+        document.getElementById(id)?.addEventListener('click', (event) => {
+            const btn = event.currentTarget;
+            const Motion = getRemoteMotionEngine();
+            if (Motion?.buttonPress) void Motion.buttonPress(btn);
+            runRemoteExecAction(action);
+        });
     }
-    document.getElementById('remoteBroadcastToggleBtn')?.addEventListener('click', () => {
+    document.getElementById('remoteBroadcastToggleBtn')?.addEventListener('click', (event) => {
+        const btn = event.currentTarget;
+        const Motion = getRemoteMotionEngine();
+        if (Motion?.buttonPress) void Motion.buttonPress(btn);
         remoteBroadcastInputActive = !remoteBroadcastInputActive;
         renderRemoteWorkspace({ animateAvoidance: false });
         // Apply immediately before another iframe keystroke can be emitted.
         remoteExecSessions.forEach((session) => postRemoteExecMessage(session, { type: 'zephyr-pane-slot', broadcastActive: remoteBroadcastInputActive }));
     });
-    document.getElementById('remoteExitZoomBtn')?.addEventListener('click', exitRemoteExecZoom);
-    document.getElementById('remotePromoteActiveBtn')?.addEventListener('click', () => promoteRemoteWindowToFullTerminal(activeRemoteTab));
+    document.getElementById('remoteExitZoomBtn')?.addEventListener('click', (e) => { const M = getRemoteMotionEngine(); if (M?.buttonPress) void M.buttonPress(e.currentTarget); exitRemoteExecZoom(); });
+    document.getElementById('remotePromoteActiveBtn')?.addEventListener('click', (e) => { const M = getRemoteMotionEngine(); if (M?.buttonPress) void M.buttonPress(e.currentTarget); promoteRemoteWindowToFullTerminal(activeRemoteTab); });
     const workspace = document.getElementById('remoteWorkspace');
     workspace.addEventListener('click', (event) => {
         const win = event.target.closest?.('[data-remote-tab]');
         if (!win || !workspace.contains(win)) return;
         const button = event.target.closest?.('[data-remote-action]');
-        if (button) { event.preventDefault(); runRemoteExecAction(button.dataset.remoteAction, win.dataset.remoteTab); return; }
+        if (button) {
+            event.preventDefault();
+            const Motion = getRemoteMotionEngine();
+            if (Motion?.buttonPress) void Motion.buttonPress(button);
+            runRemoteExecAction(button.dataset.remoteAction, win.dataset.remoteTab);
+            return;
+        }
         activateRemoteExecWindow(win.dataset.remoteTab);
     });
     workspace.addEventListener('dblclick', (event) => {
@@ -15768,9 +16041,15 @@ function bindRemoteWorkspaceEvents() {
         } else if (data.type === 'remote-exec-timeout-stopped') {
             if (session.timeoutStopFallback) clearTimeout(session.timeoutStopFallback);
             session.timeoutStopFallback = null;
-            const name = remoteExecLabel(session);
-            closeRemoteExecWindow(session.id);
-            toast(t('批量执行已超时并关闭：{name}', { name }));
+            if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
+            session.timeoutTimer = null;
+            toast(t('命令已超时，已发送 Ctrl+C 停止：{name}', { name: remoteExecLabel(session) }));
+        } else if (data.type === 'remote-exec-timeout-failed') {
+            if (session.timeoutStopFallback) clearTimeout(session.timeoutStopFallback);
+            session.timeoutStopFallback = null;
+            if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
+            session.timeoutTimer = null;
+            toast(t('命令超时，但无法确认已停止：{name}', { name: remoteExecLabel(session) }));
         } else if (data.type === 'remote-exec-sent') {
             session.lastSentAt = Date.now();
             if (session.pendingTimeoutSeconds) {
@@ -15783,8 +16062,10 @@ function bindRemoteWorkspaceEvents() {
                     const name = remoteExecLabel(session);
                     session.timeoutStopFallback = setTimeout(() => {
                         if (remoteExecSessions.get(session.id) !== session) return;
-                        closeRemoteExecWindow(session.id);
-                        toast(t('批量执行已超时并关闭：{name}', { name }));
+                        session.timeoutStopFallback = null;
+                        if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
+                        session.timeoutTimer = null;
+                        toast(t('命令超时，但终端未确认 Ctrl+C：{name}', { name: remoteExecLabel(session) }));
                     }, 2000);
                 }, seconds * 1000);
             }
@@ -15797,7 +16078,12 @@ function bindRemoteWorkspaceEvents() {
     }, true);
     window.addEventListener('resize', () => stabilizeRemoteWorkspaceFrames('remote-resize', { focus: false }));
     if (typeof ResizeObserver !== 'undefined') {
-        remoteWorkspaceResizeObserver = new ResizeObserver(() => stabilizeRemoteWorkspaceFrames('remote-workspace-resize', { focus: false }));
+        remoteWorkspaceResizeObserver = new ResizeObserver(() => {
+            if (!workspace.classList.contains('terminal-window-morphing') && remoteExecSessions.size) {
+                applyRemoteGridLayout(workspace, [...remoteExecSessions.values()].map((x) => x.element).filter(Boolean));
+            }
+            stabilizeRemoteWorkspaceFrames('remote-workspace-resize', { focus: false });
+        });
         remoteWorkspaceResizeObserver.observe(workspace);
     }
 }

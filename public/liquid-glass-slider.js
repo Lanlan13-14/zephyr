@@ -114,6 +114,74 @@
     ];
   }
 
+  var sliderBackdropImage = null;
+  var sliderBackdropSrc = '';
+  var sliderBackdropListeners = [];
+  function getSliderWallpaperImage() {
+    var host = document.getElementById('zephyrGlobalWallpaper');
+    var active = document.documentElement.getAttribute('data-global-wallpaper') === '1';
+    var src = active && host?.dataset?.currentUrl ? host.dataset.currentUrl : '';
+    if (!src) { sliderBackdropSrc = ''; sliderBackdropImage = null; return null; }
+    if (src === sliderBackdropSrc && sliderBackdropImage?.complete && sliderBackdropImage.naturalWidth) return sliderBackdropImage;
+    if (src !== sliderBackdropSrc) {
+      sliderBackdropSrc = src;
+      sliderBackdropImage = null;
+      var img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function () {
+        if (sliderBackdropSrc !== src) return;
+        sliderBackdropImage = img;
+        sliderBackdropListeners.forEach(function (fn) { try { fn(); } catch (_) {} });
+      };
+      img.onerror = function () { if (sliderBackdropSrc === src) sliderBackdropImage = null; };
+      img.src = src;
+    }
+    return sliderBackdropImage;
+  }
+  function renderSliderBackdrop(targetRect, canvas) {
+    var scale = 0.5;
+    var w = Math.max(16, Math.round((targetRect.width || 240) * scale));
+    var h = Math.max(16, Math.round(SLIDER_CANVAS_H * scale));
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    var ctx = canvas.getContext('2d', { alpha: true });
+    if (!ctx) return canvas;
+    var root = document.documentElement;
+    var light = isLightTheme();
+    var cs = getComputedStyle(root);
+    var bg = parseCssColorToRgb255(cs.getPropertyValue('--bg'), light ? [240,244,249] : [15,19,26]);
+    var surf = parseCssColorToRgb255(cs.getPropertyValue('--surface'), light ? [255,255,255] : [26,30,38]);
+    var accent = resolveThemeAccent01().map(function (v) { return Math.round(v*255); });
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle = 'rgb('+bg.join(',')+')';
+    ctx.fillRect(0,0,w,h);
+    var img = getSliderWallpaperImage();
+    if (img && img.naturalWidth && img.naturalHeight) {
+      var vw = Math.max(1, innerWidth), vh = Math.max(1, innerHeight);
+      var stageX = -28, stageY = -28, stageW = vw+56, stageH = vh+56;
+      var fit = (cs.getPropertyValue('--z-global-bg-size') || 'cover').trim();
+      var factor = fit === 'contain' ? Math.min(stageW/img.naturalWidth, stageH/img.naturalHeight)
+        : fit === 'auto' ? 1 : Math.max(stageW/img.naturalWidth, stageH/img.naturalHeight);
+      var dw=img.naturalWidth*factor, dh=img.naturalHeight*factor;
+      var dx=stageX+(stageW-dw)/2, dy=stageY+(stageH-dh)/2;
+      ctx.save(); ctx.scale(scale,scale); ctx.translate(-targetRect.left,-targetRect.top);
+      var opacity=parseFloat(cs.getPropertyValue('--z-global-bg-opacity')); if(!Number.isFinite(opacity)) opacity=.45;
+      ctx.globalAlpha=Math.max(0,Math.min(1,opacity));
+      try { ctx.drawImage(img,dx,dy,dw,dh); } catch (_) {}
+      ctx.restore();
+      ctx.fillStyle=light?'rgba(255,255,255,.08)':'rgba(14,18,26,.14)'; ctx.fillRect(0,0,w,h);
+    } else {
+      var a=light?.16:.18;
+      var grad=ctx.createLinearGradient(0,0,w,h);
+      grad.addColorStop(0,'rgba('+accent.join(',')+','+(a*.85)+')');
+      grad.addColorStop(.5,'rgba('+surf.join(',')+','+(a*.45)+')');
+      grad.addColorStop(1,'rgba('+accent.join(',')+','+(a*.65)+')');
+      ctx.fillStyle=grad; ctx.fillRect(0,0,w,h);
+    }
+    return canvas;
+  }
+
   var instances = new Map();
 
   function createSliderController(input) {
@@ -145,6 +213,7 @@
     }
 
     var renderer = null;
+    var backdropCanvas = document.createElement('canvas');
     if (Renderer) {
       try {
         renderer = new Renderer(canvas);
@@ -239,10 +308,24 @@
         renderer.resize(w, h);
       }
 
-      if (typeof renderer.setBackgroundColor === 'function') {
-        renderer.setBackgroundColor(cardBg01);
-      } else {
-        renderer.backgroundColor = cardBg01;
+      // Keep the sampled backdrop for lens refraction, but clip it out of the
+      // visible FBO. The old solid-color pass painted an opaque rectangle across
+      // the whole slider canvas, hiding the wallpaper beneath the two cards.
+      var backdropKey = [document.documentElement.getAttribute('data-theme') || '',
+        document.documentElement.getAttribute('data-color-scheme') || '',
+        document.documentElement.getAttribute('data-global-wallpaper') || '0',
+        document.getElementById('zephyrGlobalWallpaper')?.dataset?.currentUrl || '',
+        getComputedStyle(document.documentElement).getPropertyValue('--z-global-bg-opacity').trim(),
+        getComputedStyle(document.documentElement).getPropertyValue('--z-global-bg-size').trim(),
+        w, Math.round(rect.left), Math.round(rect.top)].join('|');
+      if (typeof renderer.setBackgroundColor === 'function') renderer.setBackgroundColor(null);
+      else renderer.backgroundColor = null;
+      if (typeof renderer.setWallpaperClip === 'function') renderer.setWallpaperClip(0, 0, 0.01, 0.01);
+      else renderer.wallpaperClipCss = { x: 0, y: 0, w: 0.01, h: 0.01 };
+      if (renderer._sliderBackdropKey !== backdropKey || !renderer.wallpaperReady) {
+        renderSliderBackdrop(rect, backdropCanvas);
+        if (typeof renderer.loadWallpaperFromCanvas === 'function') renderer.loadWallpaperFromCanvas(backdropCanvas, 'slider|' + backdropKey);
+        renderer._sliderBackdropKey = backdropKey;
       }
 
       var frac = readInputFraction();
@@ -521,6 +604,7 @@
       var el = document.getElementById(id);
       if (el) createSliderController(el);
     });
+    sliderBackdropListeners.push(function () { scheduleRefreshAllSliders(true); });
   }
 
   function isSettingsAppearanceVisible() {
@@ -558,7 +642,7 @@
     });
     rootObserver.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['data-theme', 'data-color-scheme'],
+      attributeFilter: ['data-theme', 'data-color-scheme', 'data-global-wallpaper'],
     });
     var appearPanel = document.getElementById('settings-appearance');
     if (appearPanel) {

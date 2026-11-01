@@ -856,7 +856,7 @@ html[data-theme="dark"] .main-nav .nav-actions #logoutBtn {
   overflow: hidden !important;
   position: relative !important;
 }
-.terminal-window:not(.motion-closing):not(.minimizing):not(.dragging):not(.layout-morphing):not(.dock-swapping) {
+.terminal-window:not(.motion-closing):not(.motion-entering):not(.minimizing):not(.dragging):not(.layout-morphing):not(.dock-swapping):not(.terminal-window-morphing) {
   /* Issue 9: 严禁在常态 .terminal-window 上写 CSS animation/transition: transform 抢占 zephyr_motion.wasm */
   animation: none !important;
   transform: none !important;
@@ -2639,7 +2639,8 @@ html body .z-panel-morphing {
   box-shadow: 0 24px 64px rgba(15, 23, 42, 0.24) !important;
 }
 
-#terminalWorkspace > .terminal-window.terminal-window-morphing {
+#terminalWorkspace > .terminal-window.terminal-window-morphing,
+#remoteWorkspace > .terminal-window.terminal-window-morphing {
   position: fixed !important;
   left: var(--z-morph-l, 16px) !important;
   top: var(--z-morph-t, 95px) !important;
@@ -8011,21 +8012,70 @@ html[data-lite-terminal="1"] #terminalContainer .wterm-wrapper {
 
 #remoteServerList > .server-check {
   border-radius: 12px !important;
-  padding: 9px 12px !important;
+  padding: 8px 12px !important;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
   border: 1px solid var(--z-glass-outer-border);
   background: var(--z-glass-subcard-bg);
-  transition: border-color 140ms ease, background-color 140ms ease, transform 120ms ease;
+  transition: border-color 140ms ease, background-color 140ms ease, transform 120ms ease, box-shadow 140ms ease;
+  user-select: none;
+}
+
+#remoteServerList > .server-check:hover {
+  border-color: color-mix(in srgb, var(--accent, #0A84FF) 32%, var(--z-glass-outer-border));
+  background: color-mix(in srgb, var(--accent, #0A84FF) 6%, var(--z-glass-subcard-bg));
+  transform: translateY(-1px);
+}
+
+#remoteServerList > .server-check:active {
+  transform: translateY(0) scale(0.99);
 }
 
 #remoteServerList > .server-check.is-checked,
 #remoteServerList > .server-check:has(input:checked) {
   border-color: var(--accent, #0A84FF) !important;
   background: color-mix(in srgb, var(--accent, #0A84FF) 12%, var(--z-glass-subcard-bg, rgba(255, 255, 255, 0.06))) !important;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent), 0 3px 10px color-mix(in srgb, var(--accent, #0A84FF) 14%, transparent) !important;
+}
+
+.server-check-icon {
+  width: 26px !important;
+  height: 26px !important;
+  flex: 0 0 26px !important;
+  border-radius: 7px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.server-check-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.server-check-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-check-host {
+  font-size: 11px;
+  font-style: normal;
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .remote-command#remoteExecForm {
@@ -8051,17 +8101,127 @@ html[data-lite-terminal="1"] #terminalContainer .wterm-wrapper {
 }
 
 .remote-command-meta-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid !important;
+  grid-template-columns: 1fr auto !important;
+  gap: 8px !important;
+  align-items: center !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.remote-timeout-toggle.settings-switch-option {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  padding: 5px 10px !important;
+  margin: 0 !important;
+  background: var(--z-glass-subcard-bg) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  border-radius: 10px !important;
+  cursor: pointer !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  min-height: 32px !important;
+  height: 32px !important;
+  box-sizing: border-box !important;
+  transition: border-color .16s ease, background-color .16s ease !important;
+}
+
+.remote-timeout-toggle.settings-switch-option:hover {
+  border-color: color-mix(in srgb, var(--accent, #0A84FF) 32%, var(--z-glass-outer-border)) !important;
+}
+
+.remote-timeout-toggle.settings-switch-option .settings-switch-copy {
+  min-width: 0 !important;
+  overflow: hidden !important;
+}
+
+.remote-timeout-toggle.settings-switch-option .settings-switch-copy strong {
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  color: var(--text) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.remote-timeout-toggle.settings-switch-option .connection-share-switch {
+  width: 32px !important;
+  height: 18px !important;
+  position: relative !important;
+  display: block !important;
+  flex: 0 0 auto !important;
+}
+
+.remote-timeout-toggle.settings-switch-option .connection-share-switch input {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.remote-timeout-toggle.settings-switch-option .connection-share-switch > span {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 999px !important;
+  background: color-mix(in srgb, var(--border) 88%, transparent) !important;
+  transition: background-color .2s ease !important;
+  cursor: pointer !important;
+}
+
+.remote-timeout-toggle.settings-switch-option .connection-share-switch > span::after {
+  content: '' !important;
+  position: absolute !important;
+  top: 2px !important;
+  left: 2px !important;
+  width: 14px !important;
+  height: 14px !important;
+  border-radius: 50% !important;
+  background: #FFFFFF !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28) !important;
+  transition: transform .2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.remote-timeout-toggle.settings-switch-option .connection-share-switch input:checked + span {
+  background: var(--accent, #0A84FF) !important;
+  box-shadow: none !important;
+}
+
+.remote-timeout-toggle.settings-switch-option .connection-share-switch input:checked + span::after {
+  transform: translateX(14px) !important;
+}
+
+.remote-timeout-field {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  flex-shrink: 0 !important;
+}
+
+.remote-timeout-field label {
+  font-size: 11px !important;
+  color: var(--text-secondary) !important;
+  white-space: nowrap !important;
 }
 
 #remoteTimeout {
-  width: 96px !important;
-  padding: 6px 10px !important;
-  border-radius: 10px !important;
-  text-align: center;
+  width: 52px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 2px 4px !important;
+  border-radius: 9px !important;
+  text-align: center !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  background: var(--z-glass-subcard-bg) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  color: var(--text) !important;
+  box-sizing: border-box !important;
 }
 
 .remote-batch-quick-actions {
@@ -8112,39 +8272,73 @@ html[data-lite-terminal="1"] #terminalContainer .wterm-wrapper {
 }
 
 .remote-stage-tabs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  min-width: 0;
-  flex: 1 1 auto;
-  scrollbar-width: none;
+  position: relative !important;
+  isolation: isolate !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  overflow-x: auto !important;
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+  scrollbar-width: none !important;
 }
 
 .remote-stage-tabs::-webkit-scrollbar {
-  display: none;
+  display: none !important;
 }
 
 .remote-stage-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  border: 1px solid transparent;
-  background: var(--z-glass-subcard-bg);
-  color: var(--text-secondary);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  height: 28px !important;
+  padding: 0 12px !important;
+  border-radius: 9999px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: var(--text-secondary) !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+  position: relative !important;
+  transition: color 160ms cubic-bezier(0.2, 0, 0, 1) !important;
+}
+
+.remote-stage-tab:hover:not(.active) {
+  color: var(--text) !important;
+  background: color-mix(in srgb, var(--text) 5%, transparent) !important;
 }
 
 .remote-stage-tab.active {
-  color: var(--text);
-  border-color: var(--accent, #0A84FF);
-  background: color-mix(in srgb, var(--accent, #0A84FF) 14%, var(--z-glass-subcard-bg));
+  color: var(--text) !important;
+  font-weight: 600 !important;
+}
+
+.remote-stage-tab.active::before {
+  display: block !important;
+  content: '' !important;
+  position: absolute !important;
+  inset: 0 !important;
+  width: var(--remote-pill-w, 100%) !important;
+  border-radius: 9999px !important;
+  z-index: -1 !important;
+  pointer-events: none !important;
+  transform: translate3d(var(--remote-pill-dx, 0px), 0, 0) !important;
+  transition: none !important;
+  will-change: transform, width !important;
+}
+
+html[data-theme="light"] .remote-stage-tab.active::before {
+  background: #FFFFFF !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
+}
+
+html[data-theme="dark"] .remote-stage-tab.active::before {
+  background: color-mix(in srgb, var(--surface, #2C3036) 88%, #FFFFFF) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
 }
 
 .remote-stage-actions {
@@ -8245,8 +8439,25 @@ html[data-lite-terminal="1"] #terminalContainer .wterm-wrapper {
   display: flex !important;
   flex-direction: column !important;
   overflow: hidden !important;
-  grid-column: auto !important;
-  grid-row: auto !important;
+  grid-column: var(--remote-gc, auto) !important;
+  grid-row: var(--remote-gr, auto) !important;
+  /* terminal-window's base terminalWindowIn keyframe (blur+fade) restarts whenever the
+     "idle window" :not() rule stops matching (e.g. during .terminal-window-morphing).
+     Batch panes are moved by the motion engine only; they never use CSS keyframes. */
+  animation: none !important;
+}
+
+#remoteWorkspace > .terminal-window.remote-exec-window.terminal-window-morphing,
+#remoteWorkspace.terminal-workspace-grid > .terminal-window.remote-exec-window.terminal-window-morphing {
+  position: fixed !important;
+  left: var(--z-morph-l) !important;
+  top: var(--z-morph-t) !important;
+  width: var(--z-morph-w) !important;
+  height: var(--z-morph-h) !important;
+  z-index: 65 !important;
+  pointer-events: none !important;
+  transform: none !important;
+  transition: none !important;
 }
 
 /* 单窗放大模式 (#remoteWorkspace.remote-zoomed) */
@@ -8275,21 +8486,65 @@ html[data-lite-terminal="1"] #terminalContainer .wterm-wrapper {
 }
 
 /* 远程执行窗口标题栏附加快捷胶囊 (.remote-window-titlebar .remote-tb-quick / .remote-lite-badge / .remote-tb-chip) */
+.remote-window-titlebar {
+  height: 42px !important;
+  min-height: 42px !important;
+  max-height: 42px !important;
+  padding: 0 10px 0 12px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  position: relative !important;
+  border-radius: 14px 14px 0 0 !important;
+  box-sizing: border-box !important;
+  user-select: none !important;
+}
+
+.remote-window-titlebar .remote-tb-left {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+  overflow: hidden !important;
+}
+
+.remote-window-titlebar .remote-tb-left .terminal-window-title {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--text) !important;
+}
+
+.remote-window-titlebar .terminal-grip.terminal-window-center-dots {
+  position: absolute !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  pointer-events: auto !important;
+}
+
 .remote-window-titlebar .remote-tb-quick {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  margin-left: auto !important;
+  flex-shrink: 0 !important;
+  z-index: 2 !important;
 }
 
 .remote-window-titlebar .remote-lite-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  padding: 2px 8px !important;
+  border-radius: 999px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
   color: var(--text-secondary);
   background: var(--z-glass-subcard-bg);
   border: 1px solid var(--z-glass-outer-border);
@@ -8304,19 +8559,20 @@ html[data-lite-terminal="1"] #terminalContainer .wterm-wrapper {
 }
 
 .remote-window-titlebar .remote-tb-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  height: 26px !important;
+  padding: 0 9px !important;
+  border-radius: 999px !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
   color: var(--text-secondary);
   background: var(--z-glass-subcard-bg);
   border: 1px solid var(--z-glass-outer-border);
   cursor: pointer;
   white-space: nowrap;
-  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease, transform 100ms ease !important;
 }
 
 .remote-window-titlebar .remote-tb-chip:hover {
@@ -8325,6 +8581,30 @@ html[data-lite-terminal="1"] #terminalContainer .wterm-wrapper {
   background: color-mix(in srgb, var(--accent, #0A84FF) 14%, var(--z-glass-subcard-bg));
 }
 
+.remote-window-titlebar .remote-tb-chip:active {
+  transform: scale(0.96) !important;
+}
+
+.remote-window-titlebar .remote-tb-chip.remote-tb-close {
+  width: 26px !important;
+  min-width: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  border-radius: 7px !important;
+  justify-content: center !important;
+  margin-left: 2px !important;
+}
+
+.remote-window-titlebar .remote-tb-chip.remote-tb-close:hover {
+  background: #E81123 !important;
+  border-color: #E81123 !important;
+  color: #FFFFFF !important;
+}
+
+.terminal-window.remote-exec-window.motion-closing {
+  pointer-events: none !important;
+  z-index: 10 !important;
+}
 
 @media (max-width: 760px) {
   .remote-layout.remote-desktop-shell {
@@ -8364,4 +8644,32 @@ html[data-lite-terminal="1"] #terminalContainer .wterm-wrapper {
   height: 100% !important;
   min-height: 0 !important;
   max-height: 100% !important;
+}
+
+/* 批量执行：引擎用视口坐标驱动 position:fixed 的 --z-morph-*。
+   .terminal-workspace-grid 的 contain:layout paint 会让 fixed 子元素改为相对工作区定位，
+   导致单窗↔多窗过渡整体错位，所以只在批量页关闭（终端页本来就没有这条）。 */
+#remoteWorkspace.terminal-workspace-grid {
+  contain: none !important;
+}
+
+/* 批量执行：按舞台面积自动决定每行窗口数；放不下时只让舞台区域滚动（侧栏/顶栏不动）。 */
+#remoteWorkspace.remote-workspace.remote-grid-auto.terminal-workspace-grid:not(.remote-zoomed) {
+  grid-template-columns: repeat(var(--remote-cols, 1), minmax(0, 1fr)) !important;
+  grid-template-rows: none !important;
+  grid-auto-rows: var(--remote-row-h, 300px) !important;
+  align-content: start !important;
+  overflow-x: hidden !important;
+  overflow-y: hidden !important;
+}
+#remoteWorkspace.remote-workspace.remote-grid-auto.remote-grid-scroll.terminal-workspace-grid:not(.remote-zoomed) {
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, currentColor 28%, transparent) transparent;
+}
+#remoteWorkspace.remote-grid-scroll::-webkit-scrollbar { width: 8px; }
+#remoteWorkspace.remote-grid-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, currentColor 28%, transparent);
+  border-radius: 8px;
 }
