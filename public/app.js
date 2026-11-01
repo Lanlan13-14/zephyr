@@ -1116,7 +1116,7 @@ function scheduleTerminalLayoutStabilize(reason = 'layout-stabilize', options = 
     }, 24);
 }
 function broadcastTerminalSettings(terminal = {}, workspace = settings?.workspace || {}) {
-    document.querySelectorAll('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
+    document.querySelectorAll('#terminalWorkspace iframe.terminal-frame, #remoteWorkspace iframe.terminal-frame').forEach((frame) => {
         try { frame.contentWindow?.postMessage({ source: 'zephyr-app', type: 'terminal-settings', terminal, workspace }, '*'); } catch (_) {}
     });
 }
@@ -1138,7 +1138,7 @@ if (typeof document !== 'undefined') {
 function broadcastThemeToTerminals(theme) {
     const appearance = getAppearance();
     const scheme = appearance?.colorScheme || appearance?.palette || document.documentElement.getAttribute('data-color-scheme') || 'frost';
-    document.querySelectorAll('#terminalWorkspace iframe.terminal-frame').forEach((frame) => {
+    document.querySelectorAll('#terminalWorkspace iframe.terminal-frame, #remoteWorkspace iframe.terminal-frame').forEach((frame) => {
         try {
             const fdoc = frame.contentDocument;
             if (fdoc?.documentElement) {
@@ -1151,6 +1151,7 @@ function broadcastThemeToTerminals(theme) {
     });
     broadcastNotesEnabled();
     scheduleTerminalLayoutStabilize('theme-change', { focus: false, tabId: null });
+    try { stabilizeRemoteWorkspaceFrames('theme-change', { focus: false }); } catch (_) {}
 }
 
 function resolveThemeOriginPoint(originEl) {
@@ -2913,6 +2914,13 @@ function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     }
     if (target === 'notes') {
         notesController?.activate?.().catch((err) => toast(err.message || t('加载笔记失败')));
+    }
+    if (target === 'remote') {
+        try {
+            renderRemoteServers();
+            renderRemoteWorkspace({ animateAvoidance: false });
+            stabilizeRemoteWorkspaceFrames('switch-view-remote', { focus: true });
+        } catch (_) {}
     }
     const nextViewEl = document.getElementById(`view-${target}`);
     if (prevViewId && prevViewId !== target && !enteringAnimated && nextViewEl && window.Motion?.viewSwitch) {
@@ -5904,6 +5912,11 @@ function bindTerminalPanelPinStateMessages() {
                 return;
             }
             const tabId = String(data.tabId || '');
+            const remotePane = tabId && remoteExecSessions.get(tabId);
+            if (remotePane?.frame?.contentWindow === e.source) {
+                activateRemoteExecWindow(tabId, { focusTerminal: false });
+                return;
+            }
             if (tabId && activeTerminalTab !== tabId) {
                 activateTerminalPaneById(tabId);
                 renderTerminalSmartbar();
@@ -6452,12 +6465,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&v=20261028-ui132&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&v=20261101-batchexec6&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&v=20261028-ui132&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&v=20261101-batchexec6&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261028-ui132`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261028-ui132`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batchexec6`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batchexec6`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -6711,6 +6724,8 @@ async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
     if (!terminalTabs.some((t) => t.id === tabId) || closingTerminalTabs.has(tabId)) return;
     const willBeLastTab = terminalTabs.length <= 1;
     const closingTab = terminalTabs.find((t) => t.id === tabId);
+    const retainedRemote = remoteExecSessions.get(tabId);
+    const remoteViewOwner = closingTab?.remoteExecOwner || retainedRemote?.sharedView;
     const ephemeralConnectionId = closingTab?.ephemeralConnectionId
         || (closingTab?.ephemeral || closingTab?.transient ? closingTab?.connectionId : '')
         || '';
@@ -6737,8 +6752,11 @@ async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
         if (shouldExitFullscreen) await exitTerminalFullscreen({ renderAfter: false });
         await closeMotion;
     }
+    // A promoted tab owns only its view. Detach synchronously before any render
+    // can unload it, even when the user's global persistence setting is off.
+    if (remoteViewOwner) detachRemoteExecFrame(win?.querySelector('iframe.terminal-frame'));
     // Fire-and-forget: delete the one-shot host row so it never lingers in the library.
-    if (ephemeralConnectionId) {
+    if (ephemeralConnectionId && !retainedRemote) {
         disposeEphemeralConnection(ephemeralConnectionId, { reason: `tab-close:${reason}` });
     }
     terminalTabs = terminalTabs.filter((t) => t.id !== tabId);
@@ -6751,7 +6769,9 @@ async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
         window.clearTimeout(reconnectTimer);
         terminalReconnectFallbackTimers.delete(tabId);
     }
-    sessionStorage.removeItem(`zephyr_ssh_params_${tabId}`);
+    if (typeof remoteExecSessions === 'undefined' || !remoteExecSessions.has(tabId)) {
+        sessionStorage.removeItem(`zephyr_ssh_params_${tabId}`);
+    }
     sessionStorage.removeItem(`zephyr_remote_desktop_params_${tabId}`);
     removeTerminalSnapshot(tabId);
     if (activeTerminalTab === tabId) activeTerminalTab = visualLayout[0] || terminalTabs.find((t) => !t.minimized)?.id || terminalTabs[0]?.id || null;
@@ -6789,7 +6809,17 @@ async function closeTerminalTab(tabId, { reason = 'manual' } = {}) {
             }
         });
     }
+    if (retainedRemote && remoteViewOwner) {
+        // Closing the promoted full-terminal view must not navigate the user
+        // away from Terminal. Keep the live remote PTY owner mounted in Batch
+        // Execution and release only the promoted view/owner marker.
+        retainedRemote.sharedView = false;
+        postRemoteExecMessage(retainedRemote, { type: 'set-lite-mode', lite: true });
+        renderRemoteWorkspace({ animateAvoidance: false });
+    }
+
     scheduleWorkspaceSave('close-terminal-tab', { immediate: true });
+
 }
 
 function applyTerminalWindowPreset(tabId, action) {
@@ -15169,8 +15199,611 @@ function setupAiAssistant() {
     document.addEventListener('visibilitychange', () => { if (!document.hidden && aiPanelState === 'open') startAiPanelWatchdog(); });
 }
 
-function renderRemoteServers() { const ssh = connections.filter((c) => c.protocol === 'SSH'); $('#remoteServerList').innerHTML = ssh.length ? ssh.map((c) => `<label class="server-check"><input type="checkbox" value="${c.id}"> <span>${escapeHtml(formatProtectedName(c.name, c.protocol, settings))}</span>${isIpProtectionEnabled(settings) ? '' : `<em>${escapeHtml(c.host)}</em>`}</label>`).join('') : `<div class="empty-card">${t('暂无 SSH 连接')}</div>`; }
-async function remoteExecute(e) { e.preventDefault(); const ids = $$('#remoteServerList input:checked').map((i) => i.value); try { $('#remoteResults').innerHTML = `<div class="empty-card">${t('执行中...')}</div>`; const data = await api('/api/remote-execute', { method: 'POST', body: JSON.stringify({ connectionIds: ids, command: $('#remoteCommand').value, timeoutSeconds: Number($('#remoteTimeout').value) || 30 }) }); $('#remoteResults').innerHTML = data.results.map((r) => `<article class="result-card ${r.success ? 'ok' : 'fail'}"><h3>${escapeHtml(r.name)} <span>${escapeHtml(r.status)} · ${r.durationMs}ms</span></h3>${r.error ? `<p class="error-text">${escapeHtml(r.error)}</p>` : ''}<pre>${escapeHtml(r.stdout || '')}</pre>${r.stderr ? `<pre class="stderr">${escapeHtml(r.stderr)}</pre>` : ''}</article>`).join(''); await loadConnections(); } catch (err) { toast(err.message); } }
+// Remote panes have their own stable identity and never destroy a PTY on close.
+const remoteExecSessions = new Map();
+const remoteExecConnectionToTab = new Map();
+let activeRemoteTab = null;
+let remoteZoomedTabId = null;
+let remoteBroadcastInputActive = false;
+let remoteWorkspaceBound = false;
+let remoteWorkspaceResizeObserver = null;
+let remoteExecSessionGeneration = 0;
+
+function remoteExecTabId(connectionId) {
+    const id = String(connectionId);
+    if (!remoteExecConnectionToTab.has(id)) {
+        const nonce = (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID().replace(/-/g, '')
+            : `${Date.now().toString(36)}${(++remoteExecSessionGeneration).toString(36)}`;
+        remoteExecConnectionToTab.set(id, `${stableTerminalSessionId(id, 'SSH')}_remote_${nonce}`);
+    }
+    return remoteExecConnectionToTab.get(id);
+}
+function postRemoteExecMessage(session, message) {
+    if (!session?.frame?.contentWindow) return false;
+    try {
+        session.frame.contentWindow.postMessage({ source: 'zephyr-app', tabId: session.id, ...message }, location.origin);
+        return true;
+    } catch (_) { return false; }
+}
+function remoteExecLabel(session) {
+    const c = connections.find((item) => String(item.id) === String(session.connectionId)) || session;
+    return formatProtectedName(c.name || c.host || 'SSH', 'SSH', settings);
+}
+function syncRemoteServerSelection() {
+    document.querySelectorAll('#remoteServerList input[type="checkbox"]').forEach((input) => {
+        const id = remoteExecConnectionToTab.get(String(input.value));
+        input.checked = Boolean(id && remoteExecSessions.has(id));
+        input.closest('.server-check')?.classList.toggle('is-checked', input.checked);
+    });
+    const count = document.getElementById('remoteSelectedCount');
+    if (count) {
+        count.removeAttribute('data-i18n');
+        count.textContent = t('已选 {count} 台', { count: remoteExecSessions.size });
+    }
+}
+function renderRemoteServers() {
+    bindRemoteWorkspaceEvents();
+    const list = document.getElementById('remoteServerList');
+    if (!list) return;
+    const ssh = connections.filter((c) => String(c.protocol).toUpperCase() === 'SSH');
+    const valid = new Set(ssh.map((c) => String(c.id)));
+    for (const session of [...remoteExecSessions.values()]) {
+        if (!valid.has(String(session.connectionId))) closeRemoteExecWindow(session.id, { render: false });
+    }
+    const fragment = document.createDocumentFragment();
+    ssh.forEach((c) => {
+        const label = document.createElement('label');
+        label.className = 'server-check';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = String(c.id);
+        const name = document.createElement('span');
+        name.textContent = formatProtectedName(c.name, c.protocol, settings);
+        label.append(input, name);
+        if (!isIpProtectionEnabled(settings)) {
+            const host = document.createElement('em');
+            host.textContent = c.host || '';
+            label.appendChild(host);
+        }
+        fragment.appendChild(label);
+    });
+    if (!ssh.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-card';
+        empty.textContent = t('暂无 SSH 连接');
+        fragment.appendChild(empty);
+    }
+    list.replaceChildren(fragment);
+    syncRemoteServerSelection();
+    renderRemoteWorkspace({ animateAvoidance: false });
+}
+function initializeRemoteExecFrame(session) {
+    if (!remoteExecSessions.has(session.id)) return;
+    session.loaded = true;
+    try {
+        session.frame.contentDocument?.addEventListener('keydown', (event) => {
+            if (!remoteExecSessions.has(session.id)) return;
+            if (event.key === 'Escape' && remoteZoomedTabId) {
+                event.preventDefault();
+                exitRemoteExecZoom();
+            } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) {
+                event.preventDefault();
+                remoteExecute(event);
+            }
+        }, true);
+    } catch (_) {}
+    postRemoteExecMessage(session, { type: 'theme-change', theme: getPreferredTheme(), appearance: getAppearance() });
+    postRemoteExecMessage(session, { type: 'terminal-settings', terminal: settings?.terminal || {}, workspace: { ...(settings?.workspace || {}), sessionPersistence: true } });
+    postRemoteExecMessage(session, { type: 'ip-protection-change', enabled: isIpProtectionEnabled(settings) });
+    postRemoteExecMessage(session, { type: 'notes-enabled', enabled: isNotesEnabled() });
+    postRemoteExecMessage(session, { type: 'set-lite-mode', lite: true, focus: false });
+    postRemoteExecMessage(session, { type: 'zephyr-pane-slot', broadcastActive: remoteBroadcastInputActive });
+    for (const message of session.pending.splice(0)) postRemoteExecMessage(session, message);
+    stabilizeRemoteWorkspaceFrames('remote-frame-load', { focus: false });
+}
+function openRemoteExecWindow(connectionId, { render = true } = {}) {
+    bindRemoteWorkspaceEvents();
+    const c = connections.find((item) => String(item.id) === String(connectionId) && String(item.protocol).toUpperCase() === 'SSH');
+    if (!c || !document.getElementById('remoteWorkspace')) return null;
+    const priorTabId = remoteExecTabId(c.id);
+    const existing = remoteExecSessions.get(priorTabId);
+    if (existing) return existing.id;
+    // A closed batch-only shell is never resumed; keep the same PTY only while
+    // a promoted full terminal still owns it.
+    if (!terminalTabs.some((tab) => tab.id === priorTabId)) {
+        sessionStorage.removeItem(`zephyr_ssh_params_${priorTabId}`);
+        remoteExecConnectionToTab.delete(String(c.id));
+    }
+    const tabId = remoteExecTabId(c.id);
+    // One control/resize owner per PTY: reselecting a promoted server activates its full tab.
+    if (terminalTabs.some((tab) => tab.id === tabId)) {
+        activeTerminalTab = tabId;
+        restoreTerminalSession(tabId);
+        renderTerminalTabs({ rebuildWorkspace: true });
+        switchView('terminal');
+        syncRemoteServerSelection();
+        return null;
+    }
+    const params = { connectionId: c.id, name: c.name, host: c.host, port: c.port, username: c.username, protocol: 'SSH', encoding: c.encoding || 'utf-8', init: '', tabId, sessionId: tabId, embedded: true, timestamp: Date.now(), snippets: settings?.snippets || [] };
+    try { sessionStorage.setItem(`zephyr_ssh_params_${tabId}`, JSON.stringify(params)); }
+    catch (error) { toast(error.message); syncRemoteServerSelection(); return null; }
+    const session = { id: tabId, tabId, sessionId: tabId, connectionId: c.id, name: c.name, host: c.host, protocol: 'SSH', status: 'connecting', createdAt: Date.now(), pending: [], suppressedBroadcasts: [], loaded: false, params };
+    remoteExecSessions.set(tabId, session);
+    activeRemoteTab = tabId;
+    if (render) renderRemoteWorkspace();
+    return tabId;
+}
+function detachRemoteExecFrame(frame, { destroySession = false } = {}) {
+    if (!frame) return;
+    // A normally closed batch-only pane owns its PTY and must terminate it;
+    // promoted shared views only detach so the full Terminal owner survives.
+    try {
+        const win = frame.contentWindow;
+        if (destroySession) win?.dispatchEvent(new win.MessageEvent('message', { data: { source: 'zephyr-app', type: 'disconnect-terminal' } }));
+        win?.dispatchEvent(new win.MessageEvent('message', { data: { source: 'zephyr-app', type: 'terminal-settings', workspace: { sessionPersistence: true } } }));
+    } catch (_) {}
+    frame.remove();
+}
+function closeRemoteExecWindow(tabId, { render = true } = {}) {
+    const session = remoteExecSessions.get(String(tabId));
+    if (!session) return false;
+    remoteExecSessions.delete(session.id);
+    detachRemoteExecFrame(session.frame, { destroySession: !session.sharedView });
+    session.element?.remove();
+    session.pending.length = 0;
+    session.suppressedBroadcasts.length = 0;
+    if (session.timeoutTimer) { clearTimeout(session.timeoutTimer); session.timeoutTimer = null; }
+    if (session.timeoutStopFallback) { clearTimeout(session.timeoutStopFallback); session.timeoutStopFallback = null; }
+    if (!session.sharedView && remoteExecConnectionToTab.get(String(session.connectionId)) === session.id) {
+        remoteExecConnectionToTab.delete(String(session.connectionId));
+        sessionStorage.removeItem(`zephyr_ssh_params_${session.id}`);
+    }
+    // A later checkbox selection must never replay this closed batch transcript.
+    if (activeRemoteTab === session.id) activeRemoteTab = [...remoteExecSessions.keys()].at(-1) || null;
+    if (remoteZoomedTabId === session.id) remoteZoomedTabId = null;
+    syncRemoteServerSelection();
+    if (render) renderRemoteWorkspace({ animateAvoidance: false });
+    return true;
+}
+function createRemoteExecWindowElement(session) {
+    const article = document.createElement('article');
+    article.className = 'terminal-window remote-exec-window';
+    article.dataset.window = session.id;
+    article.dataset.remoteTab = session.id;
+    const titlebar = document.createElement('div');
+    titlebar.className = 'terminal-window-titlebar remote-window-titlebar';
+    const title = document.createElement('span');
+    title.className = 'terminal-window-title';
+    title.dataset.remoteTitle = '';
+    titlebar.appendChild(title);
+    const status = document.createElement('span');
+    status.className = 'remote-lite-badge';
+    status.dataset.remoteStatus = '';
+    titlebar.appendChild(status);
+    const quick = document.createElement('div');
+    quick.className = 'remote-tb-quick';
+    for (const [action, label] of [['ctrl-c', 'Ctrl+C'], ['clear', '清屏'], ['reconnect', '重连'], ['promote', '进入终端页'], ['close', '关闭']]) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'tool-btn remote-tb-chip';
+        button.dataset.remoteAction = action;
+        button.textContent = t(label);
+        button.title = t(label);
+        button.setAttribute('aria-label', t(label));
+        quick.appendChild(button);
+    }
+    titlebar.appendChild(quick);
+    const body = document.createElement('div');
+    body.className = 'terminal-window-body';
+    const frame = document.createElement('iframe');
+    frame.className = 'terminal-frame';
+    frame.dataset.frame = session.id;
+    frame.title = remoteExecLabel(session);
+    frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
+    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-batchexec6`;
+    frame.addEventListener('load', () => initializeRemoteExecFrame(session));
+    session.frame = frame;
+    session.element = article;
+    body.appendChild(frame);
+    article.append(titlebar, body);
+    return article;
+}
+function renderRemoteWorkspace({ animateAvoidance = true } = {}) {
+    const workspace = document.getElementById('remoteWorkspace');
+    if (!workspace) return;
+    bindRemoteWorkspaceEvents();
+    if (!remoteExecSessions.has(activeRemoteTab)) activeRemoteTab = remoteExecSessions.keys().next().value || null;
+    if (!remoteExecSessions.has(remoteZoomedTabId)) remoteZoomedTabId = null;
+    const count = remoteExecSessions.size;
+    const layout = count > 4 ? 'many' : String(count);
+    for (const cls of [...workspace.classList]) {
+        if (/^(remote-)?layout-/.test(cls)) workspace.classList.remove(cls);
+    }
+    workspace.classList.add('remote-workspace', 'terminal-workspace-grid', `layout-${layout}`, `remote-layout-${layout}`);
+    workspace.classList.toggle('remote-zoomed', Boolean(remoteZoomedTabId));
+    workspace.classList.toggle('broadcast-input-active', remoteBroadcastInputActive);
+    const entering = [];
+    for (const session of remoteExecSessions.values()) {
+        if (!session.element?.isConnected) {
+            workspace.appendChild(createRemoteExecWindowElement(session));
+            entering.push(session.element);
+        }
+        const win = session.element;
+        win.classList.toggle('active', session.id === activeRemoteTab);
+        win.classList.toggle('background', session.id !== activeRemoteTab);
+        win.classList.toggle('is-zoomed', session.id === remoteZoomedTabId);
+        win.classList.toggle('is-zoom-hidden', Boolean(remoteZoomedTabId && session.id !== remoteZoomedTabId));
+        win.querySelector('[data-remote-title]').textContent = remoteExecLabel(session);
+        const badge = win.querySelector('[data-remote-status]');
+        badge.textContent = session.status || 'connecting';
+        badge.classList.toggle('is-connected', session.status === 'connected');
+        badge.classList.toggle('is-running', session.status === 'running');
+        session.frame.classList.toggle('active', session.id === activeRemoteTab);
+    }
+    workspace.querySelectorAll('[data-remote-placeholder]').forEach((node) => node.remove());
+    if (!count) {
+        const empty = document.createElement('div');
+        empty.className = 'terminal-placeholder active';
+        empty.dataset.remotePlaceholder = '';
+        const card = document.createElement('div');
+        card.className = 'terminal-empty-minimal terminal-empty-card remote-empty-card';
+        const text = document.createElement('span');
+        text.className = 'terminal-empty-text';
+        text.textContent = t('在左侧勾选服务器，即可开启多窗口实时终端并查看实时执行');
+        card.appendChild(text);
+        empty.appendChild(card);
+        workspace.appendChild(empty);
+    }
+    const tabs = document.getElementById('remoteStageTabs');
+    if (tabs) {
+        const focusedId = tabs.contains(document.activeElement) ? document.activeElement?.dataset?.remoteTab : null;
+        const fragment = document.createDocumentFragment();
+        for (const session of remoteExecSessions.values()) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `remote-stage-tab${session.id === activeRemoteTab ? ' active' : ''}`;
+            button.dataset.remoteTab = session.id;
+            button.setAttribute('role', 'tab');
+            button.setAttribute('aria-selected', String(session.id === activeRemoteTab));
+            button.tabIndex = session.id === activeRemoteTab ? 0 : -1;
+            button.textContent = remoteExecLabel(session);
+            button.title = `${remoteExecLabel(session)} · ${session.status}`;
+            fragment.appendChild(button);
+        }
+        tabs.replaceChildren(fragment);
+        if (focusedId) [...tabs.children].find((node) => node.dataset.remoteTab === focusedId)?.focus();
+    }
+    syncRemoteServerSelection();
+    const broadcast = document.getElementById('remoteBroadcastToggleBtn');
+    broadcast?.setAttribute('aria-pressed', String(remoteBroadcastInputActive));
+    broadcast?.classList.toggle('active', remoteBroadcastInputActive);
+    document.getElementById('remoteExitZoomBtn')?.classList.toggle('force-hidden', !remoteZoomedTabId);
+    document.getElementById('remotePromoteActiveBtn')?.classList.toggle('force-hidden', !activeRemoteTab);
+    for (const id of ['remoteBatchCtrlCBtn', 'remoteBatchClearBtn', 'remoteBatchReconnectBtn', 'remoteExecSubmitBtn', 'remotePromoteActiveBtn', 'remoteClearSelectionBtn']) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = !count;
+    }
+    if (entering.length && animateAvoidance) {
+        const Motion = window.Motion || sshKeyMotion?.engine;
+        if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+            try {
+                const result = Motion?.playStaggerEntrance
+                    ? Motion.playStaggerEntrance(entering)
+                    : Motion?.stagger?.(entering, { opacity: [0, 1], y: [8, 0] }, { preset: 'mac', step: 0.03 });
+                Promise.resolve(result).catch(() => {});
+            } catch (_) {}
+        }
+    }
+    stabilizeRemoteWorkspaceFrames('render-remote-workspace', { focus: false });
+}
+function activateRemoteExecWindow(tabId, { focusTerminal = true } = {}) {
+    const session = remoteExecSessions.get(String(tabId));
+    if (!session) return false;
+    if (activeRemoteTab !== session.id) {
+        activeRemoteTab = session.id;
+        if (remoteZoomedTabId) remoteZoomedTabId = session.id;
+        renderRemoteWorkspace({ animateAvoidance: false });
+    }
+    if (focusTerminal) postRemoteExecMessage(session, { type: 'focus-terminal' });
+    return true;
+}
+async function morphRemoteExecWorkspace(tabId, mutate) {
+    const win = remoteExecSessions.get(String(tabId))?.element;
+    let applied = false;
+    const apply = () => { if (!applied) { applied = true; mutate(); } };
+    try {
+        const Motion = window.Motion || sshKeyMotion?.engine;
+        if (win && Motion?.terminalWindowFullscreenMorph && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+            await Motion.terminalWindowFullscreenMorph(win, apply, { preset: 'mac' });
+        }
+    } catch (_) {}
+    apply();
+    stabilizeRemoteWorkspaceFrames('remote-zoom-morph', { focus: false });
+}
+function zoomRemoteExecWindow(tabId) {
+    if (!remoteExecSessions.has(String(tabId))) return;
+    activateRemoteExecWindow(tabId, { focusTerminal: false });
+    if (remoteZoomedTabId === String(tabId)) return;
+    return morphRemoteExecWorkspace(tabId, () => {
+        if (!remoteExecSessions.has(String(tabId))) return;
+        activeRemoteTab = String(tabId);
+        remoteZoomedTabId = String(tabId);
+        renderRemoteWorkspace({ animateAvoidance: false });
+    });
+}
+function exitRemoteExecZoom() {
+    if (!remoteZoomedTabId) return;
+    return morphRemoteExecWorkspace(remoteZoomedTabId, () => {
+        remoteZoomedTabId = null;
+        renderRemoteWorkspace({ animateAvoidance: false });
+    });
+}
+function stabilizeRemoteWorkspaceFrames(reason = 'remote-layout', { focus = false } = {}) {
+    window.clearTimeout(stabilizeRemoteWorkspaceFrames._timer);
+    stabilizeRemoteWorkspaceFrames._timer = window.setTimeout(() => {
+        for (const session of remoteExecSessions.values()) {
+            postRemoteExecMessage(session, { type: 'zephyr-pane-slot', broadcastActive: remoteBroadcastInputActive });
+            if (remoteZoomedTabId && remoteZoomedTabId !== session.id) continue;
+            postRemoteExecMessage(session, { type: 'layout-stabilize', reason, focus: focus && session.id === activeRemoteTab });
+        }
+    }, 32);
+}
+
+// Alias the actual connection entry point. Promotion uses a stored-param handoff
+// instead of /open, which would unnecessarily make a new SSH probe/connection.
+async function openTerminalConnection(connectionId, options = {}) {
+    if (!options.remoteExecHandoff) return openConnection(connectionId, options);
+    const tabId = String(options.tabId || options.sessionId);
+    const remote = options.remoteExecHandoff;
+    let tab = terminalTabs.find((item) => item.id === tabId);
+    const params = { ...remote.params, remoteExecOwner: true, tabId, sessionId: options.sessionId || tabId, embedded: !isCompactTerminalWorkspace(), timestamp: Date.now() };
+    sessionStorage.setItem(`zephyr_ssh_params_${tabId}`, JSON.stringify(params));
+    if (!tab) {
+        tab = { id: tabId, remoteExecOwner: true, sessionId: params.sessionId, connectionId, name: remote.name, protocol: 'SSH', status: remote.status, page: 'terminal', iframe: true, createdAt: remote.createdAt, lastUsedAt: Date.now(), minimized: false };
+        terminalTabs.push(tab);
+    }
+    tab.minimized = false;
+    if (!openOrderStack.includes(tabId)) openOrderStack.push(tabId);
+    activeTerminalTab = tabId;
+    touchTerminalSession(tabId);
+    enforceTerminalWorkspaceLimit(tabId);
+    renderTerminalTabs({ rebuildWorkspace: true });
+    return tabId;
+}
+async function promoteRemoteWindowToFullTerminal(tabId = activeRemoteTab) {
+    tabId = String(tabId || '');
+    const session = remoteExecSessions.get(String(tabId));
+    if (!session) return false;
+    if (session.sharedView) return false;
+    if (session.promoting) return false;
+    session.promoting = true;
+    session.sharedView = true;
+    // Keep the remote document mounted and subscribed. The server attaches the
+    // full view to the same PTY and replays its canonical framebuffer; no /open,
+    // second shell, destructive disconnect, or iframe reparenting is involved.
+    try {
+        await openTerminalConnection(session.connectionId, { sessionId: tabId, tabId, remoteExecHandoff: session, skipViewSwitch: true });
+        switchView('terminal');
+        scheduleTerminalLayoutStabilize('remote-promote', { focus: true, tabId });
+        scheduleWorkspaceSave('promote-remote-exec', { immediate: true });
+        return true;
+    } catch (error) {
+        toast(error.message);
+        return false;
+    } finally {
+        session.promoting = false;
+    }
+}
+
+// One control/resize owner per shared PTY, selected by the visible workspace,
+// not by whichever iframe last received focus. Both views may receive output.
+window.__zephyrRemoteExecViewPolicy = function remoteExecViewPolicy(tabId, frameWindow) {
+    const remote = remoteExecSessions.get(String(tabId));
+    const full = terminalTabs.find((tab) => tab.id === String(tabId));
+    const shared = !!(remote?.sharedView || full?.remoteExecOwner);
+    if (!shared) return { shared: false, canControl: true };
+    const inRemote = remote?.frame?.contentWindow === frameWindow;
+    const inFull = [...document.querySelectorAll('#terminalWorkspace iframe.terminal-frame')]
+        .some((frame) => frame.dataset.frame === String(tabId) && frame.contentWindow === frameWindow);
+    return {
+        shared: true,
+        canControl: (currentAppView === 'remote' && inRemote)
+            || (currentAppView === 'terminal' && inFull && !!full && !closingTerminalTabs.has(String(tabId))),
+    };
+};
+
+function queueRemoteExecMessage(session, message) {
+    if (!session) return false;
+    if (!session.loaded) { session.pending.push(message); return true; }
+    return postRemoteExecMessage(session, message);
+}
+function dispatchRemoteExecCommand(session, command, appendEnter = true) {
+    const raw = String(command);
+    let payload = appendEnter && !/[\r\n]$/.test(raw) ? `${raw}\r` : raw;
+    payload = payload.replace(/\r\n/g, '\r').replace(/\n/g, '\r');
+    // The iframe broadcasts every sendData source except broadcast-peer. Match
+    // app-dispatched payloads so batch commands are not re-broadcast N times.
+    session.suppressedBroadcasts.push({ payload, raw });
+    if (session.suppressedBroadcasts.length > 500) session.suppressedBroadcasts.shift();
+    return queueRemoteExecMessage(session, { type: 'remote-exec-command', command: raw, appendEnter });
+}
+function runRemoteExecAction(action, tabId = null) {
+    if (action === 'promote') return promoteRemoteWindowToFullTerminal(tabId || activeRemoteTab);
+    if (action === 'close') return closeRemoteExecWindow(tabId || activeRemoteTab);
+    const targets = tabId ? [remoteExecSessions.get(String(tabId))].filter(Boolean) : [...remoteExecSessions.values()];
+    for (const session of targets) {
+        if (action === 'ctrl-c') dispatchRemoteExecCommand(session, '\u0003', false);
+        // Ctrl+L travels through the existing queued command path and does not
+        // erase scrollback by remounting an iframe or invoking a second shell.
+        if (action === 'clear') dispatchRemoteExecCommand(session, '\u000c', false);
+        if (action === 'reconnect') {
+            session.status = 'connecting';
+            queueRemoteExecMessage(session, { type: 'reconnect-terminal' });
+        }
+    }
+    if (action === 'reconnect') renderRemoteWorkspace({ animateAvoidance: false });
+}
+async function remoteExecute(e) {
+    e?.preventDefault?.();
+    if (!document.getElementById('remoteWorkspace')) return legacyRemoteExecute(e);
+    const command = document.getElementById('remoteCommand')?.value || '';
+    if (!command.trim()) { toast(t('请输入命令')); return; }
+    const targets = [...remoteExecSessions.values()];
+    if (!targets.length) { toast(t('请先选择服务器')); return; }
+    const Motion = window.Motion || sshKeyMotion?.engine;
+    const button = document.getElementById('remoteExecSubmitBtn');
+    try {
+        if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+            const pressed = Motion?.buttonPress ? Motion.buttonPress(button) : Motion?.press?.(button);
+            Promise.resolve(pressed).catch(() => {});
+        }
+    } catch (_) {}
+    const timeoutEnabled = !!document.getElementById('remoteTimeoutEnabled')?.checked;
+    const timeoutSeconds = Math.max(1, Math.min(300, Number(document.getElementById('remoteTimeout')?.value) || 30));
+    for (const session of targets) {
+        if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
+        if (session.timeoutStopFallback) clearTimeout(session.timeoutStopFallback);
+        session.timeoutTimer = null;
+        session.timeoutStopFallback = null;
+        session.pendingTimeoutSeconds = timeoutEnabled ? timeoutSeconds : null;
+        dispatchRemoteExecCommand(session, command);
+    }
+    toast(t('已发送到 {count} 个终端', { count: targets.length }));
+}
+function bindRemoteWorkspaceEvents() {
+    if (remoteWorkspaceBound || !document.getElementById('remoteWorkspace')) return;
+    remoteWorkspaceBound = true;
+    document.getElementById('remoteServerList')?.addEventListener('change', (event) => {
+        const input = event.target.closest?.('input[type="checkbox"]');
+        if (!input) return;
+        if (input.checked) openRemoteExecWindow(input.value);
+        else closeRemoteExecWindow(remoteExecConnectionToTab.get(String(input.value)));
+        syncRemoteServerSelection();
+    });
+    document.getElementById('remoteSelectAllBtn')?.addEventListener('click', () => {
+        connections.filter((c) => String(c.protocol).toUpperCase() === 'SSH').forEach((c) => openRemoteExecWindow(c.id, { render: false }));
+        renderRemoteWorkspace();
+    });
+    document.getElementById('remoteClearSelectionBtn')?.addEventListener('click', () => {
+        [...remoteExecSessions.keys()].forEach((id) => closeRemoteExecWindow(id, { render: false }));
+        renderRemoteWorkspace({ animateAvoidance: false });
+    });
+    const timeoutEnabled = document.getElementById('remoteTimeoutEnabled');
+    const timeoutInput = document.getElementById('remoteTimeout');
+    timeoutEnabled?.addEventListener('change', () => { if (timeoutInput) timeoutInput.disabled = !timeoutEnabled.checked; });
+    for (const [id, action] of [['remoteBatchCtrlCBtn', 'ctrl-c'], ['remoteBatchClearBtn', 'clear'], ['remoteBatchReconnectBtn', 'reconnect']]) {
+        document.getElementById(id)?.addEventListener('click', () => runRemoteExecAction(action));
+    }
+    document.getElementById('remoteBroadcastToggleBtn')?.addEventListener('click', () => {
+        remoteBroadcastInputActive = !remoteBroadcastInputActive;
+        renderRemoteWorkspace({ animateAvoidance: false });
+        // Apply immediately before another iframe keystroke can be emitted.
+        remoteExecSessions.forEach((session) => postRemoteExecMessage(session, { type: 'zephyr-pane-slot', broadcastActive: remoteBroadcastInputActive }));
+    });
+    document.getElementById('remoteExitZoomBtn')?.addEventListener('click', exitRemoteExecZoom);
+    document.getElementById('remotePromoteActiveBtn')?.addEventListener('click', () => promoteRemoteWindowToFullTerminal(activeRemoteTab));
+    const workspace = document.getElementById('remoteWorkspace');
+    workspace.addEventListener('click', (event) => {
+        const win = event.target.closest?.('[data-remote-tab]');
+        if (!win || !workspace.contains(win)) return;
+        const button = event.target.closest?.('[data-remote-action]');
+        if (button) { event.preventDefault(); runRemoteExecAction(button.dataset.remoteAction, win.dataset.remoteTab); return; }
+        activateRemoteExecWindow(win.dataset.remoteTab);
+    });
+    workspace.addEventListener('dblclick', (event) => {
+        if (event.target.closest?.('button')) return;
+        const win = event.target.closest?.('[data-remote-tab]');
+        if (win && workspace.contains(win)) zoomRemoteExecWindow(win.dataset.remoteTab);
+    });
+    const tabs = document.getElementById('remoteStageTabs');
+    tabs?.addEventListener('click', (event) => {
+        const button = event.target.closest?.('[data-remote-tab]');
+        if (button) activateRemoteExecWindow(button.dataset.remoteTab);
+    });
+    tabs?.addEventListener('dblclick', (event) => {
+        const button = event.target.closest?.('[data-remote-tab]');
+        if (button) zoomRemoteExecWindow(button.dataset.remoteTab);
+    });
+    tabs?.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        const ids = [...remoteExecSessions.keys()];
+        if (!ids.length) return;
+        event.preventDefault();
+        const index = ids.indexOf(activeRemoteTab);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? ids.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + ids.length) % ids.length;
+        activateRemoteExecWindow(ids[next], { focusTerminal: false });
+        [...tabs.children].find((node) => node.dataset.remoteTab === ids[next])?.focus();
+    });
+    document.addEventListener('keydown', (event) => {
+        if (currentAppView !== 'remote' && !document.getElementById('view-remote')?.classList.contains('active')) return;
+        if (event.key === 'Escape' && remoteZoomedTabId) { event.preventDefault(); exitRemoteExecZoom(); }
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) { event.preventDefault(); remoteExecute(event); }
+    });
+    // Validate the actual browsing context, not the untrusted tabId in a message.
+    // Capture also prevents batch injections from reaching generic broadcast code.
+    window.addEventListener('message', (event) => {
+        const data = event.data;
+        if (!data || data.source !== 'zephyr-terminal') return;
+        if (event.origin && event.origin !== location.origin) return;
+        const frame = [...workspace.querySelectorAll('iframe.terminal-frame')].find((item) => item.contentWindow === event.source);
+        if (!frame) return;
+        const session = remoteExecSessions.get(frame.dataset.frame);
+        if (!session) { event.stopImmediatePropagation(); return; }
+        if (data.tabId && String(data.tabId) !== session.id) { event.stopImmediatePropagation(); return; }
+        if (data.type === 'zephyr-broadcast-input') {
+            const payload = String(data.data || '');
+            const suppressed = session.suppressedBroadcasts.findIndex((item) => item.payload === payload);
+            if (!remoteBroadcastInputActive || suppressed >= 0) {
+                if (suppressed >= 0) session.suppressedBroadcasts.splice(suppressed, 1);
+                event.stopImmediatePropagation();
+            }
+            return;
+        }
+        if (data.type === 'remote-lite-click') activateRemoteExecWindow(session.id, { focusTerminal: false });
+        else if (data.type === 'remote-lite-dblclick') zoomRemoteExecWindow(session.id);
+        else if (data.type === 'zephyr-pane-activate') activateRemoteExecWindow(session.id, { focusTerminal: false });
+        else if (data.type === 'zephyr-pane-slot-query') {
+            postRemoteExecMessage(session, { type: 'zephyr-pane-slot', broadcastActive: remoteBroadcastInputActive });
+        } else if (data.type === 'remote-exec-timeout-stopped') {
+            if (session.timeoutStopFallback) clearTimeout(session.timeoutStopFallback);
+            session.timeoutStopFallback = null;
+            const name = remoteExecLabel(session);
+            closeRemoteExecWindow(session.id);
+            toast(t('批量执行已超时并关闭：{name}', { name }));
+        } else if (data.type === 'remote-exec-sent') {
+            session.lastSentAt = Date.now();
+            if (session.pendingTimeoutSeconds) {
+                const seconds = session.pendingTimeoutSeconds;
+                session.pendingTimeoutSeconds = null;
+                if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
+                session.timeoutTimer = setTimeout(() => {
+                    if (remoteExecSessions.get(session.id) !== session) return;
+                    postRemoteExecMessage(session, { type: 'remote-exec-timeout' });
+                    const name = remoteExecLabel(session);
+                    session.timeoutStopFallback = setTimeout(() => {
+                        if (remoteExecSessions.get(session.id) !== session) return;
+                        closeRemoteExecWindow(session.id);
+                        toast(t('批量执行已超时并关闭：{name}', { name }));
+                    }, 2000);
+                }, seconds * 1000);
+            }
+            const index = session.suppressedBroadcasts.findIndex((item) => item.raw === String(data.command));
+            if (index >= 0) session.suppressedBroadcasts.splice(index, 1);
+        } else if (typeof data.status === 'string') {
+            session.status = data.status;
+            renderRemoteWorkspace({ animateAvoidance: false });
+        }
+    }, true);
+    window.addEventListener('resize', () => stabilizeRemoteWorkspaceFrames('remote-resize', { focus: false }));
+    if (typeof ResizeObserver !== 'undefined') {
+        remoteWorkspaceResizeObserver = new ResizeObserver(() => stabilizeRemoteWorkspaceFrames('remote-workspace-resize', { focus: false }));
+        remoteWorkspaceResizeObserver.observe(workspace);
+    }
+}
+
+async function legacyRemoteExecute(e) { e.preventDefault(); const ids = $$('#remoteServerList input:checked').map((i) => i.value); try { $('#remoteResults').innerHTML = `<div class="empty-card">${t('执行中...')}</div>`; const data = await api('/api/remote-execute', { method: 'POST', body: JSON.stringify({ connectionIds: ids, command: $('#remoteCommand').value, timeoutSeconds: Number($('#remoteTimeout').value) || 30 }) }); $('#remoteResults').innerHTML = data.results.map((r) => `<article class="result-card ${r.success ? 'ok' : 'fail'}"><h3>${escapeHtml(r.name)} <span>${escapeHtml(r.status)} · ${r.durationMs}ms</span></h3>${r.error ? `<p class="error-text">${escapeHtml(r.error)}</p>` : ''}<pre>${escapeHtml(r.stdout || '')}</pre>${r.stderr ? `<pre class="stderr">${escapeHtml(r.stderr)}</pre>` : ''}</article>`).join(''); await loadConnections(); } catch (err) { toast(err.message); } }
+
 
 async function savePersonalSettings(patch) {
     settingsLoadGeneration += 1;
@@ -18435,6 +19068,23 @@ function bindBroadcastAndDiagnoseMessages() {
         const d = ev.data;
         if (!d || d.source !== 'zephyr-terminal') return;
         if (d.type === 'zephyr-broadcast-input' && d.data) {
+            const rws = document.getElementById('remoteWorkspace');
+            const senderInRemote = Boolean(rws && Array.from(rws.querySelectorAll('iframe.terminal-frame')).some((f) => f.contentWindow === ev.source));
+            if (senderInRemote) {
+                if (!rws.classList.contains('broadcast-input-active')) return;
+                rws.querySelectorAll('iframe.terminal-frame').forEach((frame) => {
+                    if (frame.contentWindow && frame.contentWindow !== ev.source) {
+                        try {
+                            frame.contentWindow.postMessage({
+                                source: 'zephyr-app',
+                                type: 'zephyr-broadcast-input-forward',
+                                data: d.data,
+                            }, '*');
+                        } catch {}
+                    }
+                });
+                return;
+            }
             const ws = document.getElementById('terminalWorkspace');
             if (!ws || !ws.classList.contains('broadcast-input-active')) return;
             ws.querySelectorAll('iframe.terminal-frame').forEach((frame) => {

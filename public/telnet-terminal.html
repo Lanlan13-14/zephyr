@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title data-i18n="Zephyr - Telnet 终端">Zephyr - Telnet 终端</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
-    <link rel="modulepreload" href="telnet-terminal.js?v=20261028-ui132">
-    <link rel="modulepreload" href="theme-runtime.js?v=20261028-ui132">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20261028-ui132">
+    <link rel="modulepreload" href="telnet-terminal.js?v=20261101-batchexec6">
+    <link rel="modulepreload" href="theme-runtime.js?v=20261101-batchexec6">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20261101-batchexec6">
     <link rel="stylesheet" href="/vendor/wterm-fork/terminal.css?v=20260801-terminal-grid-converge1">
     <link rel="stylesheet" href="native-ui.css?v=20261026-native1">
-    <link rel="stylesheet" href="style.css?v=20261028-ui132">
-    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261028-ui132">
+    <link rel="stylesheet" href="style.css?v=20261101-batchexec6">
+    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261101-batchexec6">
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
     <script type="importmap">
         {
@@ -29,6 +29,9 @@
     if (isDesktop) {
       document.documentElement.dataset.zephyrSurface = 'desktop';
       document.documentElement.classList.remove('mobile-stable-input');
+    }
+    if (sp.get('lite') === '1') {
+      document.documentElement.dataset.liteTerminal = '1';
     }
     var th = sp.get('theme') || (window.parent !== window && window.parent.document && window.parent.document.documentElement.dataset.theme);
     if (th === 'light' || th === 'dark') { document.documentElement.dataset.theme = th; }
@@ -184,6 +187,6 @@
             </div>
         </div>
     </div>
-    <script src="telnet-terminal.js?v=20261028-ui132" type="module"></script>
+    <script src="telnet-terminal.js?v=20261101-batchexec6" type="module"></script>
 </body>
 </html>

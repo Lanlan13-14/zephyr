@@ -679,6 +679,14 @@ function getParams() {
 }
 
 const params = getParams();
+function getRemoteExecViewPolicy() {
+    try {
+        if (window.parent !== window && typeof window.parent.__zephyrRemoteExecViewPolicy === 'function') {
+            return window.parent.__zephyrRemoteExecViewPolicy(params?.tabId, window);
+        }
+    } catch (_) {}
+    return { shared: !!params?.remoteExecOwner, canControl: !params?.remoteExecOwner };
+}
 let sessionPersistenceEnabled = localStorage.getItem('zephyr.sessionPersistence.disabled') !== '1';
 let terminalHistorySessionId = String(params?.tabId || params?.sessionId || params?.connectionId || '');
 let terminalRemoteHistory = null;
@@ -1451,6 +1459,7 @@ let terminalKeyboardSettlingTimer = 0;
 const TERMINAL_STABLE_LAYOUT_DELAYS = [0, 60, 160, 360, 720];
 const TERMINAL_OVERSIZED_ROWS_RATIO = 1.18;
 let terminalAutoFollowEnabled = true;
+let remoteLiteFollowPaused = false;
 let terminalUserScrolledAway = false;
 let terminalLastUserScrollAt = 0;
 let terminalLastWheelAt = 0;
@@ -2898,6 +2907,7 @@ function requestStableTerminalLayout(reason = 'stable-layout', { includeResize =
 }
 
 function sendTerminalResize(cols, rows, { reason = 'direct', force = false } = {}) {
+    if (!getRemoteExecViewPolicy().canControl) return false;
     const allowDespiteKb = force
         || /force|orientation|font-size|xterm-fit|fit-raf|fit-settle|fit-late|kb-/.test(String(reason || ''));
     if (sshKb && !sshKb.allowResize?.(reason) && !allowDespiteKb) {
@@ -9179,10 +9189,14 @@ function setTerminalAutoFollow(enabled, reason = 'unknown') {
 function updateTerminalAutoFollowFromScroll(reason = 'scroll') {
     const el = getTerminalScrollElement();
     if (!el) return true;
+    const remoteLite = document.documentElement.dataset.liteTerminal === '1';
     const threshold = isMobileStableKeyboardActive()
         ? getMobileStableFollowThreshold()
         : TERMINAL_XTERM_SCROLL_LOCK_THRESHOLD;
     const atBottom = isTerminalAtBottom(el, threshold);
+    if (remoteLite && (reason === 'native-wheel' || reason === 'wheel' || reason === 'scrollbar-drag')) {
+        remoteLiteFollowPaused = !atBottom;
+    }
     if (atBottom) {
         mobileStableLastBottomIntent = true;
         setTerminalAutoFollow(true, reason);
@@ -9196,12 +9210,9 @@ function updateTerminalAutoFollowFromScroll(reason = 'scroll') {
         lockMobileTerminalAutoFollow(reason, 3200);
     }
     else if (isMobileStableInputMode()) {
-        // Android/WebView emits scroll events during keyboard animation, WTerm render,
-        // and our own visibility repairs. Treat mobile stable scroll-away as history
-        // only when a real touch/wheel/scrollbar gesture marked terminalUserScrollGestureUntil.
         scheduleTerminalScrollbarUpdate();
     }
-    else if (!isProgrammaticTerminalScroll) {
+    else if (!isProgrammaticTerminalScroll || reason === 'native-wheel') {
         cancelTerminalBottomFollow(`${reason}:user-scroll`);
         cancelMobileStableScrollRestore(`${reason}:user-scroll`);
         terminalLastUserScrollAt = Date.now();
@@ -10797,7 +10808,11 @@ function setupTerminalScrollHooks({ followOnConnect = true } = {}) {
         const fromWtermEl = !!(e.target && term?.element && (term.element === e.target || term.element.contains?.(e.target)));
         if (fromWtermEl && term?.element?.classList?.contains('xterm-viewport')
             && typeof term.bridge?.scrollLines === 'function') {
-            // wterm owns this path — do not double-scroll (double mark dirty → jank).
+            // Native xterm scrolling changes ydisp, not wrapper.scrollTop, so
+            // the wrapper's scroll listener cannot pause output follow. Sample
+            // after WTerm's wheel handler, before any pending output-follow rAF.
+            terminalUserScrollGestureUntil = Date.now() + 1400;
+            queueMicrotask(() => updateTerminalAutoFollowFromScroll('native-wheel'));
             terminalLastWheelAt = Date.now();
             return;
         }
@@ -12098,6 +12113,59 @@ function isMobileStablePlainEchoData(data = '') {
     return !/[\r\n\x00-\x1f\x7f\x1b]/.test(text);
 }
 
+// Each iframe owns its output-follow scheduling. Native xterm may retain an
+// older ydisp after a resize/attach; follow intent must not depend on focus or
+// the parent's selected pane. Use the existing viewport adapter, never DOM maxScroll.
+let terminalOutputFollowRaf = 0;
+let terminalOutputFollowPending = false;
+let terminalOutputFollowSubscription = null;
+function ensureTerminalOutputFollowSubscription(outputTerm) {
+    if (!outputTerm || typeof outputTerm.onRenderComplete !== 'function'
+        || outputTerm._zephyrOutputFollowSubscription) return;
+    outputTerm._zephyrOutputFollowSubscription = outputTerm.onRenderComplete(() => {
+        if (!terminalOutputFollowPending || term !== outputTerm) return;
+        terminalOutputFollowPending = false;
+        if (!terminalAutoFollowEnabled || isMobileTerminalAutoFollowLocked() || isTerminalUserReadingHistory()
+            || mobileTerminalSelectionMode || hasLiveTerminalSelection()) return;
+        // xterm commits scrollback/baseY during write but paints its visible
+        // viewport on render. Scroll only after that render, then let WTerm's
+        // scheduled render paint the new ydisp. This keeps every iframe's own
+        // latest cursor visible, independent of which pane is selected.
+        const bridge = outputTerm.bridge;
+        if (bridge && typeof bridge.scrollToBottom === 'function') {
+            bridge.scrollToBottom();
+            outputTerm._scheduleRender?.();
+        } else {
+            getWTermScrollTarget()?.scrollToBottom();
+        }
+        scheduleTerminalScrollbarUpdate();
+    });
+}
+function requestTerminalOutputFollow() {
+    if (document.documentElement.dataset.liteTerminal === '1' && remoteLiteFollowPaused) return;
+    terminalOutputFollowPending = true;
+    ensureTerminalOutputFollowSubscription(term);
+    if (terminalOutputFollowRaf) return;
+    const outputTerm = term;
+    terminalOutputFollowRaf = requestAnimationFrame(() => {
+        terminalOutputFollowRaf = 0;
+        // A wheel/selection gesture or reconnect can happen between write and paint.
+        if (term !== outputTerm || (document.documentElement.dataset.liteTerminal === '1' && remoteLiteFollowPaused) || !terminalAutoFollowEnabled
+            || isMobileTerminalAutoFollowLocked() || isTerminalUserReadingHistory()
+            || mobileTerminalSelectionMode || hasLiveTerminalSelection()) {
+            terminalOutputFollowPending = false;
+            return;
+        }
+        // Legacy WTerm has no render-complete hook. Its renderer reads scroll
+        // state during write; the existing adapter is the safe fallback.
+        if (typeof outputTerm?.onRenderComplete !== 'function') {
+            terminalOutputFollowPending = false;
+            getWTermScrollTarget()?.scrollToBottom();
+            scheduleTerminalScrollbarUpdate();
+        }
+    });
+}
+
 function writeTerminalData(data = '') {
     if (!term?.write) return;
     if (sftpPro?.onIncomingTerminalChunk(data)) return;
@@ -12113,7 +12181,11 @@ function writeTerminalData(data = '') {
         plainEcho,
     });
     term.write(data);
-    // Surface owns output stick policy (default OFF + chrome-pin when following).
+    if (!historyLocked && !plainEcho && terminalAutoFollowEnabled && !isMobileStableInputMode()) {
+        requestTerminalOutputFollow();
+    }
+    // Surface owns mobile output stick policy; desktop uses the same public
+    // WTerm viewport adapter independently in every iframe, selected or not.
     const surface = ensureTerminalSurface();
     if (surface && isMobileStableInputMode() && !historyLocked && !plainEcho) {
         surface.onOutput('terminal-data');
@@ -12682,6 +12754,7 @@ function logTerminalPasteDiagnostics(source, text = '') {
 }
 
 function sendData(data, { normalizeNewlines = false, source = 'unknown', forceFollow = false, applyModifiers = true } = {}) {
+    if (!getRemoteExecViewPolicy().canControl) return;
     if (wsConnection && wsConnection.readyState === WebSocket.OPEN && isConnected) {
         const fromWTerm = source === 'wterm-onData';
         if (forceFollow) setTerminalAutoFollow(true, `${source}:force-follow`);
@@ -13344,7 +13417,7 @@ function closeWebSocketOnly(reason = t('重建连接'), { sendDisconnect = false
     wsConnection = null;
     if (!ws) return;
     try {
-        if (sendDisconnect && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'disconnect' }));
+        if (sendDisconnect && !getRemoteExecViewPolicy().shared && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'disconnect' }));
     } catch (_) {}
     try {
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close(1000, reason);
@@ -13840,6 +13913,7 @@ function connectWebSocket(connectionToken = activeConnectionToken, { followOnCon
                             }
                         }
                         setStatus('connected', msg.attached ? t('已恢复会话') : t('已连接'));
+                        flushPendingRemoteExecQueue();
                         applyTerminalWorkspaceState();
                         if (!isMobileStableInputMode()) {
                             window.setTimeout(() => repairOversizedWTermRows('ready-oversized-rows', { force: true }), 120);
@@ -14005,7 +14079,7 @@ window.addEventListener('orientationchange', () => {
 });
 disconnectBtn.addEventListener('click', () => {
     disconnect({ userInitiated: true });
-    sessionStorage.removeItem(params?.tabId ? `zephyr_ssh_params_${params.tabId}` : 'zephyr_ssh_params');
+    if (!getRemoteExecViewPolicy().shared) sessionStorage.removeItem(params?.tabId ? `zephyr_ssh_params_${params.tabId}` : 'zephyr_ssh_params');
     if (embeddedMode) {
         notifyParentStatus('closed');
         notifyParentCloseRequest('user-disconnect-button');
@@ -14040,6 +14114,19 @@ function ensureSftpProInitialized() {
     window.__zephyrSftpPro = sftpPro;
     return sftpPro;
 }
+const pendingRemoteExecQueue = [];
+function flushPendingRemoteExecQueue() {
+    if (!pendingRemoteExecQueue.length) return;
+    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN || !isConnected) return;
+    const items = pendingRemoteExecQueue.splice(0, pendingRemoteExecQueue.length);
+    for (const item of items) {
+        sendData(item.payload, { normalizeNewlines: true, source: 'remote-exec-command-queued', forceFollow: true, applyModifiers: false });
+        try {
+            window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'remote-exec-sent', tabId: params?.tabId, command: item.rawText }, '*');
+        } catch {}
+    }
+}
+
 window.addEventListener('message', (ev) => {
     const d = ev.data;
     if (!d) return;
@@ -14049,8 +14136,70 @@ window.addEventListener('message', (ev) => {
         if (d.data) sendData(d.data, { source: 'broadcast-peer', applyModifiers: false });
     } else if (d.source === 'zephyr-app' && d.type === 'zephyr-inject-code') {
         if (d.code) sendData(d.code, { normalizeNewlines: true, source: 'code-card-inject', forceFollow: true });
+    } else if (d.source === 'zephyr-app' && d.type === 'remote-exec-command') {
+        const rawText = String(d.command ?? d.text ?? '');
+        if (!rawText) return;
+        const appendEnter = d.appendEnter !== false;
+        const payload = appendEnter ? (rawText.endsWith('\r') || rawText.endsWith('\n') ? rawText : `${rawText}\r`) : rawText;
+        if (wsConnection && wsConnection.readyState === WebSocket.OPEN && isConnected) {
+            sendData(payload, { normalizeNewlines: true, source: 'remote-exec-command', forceFollow: true, applyModifiers: false });
+            try {
+                window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'remote-exec-sent', tabId: params?.tabId, command: rawText }, '*');
+            } catch {}
+        } else {
+            pendingRemoteExecQueue.push({ payload, rawText });
+        }
+    } else if (d.source === 'zephyr-app' && d.type === 'remote-exec-timeout') {
+        if (!getRemoteExecViewPolicy().shared) {
+            userClosedConnection = true;
+            try {
+                if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+                    wsConnection.send(JSON.stringify({ type: 'disconnect' }));
+                    wsConnection.close(1000, 'remote-exec-timeout');
+                }
+            } catch {}
+        }
+        try { window.parent?.postMessage?.({ source: 'zephyr-terminal', type: 'remote-exec-timeout-stopped', tabId: params?.tabId }, '*'); } catch {}
+    } else if (d.source === 'zephyr-app' && d.type === 'disconnect-terminal') {
+        userClosedConnection = true;
+        try {
+            if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+                if (!getRemoteExecViewPolicy().shared) wsConnection.send(JSON.stringify({ type: 'disconnect' }));
+                wsConnection.close(1000, 'remote-exec-window-closed');
+            }
+        } catch {}
+    } else if (d.source === 'zephyr-app' && d.type === 'set-lite-mode') {
+        if (d.lite) { document.documentElement.dataset.liteTerminal = '1'; remoteLiteFollowPaused = false; }
+        else delete document.documentElement.dataset.liteTerminal;
+        requestStableTerminalLayout('set-lite-mode', { includeResize: true, focus: !!d.focus });
+    } else if (d.source === 'zephyr-app' && d.type === 'remote-exec-clear-screen') {
+        sendData('\u000c', { source: 'remote-exec-clear-screen', applyModifiers: false });
     }
 });
+
+if (window.parent && window.parent !== window) {
+    document.addEventListener('click', (e) => {
+        if (document.documentElement.dataset.liteTerminal !== '1') return;
+        if (e.button && e.button !== 0) return;
+        try {
+            window.parent.postMessage({
+                source: 'zephyr-terminal',
+                type: 'remote-lite-click',
+                tabId: params?.tabId || new URLSearchParams(location.search).get('tabId') || '',
+            }, '*');
+        } catch {}
+    }, true);
+    document.addEventListener('dblclick', () => {
+        if (document.documentElement.dataset.liteTerminal !== '1') return;
+        try {
+            window.parent.postMessage({
+                source: 'zephyr-terminal',
+                type: 'remote-lite-dblclick',
+                tabId: params?.tabId || new URLSearchParams(location.search).get('tabId') || '',
+            }, '*');
+        } catch {}
+    }, true);
+}
 
 ensureSftpProInitialized();
 main();

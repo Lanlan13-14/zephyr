@@ -7,16 +7,16 @@
     <title>Zephyr</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
     <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20260731-motion-mobile-fix2">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20261028-ui132">
-    <link rel="modulepreload" href="app.js?v=20261028-ui132">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20261101-ui133-batchexec6">
+    <link rel="modulepreload" href="app.js?v=20261101-ui133-batchexec6">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
     <link rel="stylesheet" href="native-ui.css?v=20261026-native1">
-    <link rel="stylesheet" href="style.css?v=20261028-ui132">
-    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261028-ui132">
-    <script src="liquid-glass-renderer.js?v=20261028-ui132" defer></script>
-    <script src="liquid-glass-tab-layout.js?v=20261028-ui132" defer></script>
-    <script src="liquid-glass-nav.js?v=20261028-ui132" defer></script>
-    <script src="liquid-glass-slider.js?v=20261028-ui132" defer></script>
+    <link rel="stylesheet" href="style.css?v=20261101-ui133-batchexec6">
+    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261101-ui133-batchexec6">
+    <script src="liquid-glass-renderer.js?v=20261101-ui133-batchexec6" defer></script>
+    <script src="liquid-glass-tab-layout.js?v=20261101-ui133-batchexec6" defer></script>
+    <script src="liquid-glass-nav.js?v=20261101-ui133-batchexec6" defer></script>
+    <script src="liquid-glass-slider.js?v=20261101-ui133-batchexec6" defer></script>
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
     <script src="native-ui.js?v=20261026-native1" defer></script>
     <script src="native-select.js?v=20261026-native1" defer></script>
@@ -29,7 +29,7 @@
                 <button class="nav-tab active" data-view="dashboard" data-i18n="仪表盘">仪表盘</button>
                 <button class="nav-tab" data-view="activity" data-i18n="活动">活动</button>
                 <button class="nav-tab" data-view="terminal" data-i18n="终端">终端</button>
-                <button class="nav-tab" data-view="remote" data-i18n="远程执行">远程执行</button>
+                <button class="nav-tab" data-view="remote" data-i18n="批量执行">批量执行</button>
                 <button class="nav-tab force-hidden" id="notesNavTab" data-view="notes" data-i18n="笔记">笔记</button>
                 <button class="nav-tab nav-tab-ai force-hidden" id="aiNavTab" data-view="ai">AI</button>
                 <button class="nav-tab" data-view="settings" data-i18n="设置">设置</button>
@@ -112,17 +112,68 @@
                 <div class="terminal-workspace terminal-workspace-grid layout-0" id="terminalWorkspace"><div class="terminal-placeholder" data-i18n="暂无会话。点击仪表盘中的“连接”打开 SSH 会话。">暂无会话。点击仪表盘中的“连接”打开 SSH 会话。</div></div>
             </section>
 
-            <section class="view" id="view-remote">
-                <div class="section-head"><div><p class="eyebrow">Remote Execution</p><h1 data-i18n="远程执行">远程执行</h1></div></div>
-                <div class="remote-layout">
-                    <div class="remote-servers" id="remoteServerList"></div>
-                    <form class="remote-command" id="remoteExecForm">
-                        <label data-i18n="命令">命令</label><textarea id="remoteCommand" placeholder="例如：uname -a && uptime" data-i18n-placeholder="例如：uname -a && uptime" required></textarea>
-                        <label data-i18n="超时（秒）">超时（秒）</label><input id="remoteTimeout" type="number" value="30" min="1" max="300">
-                        <button class="btn btn-primary" type="submit" data-i18n="批量执行">批量执行</button>
-                    </form>
+            <section class="view remote-view" id="view-remote" aria-label="批量执行工作台" data-i18n-aria-label="批量执行工作台">
+                <div class="remote-layout remote-desktop-shell">
+                    <aside class="remote-sidebar" aria-label="远程执行控制栏" data-i18n-aria-label="远程执行控制栏">
+                        <div class="remote-servers-panel">
+                            <div class="remote-panel-head">
+                                <div class="remote-panel-title-wrap">
+                                    <strong class="remote-panel-title" data-i18n="目标服务器">目标服务器</strong>
+                                    <span class="remote-selected-badge" id="remoteSelectedCount" data-i18n="已选 0 台">已选 0 台</span>
+                                </div>
+                                <div class="remote-panel-actions">
+                                    <button type="button" class="tool-btn remote-mini-btn" id="remoteSelectAllBtn" data-i18n="全选" title="全选服务器" data-i18n-title="全选服务器" aria-label="全选服务器" data-i18n-aria-label="全选服务器">全选</button>
+                                    <button type="button" class="tool-btn remote-mini-btn" id="remoteClearSelectionBtn" data-i18n="清空" title="清空已选服务器" data-i18n-title="清空已选服务器" aria-label="清空已选服务器" data-i18n-aria-label="清空已选服务器">清空</button>
+                                </div>
+                            </div>
+                            <div class="remote-servers" id="remoteServerList"></div>
+                        </div>
+                        <form class="remote-command" id="remoteExecForm">
+                            <div class="remote-panel-head">
+                                <label for="remoteCommand" data-i18n="命令">命令</label>
+                                <span class="remote-cmd-shortcut-hint" data-i18n="Ctrl/⌘+Enter 发送">Ctrl/⌘+Enter 发送</span>
+                            </div>
+                            <textarea id="remoteCommand" placeholder="例如：uname -a && uptime" data-i18n-placeholder="例如：uname -a && uptime"></textarea>
+                            <div class="remote-command-meta-row">
+                                <label class="remote-timeout-toggle" for="remoteTimeoutEnabled">
+                                    <input id="remoteTimeoutEnabled" type="checkbox">
+                                    <span data-i18n="超时自动关闭">超时自动关闭</span>
+                                </label>
+                                <label for="remoteTimeout" data-i18n="超时（秒）">超时（秒）</label>
+                                <input id="remoteTimeout" type="number" value="30" min="1" max="300" disabled>
+                            </div>
+                            <div class="remote-batch-quick-actions" role="group" aria-label="批量快捷操作" data-i18n-aria-label="批量快捷操作">
+                                <button type="button" class="tool-btn remote-batch-chip" id="remoteBatchCtrlCBtn" title="向所有打开窗口发送 Ctrl+C 中断" data-i18n-title="向所有打开窗口发送 Ctrl+C 中断" aria-label="批量中断 Ctrl+C" data-i18n-aria-label="批量中断 Ctrl+C">Ctrl+C</button>
+                                <button type="button" class="tool-btn remote-batch-chip" id="remoteBatchClearBtn" title="清空所有打开窗口屏幕" data-i18n-title="清空所有打开窗口屏幕" aria-label="批量清屏" data-i18n-aria-label="批量清屏" data-i18n="清屏">清屏</button>
+                                <button type="button" class="tool-btn remote-batch-chip" id="remoteBatchReconnectBtn" title="重连已断开的远程窗口" data-i18n-title="重连已断开的远程窗口" aria-label="批量重连" data-i18n-aria-label="批量重连" data-i18n="重连">重连</button>
+                            </div>
+                            <button class="btn btn-primary" id="remoteExecSubmitBtn" type="submit" data-i18n="批量执行">批量执行</button>
+                        </form>
+                    </aside>
+                    <section class="remote-stage-shell" aria-label="多窗口实时执行工作区" data-i18n-aria-label="多窗口实时执行工作区">
+                        <div class="remote-stage-toolbar" id="remoteStageToolbar">
+                            <div class="remote-stage-tabs" id="remoteStageTabs" role="tablist" aria-label="实时执行窗口列表" data-i18n-aria-label="实时执行窗口列表"></div>
+                            <div class="remote-stage-actions">
+                                <button type="button" class="tool-btn remote-stage-btn" id="remoteBroadcastToggleBtn" title="开启后在任一窗口输入将同步广播至全部已选窗口" data-i18n-title="开启后在任一窗口输入将同步广播至全部已选窗口" aria-label="同步广播输入" data-i18n-aria-label="同步广播输入" aria-pressed="false">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/></svg>
+                                    <span data-i18n="同步输入">同步输入</span>
+                                </button>
+                                <button type="button" class="tool-btn remote-stage-btn force-hidden" id="remoteExitZoomBtn" title="退出单窗放大，返回多窗口网格视图 (Esc)" data-i18n-title="退出单窗放大，返回多窗口网格视图 (Esc)" aria-label="返回多窗口网格" data-i18n-aria-label="返回多窗口网格">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>
+                                    <span data-i18n="返回多窗口">返回多窗口</span>
+                                </button>
+                                <button type="button" class="tool-btn remote-stage-btn force-hidden" id="remotePromoteActiveBtn" title="进入完整终端页" data-i18n-title="进入完整终端页" aria-label="进入完整终端页" data-i18n-aria-label="进入完整终端页">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
+                                    <span data-i18n="进入终端页">进入终端页</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="remote-workspace terminal-workspace-grid layout-0" id="remoteWorkspace">
+                        </div>
+                        <div class="remote-results force-hidden" id="remoteResults"></div>
+
+                    </section>
                 </div>
-                <div class="remote-results" id="remoteResults"></div>
             </section>
 
             <section class="view notes-view" id="view-notes" aria-label="笔记工作区" data-i18n-aria-label="笔记工作区">
@@ -1721,9 +1772,9 @@
     </div>
 
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
-<script src="preview-mock.js?v=20261028-ui132" type="module"></script>
+<script src="preview-mock.js?v=20261101-ui133-batchexec6" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20261028-ui132" type="module"></script>
+<script src="app.js?v=20261101-ui133-batchexec6" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

@@ -7206,7 +7206,6 @@ html[data-global-wallpaper="1"][data-theme="dark"] body.app-body .remote-command
 html body.app-body .result-card,
 html[data-global-wallpaper="1"][data-theme="light"] body.app-body .result-card,
 html[data-global-wallpaper="1"][data-theme="dark"] body.app-body .result-card,
-html body.app-body .remote-layout > *,
 html body.app-body .remote-result-card,
 html body.app-body .notes-shell,
 html body.app-body .notes-sidebar,
@@ -7790,4 +7789,579 @@ html[data-theme="dark"] .terminal-page .wterm-screen,
 }
 html[data-theme="light"] .terminal-page .wterm-screen {
   background: var(--term-bg, #ffffff) !important;
+}
+
+
+/* ==========================================================================
+ * 30. 远程执行工作台 (#view-remote) — 多窗口实时 Lite 终端网格与单窗放大/转正
+ *     遵循 ZEPHYR-UNIFIED-MASTER-PLAN §4.3.3 & §4.2
+ * ========================================================================== */
+
+/* 30.1 Lite 终端极简嵌入模式 (terminal.html?embed=1&lite=1 / telnet-terminal.html?embed=1&lite=1) */
+html[data-lite-terminal="1"] .terminal-topbar,
+html[data-lite-terminal="1"] .terminal-page > .terminal-topbar,
+html[data-lite-terminal="1"] .terminal-top-input,
+html[data-lite-terminal="1"] .terminal-page > .terminal-top-input,
+html[data-lite-terminal="1"] .terminal-bottom-bar,
+html[data-lite-terminal="1"] .file-manager,
+html[data-lite-terminal="1"] .info-panel,
+html[data-lite-terminal="1"] .info-modal,
+html[data-lite-terminal="1"] .docker-panel,
+html[data-lite-terminal="1"] .snippet-panel,
+html[data-lite-terminal="1"] .notes-panel,
+html[data-lite-terminal="1"] .shortcut-panel,
+html[data-lite-terminal="1"] .port-forward-panel,
+html[data-lite-terminal="1"] .z-unified-panel,
+html[data-lite-terminal="1"] .toolbar,
+html[data-lite-terminal="1"] .cmd-row,
+html[data-lite-terminal="1"] .mobile-keybar,
+html[data-lite-terminal="1"] #sftpModal,
+html[data-lite-terminal="1"] #dockerModal,
+html[data-lite-terminal="1"] #processModal,
+html[data-lite-terminal="1"] #snippetsModal {
+  display: none !important;
+}
+
+html[data-lite-terminal="1"] .terminal-page {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+}
+
+html[data-lite-terminal="1"] #terminalContainer {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+html[data-lite-terminal="1"] #terminalContainer > #terminalOverlay,
+html[data-lite-terminal="1"] #terminalContainer > #wtermWrapper {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+html[data-lite-terminal="1"] #terminalContainer > .terminal-scrollbar { display: none !important; }
+
+html[data-lite-terminal="1"] #terminalContainer .wterm-screen,
+html[data-lite-terminal="1"] #terminalContainer .wterm-wrapper {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* 30.2 桌面端远程执行工作台 (#view-remote.remote-view) 双栏 + 多窗舞台布局 */
+@media (min-width: 761px) {
+  body.app-body:not(.terminal-mode) .app-main:has(#view-remote.active) {
+    padding: 18px 24px 20px !important;
+    overflow: hidden !important;
+  }
+
+  body.app-body:not(.terminal-mode) #view-remote.remote-view.active {
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: calc(100vh - 56px - 38px) !important;
+    max-height: calc(100vh - 56px - 38px) !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+  }
+}
+
+.remote-section-head {
+  margin-bottom: 12px !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.remote-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.remote-hint-pill {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--z-glass-subcard-bg);
+  border: 1px solid var(--z-glass-outer-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.remote-layout.remote-desktop-shell {
+  display: grid !important;
+  grid-template-columns: 300px minmax(0, 1fr) !important;
+  gap: 16px !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  align-items: stretch !important;
+}
+
+.remote-sidebar {
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.remote-servers-panel {
+  background: var(--z-glass-card-bg) !important;
+  backdrop-filter: var(--z-glass-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  box-shadow: var(--z-glass-shadow) !important;
+  border-radius: var(--z-radius-window, 24px) !important;
+  padding: 14px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 0;
+  min-height: 160px;
+  max-height: calc(100vh - 200px);
+  overflow: hidden;
+}
+
+.remote-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.remote-panel-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.remote-panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.remote-selected-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--accent, #0A84FF);
+  background: color-mix(in srgb, var(--accent, #0A84FF) 14%, var(--z-glass-subcard-bg, rgba(255, 255, 255, 0.06)));
+  border: 1px solid color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent);
+}
+
+.remote-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.remote-mini-btn {
+  font-size: 11px !important;
+  padding: 3px 9px !important;
+  border-radius: 999px !important;
+}
+
+.remote-cmd-shortcut-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+#remoteServerList.remote-servers {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 2px !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none !important;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#remoteServerList > .server-check {
+  border-radius: 12px !important;
+  padding: 9px 12px !important;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  border: 1px solid var(--z-glass-outer-border);
+  background: var(--z-glass-subcard-bg);
+  transition: border-color 140ms ease, background-color 140ms ease, transform 120ms ease;
+}
+
+#remoteServerList > .server-check.is-checked,
+#remoteServerList > .server-check:has(input:checked) {
+  border-color: var(--accent, #0A84FF) !important;
+  background: color-mix(in srgb, var(--accent, #0A84FF) 12%, var(--z-glass-subcard-bg, rgba(255, 255, 255, 0.06))) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #0A84FF) 28%, transparent) !important;
+}
+
+.remote-command#remoteExecForm {
+  border-radius: var(--z-radius-window, 24px) !important;
+  padding: 16px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  background: var(--z-glass-card-bg) !important;
+  backdrop-filter: var(--z-glass-blur) !important;
+  -webkit-backdrop-filter: var(--z-glass-blur) !important;
+  border: 1px solid var(--z-glass-outer-border) !important;
+  box-shadow: var(--z-glass-shadow) !important;
+}
+
+#remoteCommand {
+  font-family: 'JetBrains Mono', var(--font-mono), monospace !important;
+  min-height: 92px !important;
+  max-height: 150px;
+  resize: vertical;
+  border-radius: 12px !important;
+}
+
+.remote-command-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#remoteTimeout {
+  width: 96px !important;
+  padding: 6px 10px !important;
+  border-radius: 10px !important;
+  text-align: center;
+}
+
+.remote-batch-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.remote-batch-chip {
+  flex: 1 1 auto;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 999px;
+}
+
+#remoteExecSubmitBtn {
+  width: 100% !important;
+  justify-self: stretch !important;
+  border-radius: 12px !important;
+  min-height: 38px;
+}
+
+/* 30.3 右侧多窗口实时执行舞台 (.remote-stage-shell & #remoteWorkspace) */
+.remote-stage-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.remote-stage-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 16px;
+  background: var(--z-glass-card-bg);
+  backdrop-filter: var(--z-glass-blur);
+  -webkit-backdrop-filter: var(--z-glass-blur);
+  border: 1px solid var(--z-glass-outer-border);
+  flex-shrink: 0;
+  min-height: 44px;
+}
+
+.remote-stage-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+  scrollbar-width: none;
+}
+
+.remote-stage-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.remote-stage-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  background: var(--z-glass-subcard-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.remote-stage-tab.active {
+  color: var(--text);
+  border-color: var(--accent, #0A84FF);
+  background: color-mix(in srgb, var(--accent, #0A84FF) 14%, var(--z-glass-subcard-bg));
+}
+
+.remote-stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.remote-stage-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.remote-stage-btn.active {
+  background: color-mix(in srgb, var(--accent, #0A84FF) 18%, transparent) !important;
+  border-color: var(--accent, #0A84FF) !important;
+  color: var(--accent, #0A84FF) !important;
+}
+
+#remoteWorkspace.remote-workspace {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  position: relative !important;
+  display: grid !important;
+  gap: 12px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+#remoteWorkspace.layout-0,
+#remoteWorkspace.remote-layout-0,
+#remoteWorkspace.remote-workspace.layout-0,
+#remoteWorkspace.remote-workspace.remote-layout-0 {
+  place-items: center !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+}
+
+#remoteWorkspace.remote-layout-1,
+#remoteWorkspace.layout-1,
+#remoteWorkspace.remote-workspace.remote-layout-1,
+#remoteWorkspace.remote-workspace.layout-1 {
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+}
+
+#remoteWorkspace.remote-layout-2,
+#remoteWorkspace.layout-2,
+#remoteWorkspace.remote-workspace.remote-layout-2,
+#remoteWorkspace.remote-workspace.layout-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+}
+
+#remoteWorkspace.remote-layout-3,
+#remoteWorkspace.remote-layout-4,
+#remoteWorkspace.layout-3,
+#remoteWorkspace.layout-4,
+#remoteWorkspace.remote-workspace.remote-layout-3,
+#remoteWorkspace.remote-workspace.remote-layout-4,
+#remoteWorkspace.remote-workspace.layout-3,
+#remoteWorkspace.remote-workspace.layout-4 {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  grid-template-rows: repeat(2, minmax(0, 1fr)) !important;
+}
+
+#remoteWorkspace.remote-layout-many,
+#remoteWorkspace.layout-many,
+#remoteWorkspace.remote-workspace.remote-layout-many,
+#remoteWorkspace.remote-workspace.layout-many {
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)) !important;
+  grid-auto-rows: minmax(250px, 1fr) !important;
+  overflow-y: auto !important;
+}
+
+/* 确保 #remoteWorkspace 内的窗口绝不被 #terminalWorkspace 的分屏抽屉重叠规则绝对定位覆盖 */
+#remoteWorkspace > .terminal-window.remote-exec-window,
+#remoteWorkspace.terminal-workspace-grid > .terminal-window.remote-exec-window {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  border-radius: 16px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  grid-column: auto !important;
+  grid-row: auto !important;
+}
+
+/* 单窗放大模式 (#remoteWorkspace.remote-zoomed) */
+#remoteWorkspace.remote-zoomed,
+#remoteWorkspace.remote-workspace.remote-zoomed {
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  overflow: hidden !important;
+}
+
+#remoteWorkspace.remote-zoomed > .terminal-window.remote-exec-window.is-zoomed {
+  grid-column: 1 / -1 !important;
+  grid-row: 1 / -1 !important;
+  width: 100% !important;
+  height: 100% !important;
+  z-index: 5 !important;
+}
+
+#remoteWorkspace.remote-zoomed > .terminal-window.remote-exec-window.is-zoom-hidden {
+  position: absolute !important;
+  inset: 0 !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  z-index: -1 !important;
+}
+
+/* 远程执行窗口标题栏附加快捷胶囊 (.remote-window-titlebar .remote-tb-quick / .remote-lite-badge / .remote-tb-chip) */
+.remote-window-titlebar .remote-tb-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.remote-window-titlebar .remote-lite-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--z-glass-subcard-bg);
+  border: 1px solid var(--z-glass-outer-border);
+  white-space: nowrap;
+}
+
+.remote-window-titlebar .remote-lite-badge.is-running,
+.remote-window-titlebar .remote-lite-badge.is-connected {
+  color: var(--accent, #0A84FF);
+  border-color: color-mix(in srgb, var(--accent, #0A84FF) 32%, transparent);
+  background: color-mix(in srgb, var(--accent, #0A84FF) 12%, var(--z-glass-subcard-bg));
+}
+
+.remote-window-titlebar .remote-tb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--z-glass-subcard-bg);
+  border: 1px solid var(--z-glass-outer-border);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.remote-window-titlebar .remote-tb-chip:hover {
+  color: var(--text);
+  border-color: var(--accent, #0A84FF);
+  background: color-mix(in srgb, var(--accent, #0A84FF) 14%, var(--z-glass-subcard-bg));
+}
+
+
+@media (max-width: 760px) {
+  .remote-layout.remote-desktop-shell {
+    grid-template-columns: 1fr !important;
+  }
+
+  .remote-sidebar {
+    width: 100%;
+  }
+
+  .remote-servers-panel {
+    max-height: 260px;
+  }
+
+  #remoteWorkspace.remote-workspace {
+    min-height: 360px !important;
+  }
+}
+
+/* Optional command timeout controls. */
+.remote-command-meta-row { justify-content: flex-start; gap: 10px; }
+.remote-timeout-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+#remoteTimeout:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Batch panes are a grid, not the full Terminal workspace's inactive drawers.
+   Never retain full-pane height underneath a smaller inactive card. */
+#remoteWorkspace.terminal-workspace-grid > .terminal-window.remote-exec-window > .terminal-window-body {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+#remoteWorkspace.terminal-workspace-grid > .terminal-window.remote-exec-window > .terminal-window-body > iframe.terminal-frame {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
 }
