@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh"><meta charset="utf-8"><title>Remote execution tools DOM harness</title>
+<link rel="stylesheet" href="../../public/style.css">
+<link rel="stylesheet" href="../../public/zephyr-terminal-spec.css">
+<link rel="stylesheet" href="../../public/remote-exec-tools.css">
+<style>
+html,body { margin:0; width:100%; min-width:0; overflow-x:hidden; }
+#view-remote { display:flex; flex-direction:column; width:1100px; max-width:100%; height:720px; padding:0; }
+.remote-stage-shell { flex:1; }
+#toolbar { display:flex; gap:8px; flex:0 0 40px; }
+#remoteWorkspace { background:var(--surface); }
+</style>
+<div id="view-remote">
+ <div class="remote-layout remote-desktop-shell" style="flex:1;min-height:0">
+ <aside class="remote-sidebar">目标服务器</aside>
+ <section class="remote-stage-shell">
+ <div id="toolbar" class="remote-stage-toolbar"><button id="remoteShortcutBtn">快捷键</button><button id="remoteSnippetBtn">代码片段</button></div>
+ <div id="remoteStageContent">
+  <div id="remoteWorkspace" class="remote-workspace terminal-workspace-grid remote-layout-1"><div class="terminal-window remote-exec-window"><div class="terminal-window-body"><iframe class="terminal-frame" src="about:blank" title="identity-test"></iframe></div></div></div>
+ </div></section>
+ <aside id="remoteToolsDock" hidden></aside>
+ </div>
+</div>
+<script type="module">
+import { createRemoteExecTools } from '../../public/remote-exec-tools.js';
+import { Motion } from '../../public/vendor/zephyr-motion/index.js';
+await Motion.init({capacity:256});
+window.Motion = Motion;
+const root = document.querySelector('#view-remote');
+const calls = [];
+const layouts = [];
+let shortcuts;
+let snippets = Array.from({length:60},(_,i)=>({id:String(i),name:`片段 ${i}`,group:'测试',command:`echo ${i}`,autoRun:i%2===0}));
+const h = window.h = {root,calls,layouts,Motion,engine:Motion,
+ frame:root.querySelector('iframe'), frameWindow:root.querySelector('iframe').contentWindow,
+ setShortcuts: items => { shortcuts=items; h.tools.refresh('shortcuts'); },
+ setSnippets: items => { snippets=items; h.tools.refresh('snippets'); },
+};
+h.tools = createRemoteExecTools({root,
+ stageContent:document.querySelector('#remoteStageContent'),dock:document.querySelector('#remoteToolsDock'),
+ getShortcuts:()=>shortcuts,getSnippets:()=>snippets,getMotion:()=>h.engine,
+ onShortcut:(item,options)=>calls.push({type:'shortcut',item,options}),
+ onSnippet:(item,options)=>calls.push({type:'snippet',item,options}),
+ onFont:(delta,options)=>calls.push({type:'font',delta,options}),
+ onLayoutChange:change=>layouts.push(change),t:text=>text,
+});
+h.rect = selector => {const r=document.querySelector(selector).getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};};
+h.click=selector=>document.querySelector(selector).click();
+h.scope=(kind,value)=>{const el=document.querySelector(kind==='shortcuts'?'#remoteExecShortcutsPanelFocusOnly':'#remoteExecSnippetsPanelFocusOnly');el.checked=value;el.dispatchEvent(new Event('change',{bubbles:true}));};
+h.nextFrame=()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+window.toolsReady=true;
+</script></html>

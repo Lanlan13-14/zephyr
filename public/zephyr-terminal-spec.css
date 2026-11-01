@@ -3246,7 +3246,8 @@ html[data-theme="dark"] #terminalNotesPanel .tn-textarea {
 }
 
 /* 22.6 代码片段（#snippetPanel）与快捷键（#shortcutPanel）内部排版精修 */
-#snippetPanel .snippet-panel-body {
+#snippetPanel .snippet-panel-body,
+#remoteExecSnippetsPanel .snippet-panel-body {
   display: flex !important;
   flex-direction: column !important;
   flex: 1 1 auto !important;
@@ -3255,13 +3256,15 @@ html[data-theme="dark"] #terminalNotesPanel .tn-textarea {
   gap: 10px !important;
 }
 
-#snippetPanel #snippetSearch {
+#snippetPanel #snippetSearch,
+#remoteExecSnippetsPanel .snippet-search {
   height: 34px !important;
   margin: 0 !important;
   border-radius: 9px !important;
 }
 
-#shortcutPanel .shortcut-grid {
+#shortcutPanel .shortcut-grid,
+#remoteExecShortcutsPanel .shortcut-grid {
   display: grid !important;
   grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)) !important;
   gap: 7px !important;
@@ -3273,7 +3276,8 @@ html[data-theme="dark"] #terminalNotesPanel .tn-textarea {
   scrollbar-width: thin !important;
 }
 
-#shortcutPanel .shortcut-grid button {
+#shortcutPanel .shortcut-grid button,
+#remoteExecShortcutsPanel .shortcut-grid button {
   height: 32px !important;
   min-height: 32px !important;
   padding: 0 8px !important;
@@ -3282,13 +3286,15 @@ html[data-theme="dark"] #terminalNotesPanel .tn-textarea {
   font-weight: 600 !important;
   font-family: var(--font-mono, monospace) !important;
 }
-html[data-theme="light"] #shortcutPanel .shortcut-grid button {
+html[data-theme="light"] #shortcutPanel .shortcut-grid button,
+html[data-theme="light"] #remoteExecShortcutsPanel .shortcut-grid button {
   background: #F6F8FB !important;
   border: 1px solid rgba(15, 23, 42, 0.08) !important;
   box-shadow: 0 1px 1px rgba(15, 23, 42, 0.04), inset 0 -1px 0 rgba(15, 23, 42, 0.06) !important;
   color: #1D1D1F !important;
 }
-html[data-theme="dark"] #shortcutPanel .shortcut-grid button {
+html[data-theme="dark"] #shortcutPanel .shortcut-grid button,
+html[data-theme="dark"] #remoteExecShortcutsPanel .shortcut-grid button {
   background: #1B2028 !important;
   border: 1px solid rgba(255, 255, 255, 0.08) !important;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), inset 0 -1px 0 rgba(255, 255, 255, 0.04) !important;
@@ -6427,6 +6433,9 @@ body.desktop-embed .novnc-stage {
   #view-settings .settings-menu .settings-tab[data-settings="ssh-keys"]::before {
     --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4'/%3E%3C/svg%3E");
   }
+  #view-settings .settings-menu .settings-tab[data-settings="shortcuts"]::before {
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cpath d='M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M8 15h8'/%3E%3C/svg%3E");
+  }
   #view-settings .settings-menu .settings-tab[data-settings="snippets"]::before {
     --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='16 18 22 12 16 6'/%3E%3Cpolyline points='8 6 2 12 8 18'/%3E%3C/svg%3E");
   }
@@ -7348,6 +7357,7 @@ html[data-theme="light"] body.app-body #proxyModalScrim,
 html[data-theme="light"] body.app-body #sshKeyModalScrim,
 html[data-theme="light"] body.app-body #adminUserModalScrim,
 html[data-theme="light"] body.app-body #snippetModalScrim,
+html[data-theme="light"] body.app-body #shortcutEditorScrim,
 html[data-theme="light"] body.app-body #aiProviderModalScrim,
 html[data-theme="light"] body.app-body .modal-backdrop {
   background: rgba(15, 23, 42, 0.08) !important;
@@ -7357,6 +7367,7 @@ html[data-theme="dark"] body.app-body #proxyModalScrim,
 html[data-theme="dark"] body.app-body #sshKeyModalScrim,
 html[data-theme="dark"] body.app-body #adminUserModalScrim,
 html[data-theme="dark"] body.app-body #snippetModalScrim,
+html[data-theme="dark"] body.app-body #shortcutEditorScrim,
 html[data-theme="dark"] body.app-body #aiProviderModalScrim,
 html[data-theme="dark"] body.app-body .modal-backdrop {
   background: rgba(4, 8, 16, 0.24) !important;
@@ -7373,6 +7384,7 @@ html body.app-body #connectionModal > #connectionForm,
 html body.app-body #proxyModal > #proxyForm,
 html body.app-body #sshKeyModal > #sshKeyForm,
 html body.app-body #snippetModal > #snippetForm,
+html body.app-body #shortcutEditorModal > #shortcutEditorCard,
 html body.app-body #aiProviderModal > #aiProviderForm,
 html body.app-body #adminUserModal > #adminUserForm,
 html body.app-body #passwordChangedModal > div,
@@ -7396,6 +7408,7 @@ html body.app-body #connectionModalInner,
 html body.app-body #proxyModalInner,
 html body.app-body #sshKeyModalInner,
 html body.app-body #snippetModalInner,
+html body.app-body #shortcutEditorInner,
 html body.app-body #aiProviderModalInner,
 html body.app-body #adminUserModalInner {
   background: transparent !important;
@@ -7705,7 +7718,8 @@ html[data-theme="dark"] .fm-props-modal,
 .terminal-page .fm-editor-modal,
 .terminal-page .preview-modal,
 .terminal-page .fm-preview-modal,
-.terminal-page .rdp-floating-panel {
+.terminal-page .rdp-floating-panel,
+#view-remote .remote-exec-tool-panel {
   background: var(--z-glass-card-bg) !important;
   backdrop-filter: blur(26px) saturate(185%) !important;
   -webkit-backdrop-filter: blur(26px) saturate(185%) !important;

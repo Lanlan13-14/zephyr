@@ -35,6 +35,7 @@ const USER_ALLOWED_KEYS = new Set([
     'terminal.smartbarOrder',
     'terminal.shortcutPlatform',
     'terminal.allowLigatures',
+    'terminal.shortcuts',
     'snippets',
     'notes.enabled',
     'notes.editorMode',

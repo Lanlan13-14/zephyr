@@ -4,9 +4,13 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
 import { createNotesController } from './notes.js?v=20261028-ui132';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261101-cold-start27';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261101-batch-tools35';
 import { localizeActivityMessage } from './activity-i18n.js?v=20261028-ui132';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20261028-ui132';
+import { createRemoteExecTools } from './remote-exec-tools.js?v=20261101-batch-tools35';
+import { createTerminalShortcutSettings } from './terminal-shortcut-settings.js?v=20261101-default-closed34';
+import { encodeShortcutKeys } from './terminal-shortcuts.js?v=20261101-batch-tools35';
+import { createRemoteToolDispatcher } from './remote-exec-tool-dispatch.js?v=20261101-batch-tools35';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -670,7 +674,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261101-cardflip22');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261101-dock35');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -2850,6 +2854,7 @@ function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     currentAppView = target;
     rememberLastAppView(target);
     if (target !== 'notes') notesController?.leave?.().catch(() => {});
+    if (target !== 'remote') remoteExecTools?.leave?.();
     $$('.nav-tab').forEach((b) => b.classList.toggle('active', b.dataset.view === target));
     $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${target}`));
     const nextTabEl = document.querySelector('.main-nav .nav-tabs .nav-tab.active');
@@ -6505,12 +6510,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&v=20261101-cold-start27&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&v=20261101-batch-tools35&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&v=20261101-cold-start27&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&v=20261101-batch-tools35&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-cold-start27`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-cold-start27`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batch-tools35`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261101-batch-tools35`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -15705,7 +15710,7 @@ function createRemoteExecWindowElement(session) {
     frame.dataset.frame = session.id;
     frame.title = remoteExecLabel(session);
     frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
-    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-cold-start27`;
+    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261101-batch-tools35`;
     frame.addEventListener('load', () => initializeRemoteExecFrame(session));
     session.frame = frame;
     session.element = article;
@@ -15774,12 +15779,10 @@ function renderRemoteWorkspace({ animateAvoidance = true, beforeRects = null } =
         empty.dataset.remotePlaceholder = '';
         const card = document.createElement('div');
         card.className = 'terminal-empty-minimal terminal-empty-card remote-empty-card';
-        const dot = document.createElement('span');
-        dot.className = 'terminal-empty-dot';
         const text = document.createElement('span');
         text.className = 'terminal-empty-text';
-        text.textContent = t('在左侧勾选服务器，即可开启多窗口实时终端并查看实时执行');
-        card.append(dot, text);
+        text.textContent = t('暂无打开的终端窗口');
+        card.append(text);
         empty.appendChild(card);
         workspace.appendChild(empty);
     }
@@ -16064,6 +16067,12 @@ async function remoteExecute(e) {
     if (!document.getElementById('remoteWorkspace')) return legacyRemoteExecute(e);
     const command = document.getElementById('remoteCommand')?.value || '';
     if (!command.trim()) { toast(t('请输入命令')); return; }
+    if (remoteSnippetDraftScope) {
+        const draft = remoteSnippetDraftScope;
+        const scope = { focusOnly: false, targetIds: draft.targetIds };
+        await sendRemoteToolCommand(command, scope);
+        return;
+    }
     const targets = [...remoteExecSessions.values()];
     if (!targets.length) { toast(t('请先选择服务器')); return; }
     const Motion = window.Motion || sshKeyMotion?.engine;
@@ -16086,9 +16095,173 @@ async function remoteExecute(e) {
     }
     toast(t('已发送到 {count} 个终端', { count: targets.length }));
 }
+let remoteExecTools = null;
+let terminalShortcutSettings = null;
+let remoteToolDispatcher = null;
+let remoteSnippetDraftScope = null;
+function armRemoteCommandTimeout(session, seconds) {
+    if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
+    if (session.timeoutStopFallback) clearTimeout(session.timeoutStopFallback);
+    session.timeoutTimer = null;
+    session.timeoutStopFallback = null;
+    if (!seconds) return;
+    session.timeoutTimer = setTimeout(() => {
+        if (remoteExecSessions.get(session.id) !== session) return;
+        postRemoteExecMessage(session, { type: 'remote-exec-timeout' });
+        session.timeoutStopFallback = setTimeout(() => {
+            if (remoteExecSessions.get(session.id) !== session) return;
+            session.timeoutStopFallback = null;
+            if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
+            session.timeoutTimer = null;
+            toast(t('命令超时，但终端未确认 Ctrl+C：{name}', { name: remoteExecLabel(session) }));
+        }, 2000);
+    }, seconds * 1000);
+}
+function sendRemoteToolCommand(command, scope = {}) {
+    const timeoutSeconds = document.getElementById('remoteTimeoutEnabled')?.checked
+        ? Math.max(1, Math.min(300, Number(document.getElementById('remoteTimeout')?.value) || 30)) : null;
+    return getRemoteToolDispatcher().send('remote-exec-tool-command', { command: String(command), appendEnter: true, timeoutSeconds }, scope);
+}
+
+function reportRemoteToolResult(result) {
+    if (!result.total) toast(t('没有可操作的已连接终端'));
+    else if (result.failed) toast(t('已发送至 {sent} 台，{failed} 台未确认', { sent: result.sent, failed: result.failed }));
+}
+function getRemoteToolDispatcher() {
+    if (!remoteToolDispatcher) remoteToolDispatcher = createRemoteToolDispatcher({
+        getSessions: () => remoteExecSessions.values(),
+        getActiveId: () => activeRemoteTab,
+        isActive: () => currentAppView === 'remote',
+        postMessage: postRemoteExecMessage,
+        onResult: reportRemoteToolResult,
+        onSent: (session, action) => {
+            if (action.type === 'remote-exec-tool-command' && remoteExecSessions.get(session.id) === session) {
+                session.lastSentAt = Date.now();
+                armRemoteCommandTimeout(session, action.payload.timeoutSeconds);
+            }
+        },
+    });
+    return remoteToolDispatcher;
+}
+function renderRemoteSnippetDraftScope() {
+    const hint = document.getElementById('remoteSnippetScopeHint');
+    if (!hint) return;
+    hint.hidden = !remoteSnippetDraftScope;
+    hint.textContent = !remoteSnippetDraftScope ? '' : remoteSnippetDraftScope.focusOnly
+        ? t('此片段仅发送至：{name}', { name: remoteSnippetDraftScope.name })
+        : t('此片段将发送至全部已连接终端');
+}
+function useRemoteSnippet(item, { focusOnly = false } = {}) {
+    if (currentAppView !== 'remote' || !item?.command) return;
+    if (item.autoRun) {
+        void sendRemoteToolCommand(item.command, { focusOnly });
+        return;
+    }
+    // Preserve normal terminal snippet semantics: non-autoRun only fills input.
+    // Focus-only scope binds this draft to the chosen machine, not a later focus.
+    const active = focusOnly ? remoteExecSessions.get(String(activeRemoteTab || '')) : null;
+    if (focusOnly && !active) { toast(t('没有可操作的已连接终端')); return; }
+    const input = document.getElementById('remoteCommand');
+    if (!input) return;
+    input.value = String(item.command);
+    remoteSnippetDraftScope = { focusOnly, targetIds: active ? [String(active.id)] : null, name: active ? remoteExecLabel(active) : '' };
+    renderRemoteSnippetDraftScope();
+    input.focus();
+}
+function ensureRemoteExecTools() {
+    if (remoteExecTools) return remoteExecTools;
+    const root = document.getElementById('view-remote');
+    const stageContent = document.getElementById('remoteStageContent');
+    const dock = document.getElementById('remoteToolsDock');
+    if (!root || !stageContent || !dock) return null;
+    remoteExecTools = createRemoteExecTools({
+        root, stageContent, dock, t,
+        getShortcuts: () => settings?.terminal?.shortcuts,
+        getSnippets,
+        getMotion: () => getRemoteMotionEngine(),
+        onShortcut: (item, scope) => {
+            try { encodeShortcutKeys(item.keys); } catch { return; }
+            return getRemoteToolDispatcher().send('remote-exec-shortcut', { shortcut: { keys: item.keys } }, scope);
+        },
+        onSnippet: useRemoteSnippet,
+        onFont: (delta, scope) => getRemoteToolDispatcher().send('remote-exec-font-size', { delta }, scope),
+        onLayoutChange: () => {
+            if (currentAppView !== 'remote') return;
+            renderRemoteWorkspace({ animateAvoidance: false });
+            stabilizeRemoteWorkspaceFrames('remote-tools-layout', { focus: false });
+        },
+    });
+    return remoteExecTools;
+}
+let shortcutModalCycle = 0;
+async function openShortcutEditorModal({ modal, card, inner, trigger }) {
+    const cycle = ++shortcutModalCycle;
+    const Motion = await sshKeyMotion._ensure();
+    if (cycle !== shortcutModalCycle) return;
+    armMotionModalOpen(Motion, modal, card, inner, trigger, 'snippet1');
+    motionScrimSet('shortcutEditorScrim', 'shortcut-editor-blurring', true);
+    const rect = trigger?.getBoundingClientRect?.();
+    if (!Motion || !rect || rect.width <= 2 || rect.height <= 2) {
+        card.style.visibility = ''; card.style.opacity = '1'; card.style.pointerEvents = '';
+        inner.style.opacity = '1'; return;
+    }
+    await Motion.iosAppOpen(card, trigger, {
+        contentEl: inner, scrim: null, home: null, cloneSource: true, hideSource: true,
+        radiusFrom: snippetBtnRadius(trigger, rect), radiusTo: 22,
+        contentDelay: 0.16, faceDelay: 0.05, faceInDelay: 0.04,
+        shapePreset: 'shape', contentPreset: 'content',
+    });
+    if (cycle === shortcutModalCycle) card.style.overflow = '';
+}
+async function closeShortcutEditorModal({ modal, card, inner, trigger }) {
+    const cycle = ++shortcutModalCycle;
+    modal.classList.add('closing'); modal.classList.remove('app-visible');
+    modal.setAttribute('aria-hidden', 'true');
+    motionScrimSet('shortcutEditorScrim', 'shortcut-editor-blurring', false);
+    const Motion = sshKeyMotion.engine;
+    const rect = trigger?.getBoundingClientRect?.();
+    try {
+        if (Motion && rect?.width > 2 && rect?.height > 2) {
+            await Motion.iosAppClose(card, trigger, {
+                contentEl: inner, scrim: null, home: null, restoreSource: false,
+                hideSurface: false, clearSourceVisual: false, release: false,
+                radiusTo: snippetBtnRadius(trigger, rect), shapePreset: 'shapeClose',
+                contentPreset: 'contentClose', faceInDelay: 0.04,
+            });
+        }
+    } finally {
+        if (cycle !== shortcutModalCycle) return;
+        Motion?.restoreSource?.(trigger); Motion?.restoreSources?.(card);
+        card.querySelector(':scope > [data-motion-source-visual]')?.remove();
+        Motion?.release?.(card); Motion?.release?.(inner);
+        modal.classList.remove('show', 'closing', 'snippet1');
+        for (const property of ['overflow', 'visibility', 'opacity', 'filter', 'transform', 'border-radius', 'pointer-events']) card.style.removeProperty(property);
+        inner.style.opacity = '';
+        trigger?.focus?.({ preventScroll: true });
+    }
+}
+
+function ensureTerminalShortcutSettings() {
+    if (terminalShortcutSettings) return terminalShortcutSettings;
+    const root = document.getElementById('terminalShortcutSettings');
+    if (!root) return null;
+    terminalShortcutSettings = createTerminalShortcutSettings({
+        root, t, saveOnApply: true, openEditorModal: openShortcutEditorModal, closeEditorModal: closeShortcutEditorModal,
+        getValue: () => settings?.terminal?.shortcuts,
+        onSave: async (shortcuts) => {
+            const saved = await savePersonalSettings({ terminal: { shortcuts } });
+            settings = saved;
+            broadcastTerminalSettings({ shortcuts: settings?.terminal?.shortcuts || shortcuts });
+            remoteExecTools?.refresh?.();
+        },
+    });
+    return terminalShortcutSettings;
+}
+
 function bindRemoteWorkspaceEvents() {
     if (remoteWorkspaceBound || !document.getElementById('remoteWorkspace')) return;
     remoteWorkspaceBound = true;
+    ensureRemoteExecTools();
     document.getElementById('remoteServerList')?.addEventListener('change', (event) => {
         const input = event.target.closest?.('input[type="checkbox"]');
         if (!input) return;
@@ -16121,6 +16294,7 @@ function bindRemoteWorkspaceEvents() {
     const timeoutEnabled = document.getElementById('remoteTimeoutEnabled');
     const timeoutInput = document.getElementById('remoteTimeout');
     timeoutEnabled?.addEventListener('change', () => { if (timeoutInput) timeoutInput.disabled = !timeoutEnabled.checked; });
+    document.getElementById('remoteCommand')?.addEventListener('input', () => { remoteSnippetDraftScope = null; renderRemoteSnippetDraftScope(); });
     for (const [id, action] of [['remoteBatchCtrlCBtn', 'ctrl-c'], ['remoteBatchClearBtn', 'clear'], ['remoteBatchReconnectBtn', 'reconnect']]) {
         document.getElementById(id)?.addEventListener('click', (event) => {
             const btn = event.currentTarget;
@@ -16203,6 +16377,7 @@ function bindRemoteWorkspaceEvents() {
             }
             return;
         }
+        if (remoteToolDispatcher?.acknowledge(session, data)) { event.stopImmediatePropagation(); return; }
         if (data.type === 'remote-lite-click') activateRemoteExecWindow(session.id, { focusTerminal: false });
         else if (data.type === 'remote-lite-dblclick') zoomRemoteExecWindow(session.id);
         else if (data.type === 'zephyr-pane-activate') activateRemoteExecWindow(session.id, { focusTerminal: false });
@@ -16225,19 +16400,7 @@ function bindRemoteWorkspaceEvents() {
             if (session.pendingTimeoutSeconds) {
                 const seconds = session.pendingTimeoutSeconds;
                 session.pendingTimeoutSeconds = null;
-                if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
-                session.timeoutTimer = setTimeout(() => {
-                    if (remoteExecSessions.get(session.id) !== session) return;
-                    postRemoteExecMessage(session, { type: 'remote-exec-timeout' });
-                    const name = remoteExecLabel(session);
-                    session.timeoutStopFallback = setTimeout(() => {
-                        if (remoteExecSessions.get(session.id) !== session) return;
-                        session.timeoutStopFallback = null;
-                        if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
-                        session.timeoutTimer = null;
-                        toast(t('命令超时，但终端未确认 Ctrl+C：{name}', { name: remoteExecLabel(session) }));
-                    }, 2000);
-                }, seconds * 1000);
+                armRemoteCommandTimeout(session, seconds);
             }
             const index = session.suppressedBroadcasts.findIndex((item) => item.raw === String(data.command));
             if (index >= 0) session.suppressedBroadcasts.splice(index, 1);
@@ -16360,6 +16523,8 @@ async function loadSettings() {
     $('#terminalMinimizedKeepAlive').value = String(getConfiguredMinimizedKeepAlive());
     $('#terminalSmartbarOrder').value = getTerminalSmartbarOrder();
     $('#terminalShortcutPlatform').value = getTerminalShortcutPlatform();
+    ensureTerminalShortcutSettings()?.refresh?.();
+    remoteExecTools?.refresh?.();
     settings.appearance = { brandName: defaultBrandName(), brandIcon: DEFAULT_BRAND_ICON, theme: 'auto', autoThemeEnabled: true, colorScheme: 'frost', customThemeMode: 'dark', customColors: normalizeCustomThemeColors(), customCss: '', customJs: '', globalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.45, blur: 0 }, terminalBackground: { type: 'none', url: '', fit: 'cover', opacity: 0.35, blur: 0 }, terminalFontColor: '', terminalFontColors: { dark: '', light: '' }, terminalSolidBgColors: { dark: '', light: '' }, terminalSelection: { bg: { dark: '', light: '' }, fg: { dark: '', light: '' } }, ...(settings.appearance || {}) };
     settings.ai = normalizeAiSettings(settings.ai || {});
     applyAppearance(settings.appearance);
@@ -16647,6 +16812,7 @@ async function persistSnippets(list) {
     const snippets = normalizeSnippets(list);
     settings = await savePersonalSettings({ snippets });
     settings.snippets = normalizeSnippets(settings.snippets || snippets);
+    remoteExecTools?.refresh?.();
     return settings.snippets;
 }
 async function migrateLocalSnippetsToServer() {
@@ -17244,7 +17410,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261101-cardflip22')
+        return import('./vendor/zephyr-motion/index.js?v=20261101-dock35')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -18952,6 +19118,9 @@ function rerenderLocaleSensitiveContent() {
         renderAiTodoList,
         renderAiSkillList,
         renderSnippetSettings,
+        () => terminalShortcutSettings?.refresh?.(),
+        () => remoteExecTools?.refresh?.(),
+        renderRemoteSnippetDraftScope,
         renderNetwork,
         renderWebDavText,
     ]) {

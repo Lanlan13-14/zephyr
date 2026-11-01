@@ -4016,13 +4016,15 @@ export const Motion = {
     return true;
   },
 
-  async panelDockMorph(panel, mutateLayoutFn, { preset = { response: 0.22, damping: 0.98 }, onDone = null } = {}) {
+  async panelDockMorph(panel, mutateLayoutFn, { preset = { response: 0.22, damping: 0.98 }, onDone = null, coordinateRoot = null, layoutOnly = [] } = {}) {
     const primaryPanel = Array.isArray(panel) ? panel[0] : panel;
     if (!primaryPanel || typeof mutateLayoutFn !== 'function') {
       mutateLayoutFn?.();
       return false;
     }
-    const page = primaryPanel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
+    // Embedded sibling docks may span multiple DOM parents. Use their shared
+    // positioned root when supplied; terminal callers keep the original path.
+    const page = coordinateRoot || primaryPanel.closest('.terminal-page, .rdp-page, .app-shell') || document.body;
     const hostWin = (typeof window !== 'undefined' && window.frameElement)
       ? window.frameElement.closest?.('.terminal-window')
       : null;
@@ -4110,7 +4112,7 @@ export const Motion = {
     for (const p of candidates) {
       const snap = snapshots.get(p);
       if (!snap || !snap.fromRect || snap.fromRect.width < 16 || snap.fromRect.height < 16) continue;
-      const isClosingAfter = !p.classList.contains('open') || p.style.display === 'none';
+      const isClosingAfter = !layoutOnly.includes(p) && (!p.classList.contains('open') || p.style.display === 'none');
       if (isClosingAfter) {
         const fromL = Math.round(snap.fromRect.left - pageRect.left);
         const fromT = Math.round(snap.fromRect.top - pageRect.top + frameShiftY);

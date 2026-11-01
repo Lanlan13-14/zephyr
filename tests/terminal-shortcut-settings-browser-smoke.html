@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark"><head><meta charset="utf-8"><link rel="stylesheet" href="/public/zephyr-tokens.css"><link rel="stylesheet" href="/public/terminal-shortcut-settings.css"></head><body><section id="host"><form id="neighbour"><input name="layout" value="unchanged"></form><div id="mount"></div></section><pre id="out"></pre><script type="module">
+import { createTerminalShortcutSettings } from '/public/terminal-shortcut-settings.js';
+import { DEFAULT_TERMINAL_SHORTCUTS } from '/public/terminal-shortcuts.js';
+const results = [];
+const check = (name, ok, detail = '') => results.push({ name, ok: !!ok, detail: String(detail) });
+const sleep = (ms = 30) => new Promise(resolve => setTimeout(resolve, ms));
+const button = (action, scope = document) => {
+  const node = scope.querySelector(`button[data-action="${action}"]`);
+  if (!node) throw Error(`Missing action button ${action}`);
+  node.click(); return node;
+};
+const mount = document.getElementById('mount');
+const neighbour = document.querySelector('#neighbour input');
+let current = [{ id: 'hello', label: 'Shell', keys: ['Ctrl', 'A'] }, { id: 'world', keys: ['Alt', 'F1'] }, { id: 'safe-meta', label: '<img src=x onerror=alert(1)>', keys: ['Meta', 'A'] }, { id: 'bad-unknown', keys: ['Hyper', 'A'] }];
+let saved = null, fail = false, rejectCount = 0;
+const instance = createTerminalShortcutSettings({ root: mount, getValue: () => current, onSave: async value => {
+  rejectCount++;
+  if (fail) throw new Error('private persistence detail');
+  saved = structuredClone(value); current = structuredClone(value);
+} });
+try {
+  check('real component renders Meta and filters unsupported Hyper', mount.querySelectorAll('.tss-row').length === 3);
+  check('adjacent settings layout form remains intact', neighbour.value === 'unchanged');
+  check('untrusted persisted label is inert text, not parsed HTML', !mount.querySelector('.tss-row img') && mount.textContent.includes('<img src=x onerror=alert(1)>'));
+  check('order list exposes labelled accessible reorder buttons', !!mount.querySelector('[aria-label="排序：Shell"]') && !!mount.querySelector('[aria-describedby]'));
+
+  // Select an actual chord entirely through key-picker DOM buttons.
+  button('add', mount);
+  const editor = document.querySelector('#shortcutEditorModal .tss-editor');
+  check('add opens a separate custom modal rather than inline or native UI', !!editor && !mount.contains(editor) && document.querySelector('#shortcutEditorModal.show [role=dialog]') && !editor.querySelector('select'));
+  check('all visible buttons receive actual CSS styles', getComputedStyle(editor.querySelector('[data-action=pick-key]')).borderRadius === '7px');
+  const disclosure = editor.querySelector('[data-group="letters"] [data-action="toggle-group"]');
+  const letterGrid = disclosure.nextElementSibling;
+  disclosure.click();
+  await sleep(320);
+  check('engine disclosure grows the real key-grid height instead of a zero-height fade', !letterGrid.hidden && letterGrid.getBoundingClientRect().height > 60, letterGrid.style.cssText);
+  disclosure.click(); await sleep(900);
+  check('engine disclosure settles closed and hides its content', letterGrid.hidden || letterGrid.getBoundingClientRect().height < 15, letterGrid.style.cssText);
+  editor.querySelector('[data-field="label"]').value = '<svg onload=alert(1)> & shell';
+  editor.querySelector('[data-field="label"]').dispatchEvent(new Event('input', { bubbles: true }));
+  const pick = key => {
+    const node = [...editor.querySelectorAll('[data-action="pick-key"]')].find(item => item.dataset.key === key);
+    if (!node) throw Error(`Key-picker button missing: ${key}`);
+    node.click();
+  };
+  pick('Ctrl'); pick('Alt'); pick('Delete');
+  check('three-key Ctrl+Alt+Delete chord built with click buttons', document.querySelector('#shortcutEditorModal .tss-selected-count')?.textContent.includes('3'));
+  pick('Ctrl');
+  check('remove capsule updates the selected key count', document.querySelector('#shortcutEditorModal .tss-selected-count')?.textContent.includes('2'));
+  pick('Ctrl');
+  button('apply', document.querySelector('#shortcutEditorModal'));
+  check('untrusted custom label stays text-only in newly created list row', !mount.querySelector('.tss-row svg[onload]') && mount.textContent.includes('<svg onload=alert(1)> & shell'));
+  const addedId = [...mount.querySelectorAll('.tss-row')].at(-1).dataset.id;
+  const addedItem = [...mount.querySelectorAll('.tss-row')].find(row => row.dataset.id === addedId);
+  check('third non-modifier is rejected clearly', (() => {
+    button('edit', addedItem);
+    const ed = document.querySelector('#shortcutEditorModal .tss-editor');
+    const p = key => [...ed.querySelectorAll('[data-action="pick-key"]')].find(n => n.dataset.key === key).click();
+    p('Ctrl'); p('A');
+    const rejected = ed.querySelector('.tss-editor-error').textContent.includes('最多包含一个非修饰键');
+    return rejected;
+  })());
+  // Close the editor without altering the valid chord; then test save failure.
+  button('cancel-editor', document.querySelector('#shortcutEditorModal'));
+  fail = true;
+  button('save', mount);
+  await sleep(); await sleep();
+  check('save failure is reported inline and never reports success', mount.querySelector('[role="alert"]')?.textContent.includes('保存失败') && !mount.querySelector('[role="status"]')?.textContent.includes('快捷键已保存'));
+  check('failed async save retains dirty edited row and retries without mutation loss', mount.querySelectorAll('.tss-row').length === 4 && mount.querySelector('.tss').dataset.dirty === 'true');
+  fail = false;
+  button('save', mount);
+  await sleep(); await sleep();
+  check('successful retry persists the full three-key chord and safe label', saved?.some(item => item.id === addedId && item.keys.join(',') === 'Ctrl,Alt,Delete' && item.label === '<svg onload=alert(1)> & shell'));
+  check('successful save clears the dirty indicator', mount.querySelector('.tss').dataset.dirty === 'false');
+
+  // Reordering works by both actual button activation and keyboard alternatives.
+  const before = [...mount.querySelectorAll('.tss-row')].map(row => row.dataset.id);
+  const second = mount.querySelectorAll('.tss-row')[1];
+  button('up', second);
+  const afterUp = [...mount.querySelectorAll('.tss-row')].map(row => row.dataset.id);
+  check('explicit up button reorders real list DOM', afterUp[0] === before[1]);
+  const handle = mount.querySelector(`[data-id="${before[1]}"] [data-action="reorder"]`);
+  handle.focus(); handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+  check('keyboard Home/End alternative reorders real list DOM', [...mount.querySelectorAll('.tss-row')].at(-1).dataset.id === before[1]);
+  check('reorder and key add preserve adjacent layout state', neighbour.value === 'unchanged');
+
+  // A failed onSave(false) contract is also treated as failure, not saved.
+  const stateBeforeRefresh = [...mount.querySelectorAll('.tss-row')].map(row => row.dataset.id);
+  const guarded = instance.refresh();
+  check('non-forced refresh keeps unsaved reorder draft', guarded === false && [...mount.querySelectorAll('.tss-row')].map(row => row.dataset.id).join() === stateBeforeRefresh.join());
+  const original = current;
+  current = [];
+  check('force refresh explicitly reloads an intentionally empty list', instance.refresh({ force: true }) === true && mount.querySelector('.tss-empty')?.textContent.includes('尚无快捷键'));
+  current = original;
+  instance.refresh({ force: true });
+  instance.destroy();
+  check('destroy removes only its component-owned subtree', !mount.querySelector('.tss') && !document.getElementById('shortcutEditorModal') && neighbour.value === 'unchanged');
+  const directRoot = document.createElement('section'); document.body.append(directRoot);
+  let directFail = true, directSaved;
+  const direct = createTerminalShortcutSettings({ root: directRoot, getValue: () => [], saveOnApply: true, onSave: async value => { if (directFail) throw new Error('offline'); directSaved = value; } });
+  button('add', directRoot).click();
+  const directModal = document.getElementById('shortcutEditorModal');
+  directModal.querySelector('[data-key="Ctrl"]').click(); directModal.querySelector('[data-key="A"]').click();
+  directModal.querySelector('[data-action="apply"]').click(); await sleep(35);
+  check('direct modal save failure retains visible editor and selection', directModal.classList.contains('show') && directModal.querySelectorAll('.tss-capsule').length === 2 && !!directModal.querySelector('.tss-editor-error').textContent);
+  directFail = false; directModal.querySelector('[data-action="apply"]').click(); await sleep(35);
+  check('direct modal save persists once and closes without second save', directSaved?.[0]?.keys.join('+') === 'Ctrl+A' && !directModal.classList.contains('show') && directRoot.querySelector('.tss').dataset.dirty === 'false');
+  direct.destroy(); directRoot.remove();
+} catch (error) {
+  results.push({ name: 'browser harness caught exception', ok: false, detail: `${error?.stack || error}` });
+  instance.destroy();
+}
+document.getElementById('out').textContent = JSON.stringify(results);
+</script></body></html>

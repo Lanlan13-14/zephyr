@@ -232,11 +232,6 @@
     var rootCs = getComputedStyle(document.documentElement);
     var light = isLightTheme();
     var bgRgb = parseRgb(rootCs.getPropertyValue('--bg') || (light ? '#eaeef4' : '#0d1015'));
-    var surfRgb = parseRgb(rootCs.getPropertyValue('--surface') || (light ? '#ffffff' : '#161920'));
-    var acc = themeAccent();
-    var accR = Math.round(acc[0] * 255);
-    var accG = Math.round(acc[1] * 255);
-    var accB = Math.round(acc[2] * 255);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, w, h);
@@ -290,16 +285,12 @@
       // Subtle scrim matching .global-wp-scrim (no extra white wash!)
       ctx.fillStyle = light ? 'rgba(255, 255, 255, 0.08)' : 'rgba(14, 18, 26, 0.14)';
       ctx.fillRect(0, 0, w, h);
-    } else {
-      // 3. Ambient multi-stop light gradient ONLY when no global wallpaper is active
-      var ambientAlpha = light ? 0.16 : 0.18;
-      var grad = ctx.createLinearGradient(0, 0, w, h);
-      grad.addColorStop(0, 'rgba(' + accR + ',' + accG + ',' + accB + ',' + (ambientAlpha * 0.85).toFixed(3) + ')');
-      grad.addColorStop(0.5, 'rgba(' + surfRgb[0] + ',' + surfRgb[1] + ',' + surfRgb[2] + ',' + (ambientAlpha * 0.45).toFixed(3) + ')');
-      grad.addColorStop(1, 'rgba(' + accR + ',' + accG + ',' + accB + ',' + (ambientAlpha * 0.65).toFixed(3) + ')');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, w, h);
     }
+    // Without a loaded wallpaper, sample only the real page base (--bg).
+    // A synthetic accent gradient becomes opaque inside independentBackdrop
+    // glass, even though renderBackground clears/clips the surrounding canvas.
+    // Keep the base for refraction and the existing glass surface/rim passes;
+    // never fabricate a colored wallpaper for either navigation bar.
 
     return sliceCanvas;
   }
@@ -315,7 +306,8 @@
       cachedWpImg ? 'img1' : 'img0',
       rootCs.getPropertyValue('--z-global-bg-opacity').trim(),
       rootCs.getPropertyValue('--z-global-bg-size').trim(),
-      themeAccent().map(function (v) { return v.toFixed(3); }).join(','),
+      rootCs.getPropertyValue('--bg').trim(),
+      (window.innerWidth || 1440) + ',' + (window.innerHeight || 900),
       Math.round(rect.left) + ',' + Math.round(rect.top) + ',' + Math.round(rect.width) + ',' + Math.round(rect.height),
     ].join('|');
   }

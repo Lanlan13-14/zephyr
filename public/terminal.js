@@ -1,3 +1,4 @@
+import { normalizeTerminalShortcuts, encodeShortcutKeys, renderShortcutButtons } from './terminal-shortcuts.js';
 
 function formatMockupMtime(file) {
     const raw = file?.mtime || file?.modifyTime || file?.date || file?.updatedAt;
@@ -802,6 +803,8 @@ let mobileFileSelectMode = false;
 let sftpClipboardAvailable = false;
 let terminalShortcutPlatform = localStorage.getItem('zephyr-shortcut-platform') || 'auto';
 let terminalAppearance = {};
+let terminalShortcuts = normalizeTerminalShortcuts(undefined);
+let terminalShortcutsRevision = 0;
 let fmEditorModal = $('#fmEditorModal');
 let fmEditorTitle = $('#fmEditorTitle');
 let fmEditorMain = $('#fmEditorMain');
@@ -2242,6 +2245,10 @@ window.addEventListener('message', (e) => {
     }
     if ((e.data.type === 'terminal-settings' || e.data.workspace) && e.data.workspace && Object.prototype.hasOwnProperty.call(e.data.workspace, 'sessionPersistence')) {
         sessionPersistenceEnabled = e.data.workspace.sessionPersistence !== false;
+    }
+    if (e.source === window.parent && e.origin === location.origin && e.data.type === 'terminal-settings' && Object.prototype.hasOwnProperty.call(e.data.terminal || {}, 'shortcuts')) {
+        terminalShortcutsRevision += 1;
+        applyTerminalShortcuts(e.data.terminal.shortcuts);
     }
     if ((e.data.type === 'terminal-settings' || e.data.terminal) && e.data.terminal && Object.prototype.hasOwnProperty.call(e.data.terminal, 'allowLigatures')) {
         applyTerminalLigatures(!!e.data.terminal.allowLigatures);
@@ -5307,10 +5314,17 @@ function shortcutLabel(action) {
 }
 async function loadTerminalSettings() {
     try {
-        const res = await fetch('/api/me/settings', { credentials: 'same-origin', cache: 'no-store' });
-        if (!res.ok) return;
-        const payload = await res.json();
-        const data = payload?.settings || {};
+        const shortcutRevision = terminalShortcutsRevision;
+        const [personal, platform] = await Promise.all([
+            fetch('/api/me/settings', { credentials: 'same-origin', cache: 'no-store' }).then(res => res.ok ? res.json() : {}).catch(() => ({})),
+            fetch('/api/settings', { credentials: 'same-origin', cache: 'no-store' }).then(res => res.ok ? res.json() : {}).catch(() => ({})),
+        ]);
+        const data = personal?.settings || {};
+        const platformSettings = platform?.settings || platform || {};
+        if (shortcutRevision === terminalShortcutsRevision) {
+            const terminalSettings = Object.prototype.hasOwnProperty.call(data?.terminal || {}, 'shortcuts') ? data.terminal : platformSettings.terminal;
+            applyTerminalShortcuts(terminalSettings?.shortcuts);
+        }
         terminalShortcutPlatform = data?.terminal?.shortcutPlatform || localStorage.getItem('zephyr-shortcut-platform') || 'auto';
         terminalAppearance = data?.appearance || {};
         localStorage.setItem('zephyr-shortcut-platform', terminalShortcutPlatform);
@@ -12719,13 +12733,16 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ---------- 辅助键 / 终端输入 ----------
-const modifierState = { ctrl: false, alt: false, shift: false };
-const modifierButtons = document.querySelectorAll('.modifier');
+const modifierState = { ctrl: false, alt: false, shift: false, meta: false };
 function updateModifierUI() {
-    modifierButtons.forEach(btn => btn.classList.toggle('active', modifierState[btn.dataset.key]));
+    document.querySelectorAll('#shortcutGrid .modifier').forEach(btn => {
+        const active = !!modifierState[btn.dataset.key];
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+    });
 }
 function processModifiers(data) {
-    if (!modifierState.ctrl && !modifierState.alt && !modifierState.shift) return data;
+    if (!modifierState.ctrl && !modifierState.alt && !modifierState.shift && !modifierState.meta) return data;
     let result = '';
     for (const ch of data) {
         const code = ch.charCodeAt(0);
@@ -12734,7 +12751,7 @@ function processModifiers(data) {
             if (code >= 65 && code <= 90) transformed = String.fromCharCode(code - 64);
             else if (code >= 97 && code <= 122) transformed = String.fromCharCode(code - 96);
         }
-        if (modifierState.alt) transformed = '\x1b' + transformed;
+        if (modifierState.alt || modifierState.meta) transformed = '\x1b' + transformed;
         result += transformed;
     }
     return result;
@@ -12753,7 +12770,7 @@ function logTerminalPasteDiagnostics(source, text = '') {
     });
 }
 
-function sendData(data, { normalizeNewlines = false, source = 'unknown', forceFollow = false, applyModifiers = true } = {}) {
+function sendData(data, { normalizeNewlines = false, source = 'unknown', forceFollow = false, applyModifiers = true, skipBroadcast = false } = {}) {
     if (!getRemoteExecViewPolicy().canControl) return;
     if (wsConnection && wsConnection.readyState === WebSocket.OPEN && isConnected) {
         const fromWTerm = source === 'wterm-onData';
@@ -12764,14 +12781,16 @@ function sendData(data, { normalizeNewlines = false, source = 'unknown', forceFo
         const input = fromWTerm || !applyModifiers ? payload : processModifiers(payload);
         sftpPro?.parseInputForCd(input);
         wsConnection.send(JSON.stringify({ type: 'input', data: input }));
-        if (window.__zephyrBroadcastInputActive && source !== 'broadcast-peer' && window.parent !== window) {
+        if (!skipBroadcast && window.__zephyrBroadcastInputActive && source !== 'broadcast-peer' && window.parent !== window) {
             try {
                 window.parent.postMessage({ source: 'zephyr-terminal', type: 'zephyr-broadcast-input', data: input }, '*');
             } catch {}
         }
         if (forceFollow) requestTerminalAutoFollow(`${source}:sent`);
         else scheduleTerminalScrollbarUpdate();
+        return true;
     }
+    return false;
 }
  
 function preserveTerminalScrollWhileEditingCommandInput(reason = 'command-input-edit', callback = () => {}) {
@@ -12839,14 +12858,33 @@ cmdInput.addEventListener('keydown', (e) => {
 cmdSendBtn.addEventListener('click', sendCommand);
 resizeCommandInput();
 
-document.querySelectorAll('.func, .arrow, .combo, .modifier').forEach(btn => {
-    btn.addEventListener('click', () => {
-        const key = btn.dataset.key;
-        if (btn.classList.contains('modifier')) { modifierState[key] = !modifierState[key]; updateModifierUI(); return; }
-        if (keySequences[key]) sendData(keySequences[key], { source: 'keypad', forceFollow: true });
-        if (comboSequences[key]) sendData(comboSequences[key], { source: 'keypad', forceFollow: true });
+function applyTerminalShortcuts(input) {
+    terminalShortcuts = normalizeTerminalShortcuts(input);
+    const grid = document.getElementById('shortcutGrid');
+    if (!grid) return;
+    renderShortcutButtons(grid, terminalShortcuts, {
+        onModifier(key) {
+            if (!getRemoteExecViewPolicy().canControl) return;
+            const name = key.toLowerCase();
+            modifierState[name] = !modifierState[name];
+            updateModifierUI();
+        },
+        onShortcut(item) {
+            try {
+                const sticky = ['Ctrl', 'Alt', 'Shift', 'Meta'].filter(key => modifierState[key.toLowerCase()]);
+                const keys = [...new Set([...sticky, ...item.keys])];
+                sendData(encodeShortcutKeys(keys), { source: 'keypad', forceFollow: true, applyModifiers: false });
+            } catch (error) {
+                showToast(error.message, 'error');
+            }
+        },
     });
-});
+    // Keep the existing font nodes, listeners, ids, disabled state and i18n.
+    if (fontDecreaseBtn) grid.appendChild(fontDecreaseBtn);
+    if (fontIncreaseBtn) grid.appendChild(fontIncreaseBtn);
+    updateModifierUI();
+}
+applyTerminalShortcuts(terminalShortcuts);
 
 // ── Mobile auxiliary keys handler ──
 const mobileAuxKeys = $('#mobileAuxKeys');
@@ -14127,7 +14165,58 @@ function flushPendingRemoteExecQueue() {
     }
 }
 
+// Tool actions are immediate: unlike legacy remote-exec-command, never queue
+// them for a future connection. Only the same-origin parent may address this
+// tab, and the current shared-PTY control owner must still be this iframe.
+const remoteExecToolReplies = new Map();
+function handleRemoteExecToolMessage(ev) {
+    const d = ev.data;
+    const types = ['remote-exec-shortcut', 'remote-exec-font-size', 'remote-exec-tool-command'];
+    if (d?.source !== 'zephyr-app' || !types.includes(d.type)) return false;
+    if (window.parent === window || ev.source !== window.parent || ev.origin !== location.origin) return true;
+    const tabId = String(params?.tabId || new URLSearchParams(location.search).get('tabId') || '');
+    if (!tabId || typeof d.tabId !== 'string' || d.tabId !== tabId) return true;
+    const requestId = typeof d.requestId === 'string' ? d.requestId : undefined;
+    const requestKey = requestId ? `${d.type}:${requestId}` : '';
+    const reply = (ok, reason) => {
+        const message = { source: 'zephyr-terminal', type: `${d.type}-${ok ? 'sent' : 'failed'}`, tabId, ...(requestId === undefined ? {} : { requestId }), ...(reason ? { reason } : {}) };
+        if (requestKey) {
+            remoteExecToolReplies.set(requestKey, message);
+            if (remoteExecToolReplies.size > 128) remoteExecToolReplies.delete(remoteExecToolReplies.keys().next().value);
+        }
+        try { window.parent.postMessage(message, location.origin); } catch {}
+    };
+    if (requestKey && remoteExecToolReplies.has(requestKey)) {
+        try { window.parent.postMessage(remoteExecToolReplies.get(requestKey), location.origin); } catch {}
+        return true;
+    }
+    if (!getRemoteExecViewPolicy().canControl) { reply(false, 'not-controller'); return true; }
+    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN || !isConnected) { reply(false, 'not-connected'); return true; }
+    try {
+        if (d.type === 'remote-exec-font-size') {
+            if (d.delta !== -1 && d.delta !== 1) { reply(false, 'invalid-delta'); return true; }
+            applyTerminalFontSize(terminalFontSize + d.delta * TERMINAL_FONT_STEP);
+        } else if (d.type === 'remote-exec-shortcut') {
+            let payload;
+            try { payload = encodeShortcutKeys(d.shortcut?.keys); }
+            catch { reply(false, 'invalid-shortcut'); return true; }
+            if (!sendData(payload, { source: 'remote-exec-shortcut', forceFollow: true, applyModifiers: false, skipBroadcast: true })) {
+                reply(false, 'not-sent'); return true;
+            }
+        } else {
+            if (typeof d.command !== 'string' || !d.command) { reply(false, 'invalid-command'); return true; }
+            const payload = d.appendEnter !== false && !/[\r\n]$/.test(d.command) ? `${d.command}\r` : d.command;
+            if (!sendData(payload, { source: 'remote-exec-tool-command', normalizeNewlines: true, forceFollow: true, applyModifiers: false, skipBroadcast: true })) {
+                reply(false, 'not-sent'); return true;
+            }
+        }
+        reply(true);
+    } catch { reply(false, 'send-failed'); }
+    return true;
+}
+
 window.addEventListener('message', (ev) => {
+    if (handleRemoteExecToolMessage(ev)) return;
     const d = ev.data;
     if (!d) return;
     if (d.source === 'zephyr-app' && d.type === 'zephyr-pane-slot') {

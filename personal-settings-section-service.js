@@ -3,6 +3,7 @@
 const { isDeepStrictEqual } = require('util');
 const { HttpError } = require('./authz');
 const { getMobileV1ChangeBridge } = require('./mobile-v1-change-bridge');
+const { validateTerminalShortcuts } = require('./terminal-shortcut-validator');
 
 const PERSONAL_EDITABLE_FIELDS = Object.freeze([
     'appearance.theme',
@@ -34,6 +35,7 @@ const PERSONAL_OPAQUE_FIELDS = Object.freeze([
 ]);
 
 const PERSONAL_WEB_ONLY_FIELDS = Object.freeze([
+    'terminal.shortcuts',
     'appearance.globalBackground',
     'appearance.ipProtection',
 ]);
@@ -127,6 +129,13 @@ function sanitizeSyncValue(field, value, { strict = false } = {}) {
             clean[key] = item;
         }
         return clean;
+    }
+    if (field === 'terminal.shortcuts') {
+        try { return validateTerminalShortcuts(value); }
+        catch (error) {
+            if (strict) throw new HttpError(400, 'invalid_settings', error.message);
+            return undefined;
+        }
     }
     if (field === 'terminal.smartbarOrder') {
         if (typeof value === 'string') return value.slice(0, 80);

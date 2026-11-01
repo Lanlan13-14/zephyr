@@ -81,7 +81,7 @@ test('only fullscreen terminal shells are square', () => {
 
 test('SSH, Telnet, RDP and VNC load the same refreshed shell and spec stylesheets', () => {
     const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js');
-    assert.equal(appVersion, '20261101-cold-start27', 'terminal shell release revision');
+    assert.equal(appVersion, '20261101-batch-tools35', 'terminal shell release revision');
     for (const [label, source] of [
         ['app shell', appHtml], ['SSH page', terminalHtml], ['Telnet page', telnetHtml],
         ['RDP page', rdpHtml], ['VNC page', vncHtml], ['service worker', sw],
@@ -93,14 +93,14 @@ test('SSH, Telnet, RDP and VNC load the same refreshed shell and spec stylesheet
 
 test('protocol iframe revisions follow the shell while terminal scripts keep independent revisions', () => {
     const appVersion = singleAssetVersion(appHtml, 'app.js', 'app shell app.js references');
-    assert.equal(appVersion, '20261101-cold-start27', 'protocol iframe release revision');
+    assert.equal(appVersion, '20261101-batch-tools35', 'protocol iframe release revision');
     for (const page of ['terminal.html', 'telnet-terminal.html', 'rdp.html', 'novnc.html']) {
         // Includes both the regular SSH iframe and the lite/preview iframe.
         assertAssetVersion(appJs, page, appVersion, `${page} iframe references`);
     }
     const terminalVersion = singleAssetVersion(terminalHtml, 'terminal.js', 'SSH preload and script');
     const telnetVersion = singleAssetVersion(telnetHtml, 'telnet-terminal.js', 'Telnet preload and script');
-    assert.equal(terminalVersion, '20261101-batchexec16', 'SSH script retains its independent revision');
+    assert.equal(terminalVersion, '20261101-shortcuts28', 'SSH shortcut protocol retains its independent revision');
     assert.notEqual(terminalVersion, appVersion, 'SSH script must not inherit the shell-only revision');
     assertAssetVersion(sw, 'terminal.js', terminalVersion, 'service worker SSH script');
     assertAssetVersion(sw, 'telnet-terminal.js', telnetVersion, 'service worker Telnet script');

@@ -22,7 +22,8 @@ test('timeout interrupts the current command with Ctrl+C and preserves SSH sessi
     assert.match(appHtml, /id="remoteTimeoutEnabled" type="checkbox"/);
     assert.match(appHtml, /id="remoteTimeout" type="number"[^>]*disabled/);
     assert.match(app, /session\.pendingTimeoutSeconds = timeoutEnabled \? timeoutSeconds : null/);
-    assert.match(app, /data\.type === 'remote-exec-sent'[\s\S]*session\.timeoutTimer = setTimeout/);
+    assert.match(app, /data\.type === 'remote-exec-sent'[\s\S]*armRemoteCommandTimeout\(session, seconds\)/);
+    assert.match(app, /function armRemoteCommandTimeout\(session, seconds\)[\s\S]*session\.timeoutTimer = setTimeout/);
     assert.match(app, /type: 'remote-exec-timeout'/);
     assert.match(app, /命令已超时，已发送 Ctrl\+C 停止/);
     assert.match(app, /命令超时，但终端未确认 Ctrl\+C/);

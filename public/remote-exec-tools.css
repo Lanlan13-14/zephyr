@@ -1,0 +1,98 @@
+/* Batch-only layout. The actual floating surfaces, header, buttons and snippet
+ * cards inherit the terminal's authoritative zephyr-terminal-spec.css rules. */
+.remote-exec-tools-root { position:relative; isolation:isolate; }
+#remoteStageContent.remote-exec-stage-content { display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr); flex:1 1 0; width:100%; min-width:0; min-height:0; overflow:hidden; container-type:inline-size; }
+.remote-layout.remote-exec-tools-layout { display:grid!important; grid-template-columns:minmax(180px,300px) minmax(0,1fr)!important; grid-template-rows:minmax(0,1fr); gap:12px!important; align-items:stretch!important; min-width:0; min-height:0; overflow:hidden; }
+.remote-layout.remote-exec-tools-layout.remote-exec-has-tools { grid-template-columns:minmax(180px,280px) minmax(0,1fr) min(380px,30%)!important; }
+.remote-exec-tools-layout > .remote-sidebar { grid-column:1; grid-row:1; width:100%; min-width:0; }
+.remote-exec-tools-layout > .remote-stage-shell { grid-column:2; grid-row:1; min-width:0; border-radius:20px; }
+.remote-exec-tools-layout > .remote-stage-shell > * { min-width:0; }
+#remoteStageContent > #remoteWorkspace { grid-column:1; grid-row:1; min-width:0!important; max-width:100%; }
+#remoteToolsDock { grid-column:3; grid-row:1; display:flex; flex-direction:column; gap:10px; min-width:0; min-height:0; max-width:100%; overflow:hidden; }
+#remoteToolsDock[hidden] { display:none!important; }
+/* Motion uses the nearest .app-shell as its coordinate space, so this marker
+ * must stay. It is NOT an application surface: global .app-shell background
+ * and 100dvh rules otherwise paint an opaque, pointer-transparent cover over
+ * every live terminal and the sidebar, even when both tool panels are closed. */
+#view-remote > .remote-exec-tools-layer.app-shell { position:absolute!important; inset:0!important; width:100%!important; height:100%!important; min-height:0!important; max-height:100%!important; margin:0!important; padding:0!important; border:0!important; border-radius:0!important; background:transparent!important; background-image:none!important; box-shadow:none!important; backdrop-filter:none!important; -webkit-backdrop-filter:none!important; overflow:hidden; pointer-events:none; z-index:var(--z-idx-floating-panel,10080); }
+#view-remote > .remote-exec-tools-layer.app-shell::before,
+#view-remote > .remote-exec-tools-layer.app-shell::after { content:none!important; display:none!important; }
+.remote-exec-tool-panel { box-sizing:border-box; position:absolute; display:flex; flex-direction:column; min-width:0; max-width:100%; max-height:100%; margin:0; pointer-events:auto; overflow:hidden; animation:none!important; transition:none!important; }
+.remote-exec-tool-panel[hidden] { display:none!important; pointer-events:none!important; }
+#remoteToolsDock > .remote-exec-tool-panel.docked-right { position:relative!important; inset:auto!important; width:100%!important; height:auto!important; min-height:0!important; flex:1 1 0; z-index:auto!important; }
+/* Same 42px titlebar, 22px surface and 32px shortcut keys as terminal panels.
+ * No local material/button overrides: the shared stylesheet owns those. */
+.remote-exec-tool-panel > .remote-exec-tool-header { flex:0 0 42px; box-sizing:border-box; }
+.remote-exec-tool-panel > .remote-exec-tool-handle { display:none!important; }
+.remote-exec-tool-panel .remote-exec-tool-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; }
+.remote-exec-tool-panel > .remote-exec-tool-scope { display:flex; flex:0 0 auto; box-sizing:border-box; width:auto; max-width:calc(100% - 24px); min-width:0; min-height:40px; align-items:center; justify-content:space-between; gap:8px; margin:8px 12px; padding:6px 0; background:transparent; border:0; }
+.remote-exec-tool-scope .settings-switch-copy { flex:1 1 0; min-width:0; overflow-wrap:anywhere; }
+.remote-exec-tool-scope .settings-switch-label { font-size:12px; }
+/* The sibling span is the actual track (the same markup as the timeout switch).
+ * Scope the 24px geometry explicitly: generic .settings-switch-option > span
+ * rules must not stretch a track or its invisible checkbox beyond this row. */
+.remote-exec-tool-scope .connection-share-switch { position:relative; display:inline-block; flex:0 0 44px; width:44px!important; min-width:44px; max-width:44px; height:24px!important; min-height:24px; padding:0!important; margin:0; overflow:hidden; border-radius:999px; }
+.remote-exec-tool-scope .connection-share-switch input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; z-index:2; cursor:pointer; }
+.remote-exec-tool-scope .connection-share-switch > span { display:block; position:absolute; inset:0; width:100%; height:100%; box-sizing:border-box; padding:0; border-radius:999px; }
+/* Own both pseudo-elements: global switch variants may add a second thumb or
+ * keep the old 42px track's 18px travel, which clips inside the 44px scope. */
+.remote-exec-tool-scope .connection-share-switch > span::before { content:none!important; display:none!important; }
+.remote-exec-tool-scope .connection-share-switch > span::after { content:''; position:absolute; box-sizing:border-box; top:3px!important; left:3px!important; width:18px!important; height:18px!important; border-radius:50%; transform:translateX(0)!important; }
+.remote-exec-tool-scope .connection-share-switch input:checked + span::after { transform:translateX(20px)!important; }
+.remote-exec-tool-scope .connection-share-switch input { pointer-events:auto; }
+.remote-exec-tool-scope .connection-share-switch:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+.remote-exec-tool-panel > .remote-exec-tool-body { flex:1 1 0; min-width:0; min-height:0; overflow:auto; overscroll-behavior:contain; }
+.remote-exec-tool-panel .shortcut-grid { align-content:start; }
+.remote-exec-tool-panel .snippet-panel-body { display:flex; flex-direction:column; }
+.remote-exec-tool-panel .snippet-search { box-sizing:border-box; width:100%; min-width:0; flex:0 0 auto; }
+.remote-exec-tool-panel .snippet-list { min-width:0; }
+.remote-exec-tool-panel .snippet-empty[hidden] { display:none!important; }
+.remote-exec-tool-status { flex:0 0 auto; margin:0; padding:0 12px 8px; color:var(--danger,var(--text-secondary)); font-size:12px; overflow-wrap:anywhere; }
+.remote-exec-tool-status:empty { display:none; }
+.remote-exec-tool-panel :is(button,input):focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.remote-exec-tool-panel button:disabled { opacity:.5; cursor:not-allowed; }
+/* Empty means only a line of text: no card, frame, fill or shadow underneath. */
+#remoteWorkspace > .terminal-empty { background:none!important; border:0!important; box-shadow:none!important; backdrop-filter:none!important; -webkit-backdrop-filter:none!important; border-radius:0!important; }
+.remote-layout.remote-exec-tools-layout.remote-exec-tools-compact { grid-template-columns:minmax(0,1fr)!important; grid-template-rows:auto minmax(0,1fr); gap:8px!important; }
+.remote-layout.remote-exec-tools-layout.remote-exec-tools-compact.remote-exec-has-tools { grid-template-columns:minmax(0,1fr) minmax(0,44%)!important; }
+.remote-exec-tools-layout.remote-exec-tools-compact > .remote-sidebar { grid-column:1/-1; grid-row:1; max-height:180px; }
+.remote-exec-tools-layout.remote-exec-tools-compact > .remote-stage-shell { grid-column:1; grid-row:2; }
+.remote-exec-tools-layout.remote-exec-tools-compact > #remoteToolsDock { grid-column:2; grid-row:2; }
+.remote-exec-tools-layout.remote-exec-tools-compact #remoteWorkspace { min-height:0!important; }
+.remote-exec-tools-compact .remote-stage-toolbar { flex-wrap:wrap; padding-inline:4px; }
+.remote-exec-tools-compact .remote-stage-toolbar > * { max-width:100%; min-width:0; }
+.remote-exec-tools-compact .remote-exec-tool-header { padding-inline:6px!important; }
+.remote-exec-tools-compact .remote-exec-tool-scope { flex-wrap:wrap; margin-inline:6px; max-width:calc(100% - 12px); }
+.remote-exec-tools-compact .remote-exec-tool-scope .connection-share-switch { margin-left:auto; }
+
+/* Same pure-text placeholder reset as #terminalWorkspace, including its parent. */
+#remoteWorkspace.layout-0 > .terminal-placeholder { display:grid!important; position:relative!important; inset:auto!important; min-height:0!important; width:100%!important; height:100%!important; place-items:center; padding:0!important; border:0!important; border-radius:0!important; background:transparent!important; box-shadow:none!important; backdrop-filter:none!important; pointer-events:none!important; }
+#remoteWorkspace .terminal-empty-minimal,#remoteWorkspace .terminal-empty-card { display:inline-flex!important; width:auto!important; max-width:none!important; padding:0!important; margin:0!important; border:0!important; border-radius:0!important; background:transparent!important; box-shadow:none!important; pointer-events:none!important; }
+#remoteWorkspace .terminal-empty-text { font-size:14px!important; font-weight:500!important; line-height:1.5!important; letter-spacing:.02em!important; color:color-mix(in srgb,var(--text-secondary,#8e99a6) 76%,transparent)!important; }
+#view-remote .remote-exec-tool-panel { border-radius:22px!important; }
+/* panelOpenWasm measures relative to its nearest .app-shell. The global
+ * .z-panel-morphing rule is fixed: in this embedded view it must instead stay
+ * in that measured coordinate space, or the last frame jumps by view x/y. */
+#view-remote .remote-exec-tools-layer > .remote-exec-tool-panel.z-panel-morphing { position:absolute!important; }
+#view-remote .remote-exec-tool-scope,
+#view-remote .remote-exec-tool-scope:hover,
+#view-remote .remote-exec-tool-scope:active,
+#view-remote .remote-exec-tool-scope:has(input:checked),
+#view-remote .remote-exec-tool-scope:has(input:focus-visible) { background:transparent!important; background-image:none!important; border:0!important; box-shadow:none!important; backdrop-filter:none!important; transform:none!important; border-radius:0!important; }
+#view-remote .remote-exec-tool-scope > .settings-switch-copy { background:transparent!important; border:0!important; box-shadow:none!important; }
+
+
+/* Same terminal box-morph channels; the view is their explicit coordinate root. */
+#view-remote .remote-exec-tool-panel.z-panel-morphing,
+#view-remote .remote-stage-shell.z-panel-morphing {
+ position:absolute!important; inset:auto!important; grid-column:auto!important; grid-row:auto!important;
+ left:var(--z-morph-l)!important; top:var(--z-morph-t)!important;
+ width:var(--z-morph-w)!important; height:var(--z-morph-h)!important;
+ flex:none!important; z-index:10090!important;
+}
+#view-remote #remoteToolsDock { position:static!important; }
+.remote-exec-dock-morph-slot { display:none; pointer-events:none; background:transparent!important; }
+#remoteToolsDock:has(> .z-panel-morphing) > .remote-exec-dock-morph-slot { display:block; flex:1 1 0; min-height:0; }
+.remote-exec-dock-morphing::after { content:''; grid-column:2; grid-row:1; min-width:0; min-height:0; pointer-events:none; }
+.remote-exec-dock-morphing.remote-exec-tools-compact::after { grid-column:1; grid-row:2; }
+.remote-exec-tools-layout.remote-exec-dock-morphing, .remote-exec-dock-morphing > #remoteToolsDock { overflow:visible; }

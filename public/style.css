@@ -3221,6 +3221,7 @@ body.app-body::after {
 #connectionModalScrim,
 #sshKeyModalScrim,
 #snippetModalScrim,
+#shortcutEditorScrim,
 #proxyModalScrim,
 #aiProviderModalScrim,
 #adminUserModalScrim {
@@ -3241,6 +3242,7 @@ body.app-body::after {
    position:relative 给 iosAppOpen twin（absolute inset:0）做锚点。 */
 #sshKeyModal .ssh-key-modal,
 #snippetModal .snippet-modal,
+#shortcutEditorModal .snippet-modal,
 #proxyModal .proxy-modal,
 #aiProviderModal .ai-provider-modal,
 #adminUserModal .admin-user-modal {
@@ -3261,6 +3263,7 @@ body.app-body::after {
 #sshKeyModal.sshkey1 .ssh-key-modal *,
 #sshKeyModal.sshkey1.closing .ssh-key-modal *,
 #snippetModal.snippet1 .snippet-modal *,
+#shortcutEditorModal.snippet1 .snippet-modal *,
 #snippetModal.snippet1.closing .snippet-modal *,
 #proxyModal.proxy1 .proxy-modal *,
 #proxyModal.proxy1.closing .proxy-modal *,
@@ -3296,6 +3299,8 @@ body.app-body::after {
 body.connection1-blurring #connectionModalScrim,
 body.sshkey1-blurring #sshKeyModalScrim,
 body.snippet1-blurring #snippetModalScrim,
+body.shortcut-editor-blurring #shortcutEditorScrim,
+#shortcutEditorScrim,
 body.proxy1-blurring #proxyModalScrim,
 body.aiprovider1-blurring #aiProviderModalScrim,
 body.adminuser1-blurring #adminUserModalScrim { pointer-events: auto; }
@@ -3304,6 +3309,7 @@ body.adminuser1-blurring #adminUserModalScrim { pointer-events: auto; }
     #connectionModalScrim,
     #sshKeyModalScrim,
     #snippetModalScrim,
+#shortcutEditorScrim,
     #proxyModalScrim,
     #aiProviderModalScrim,
     #adminUserModalScrim { transition-duration: 0.01s; }

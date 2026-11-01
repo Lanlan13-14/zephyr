@@ -6,17 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Zephyr</title>
     <link rel="icon" type="image/svg+xml" href="/zephyr-mark.svg">
-    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20261101-cardflip22">
-    <link rel="modulepreload" href="i18n/runtime.js?v=20261101-cold-start27">
-    <link rel="modulepreload" href="app.js?v=20261101-cold-start27">
+    <link rel="modulepreload" href="vendor/zephyr-motion/index.js?v=20261101-dock35">
+    <link rel="modulepreload" href="i18n/runtime.js?v=20261101-batch-tools35">
+    <link rel="modulepreload" href="app.js?v=20261101-batch-tools35">
     <link rel="modulepreload" href="floating-panel.js?v=20260731-panel-drag-physics4">
     <link rel="stylesheet" href="native-ui.css?v=20261026-native1">
-    <link rel="stylesheet" href="style.css?v=20261101-cold-start27">
-    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261101-cold-start27">
-    <script src="liquid-glass-renderer.js?v=20261101-cold-start27" defer></script>
-    <script src="liquid-glass-tab-layout.js?v=20261101-cold-start27" defer></script>
-    <script src="liquid-glass-nav.js?v=20261101-cold-start27" defer></script>
-    <script src="liquid-glass-slider.js?v=20261101-cold-start27" defer></script>
+    <link rel="stylesheet" href="style.css?v=20261101-batch-tools35">
+    <link rel="stylesheet" href="zephyr-terminal-spec.css?v=20261101-batch-tools35">
+    <link rel="stylesheet" href="remote-exec-tools.css?v=20261101-batch-tools35">
+    <link rel="stylesheet" href="terminal-shortcut-settings.css?v=20261101-modifier-clean33">
+    <script src="liquid-glass-renderer.js?v=20261101-batch-tools35" defer></script>
+    <script src="liquid-glass-tab-layout.js?v=20261101-batch-tools35" defer></script>
+    <script src="liquid-glass-nav.js?v=20261101-batch-tools35" defer></script>
+    <script src="liquid-glass-slider.js?v=20261101-batch-tools35" defer></script>
     <link rel="stylesheet" href="panel-pin.css?v=20260830-desktop-panel-pin8">
     <script src="native-ui.js?v=20261026-native1" defer></script>
     <script src="native-select.js?v=20261026-native1" defer></script>
@@ -133,7 +135,9 @@
                                 <label for="remoteCommand" data-i18n="命令">命令</label>
                                 <span class="remote-cmd-shortcut-hint" data-i18n="Ctrl/⌘+Enter 发送">Ctrl/⌘+Enter 发送</span>
                             </div>
+                            <div class="remote-command-tools topbar-actions" role="group" aria-label="终端工具" data-i18n-aria-label="终端工具"><button class="btn-sm" type="button" id="remoteShortcutBtn" title="快捷键" data-i18n-title="快捷键" aria-label="快捷键" data-i18n-aria-label="快捷键" data-mobile-icon="keyboard"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="6" y1="9" x2="6.01" y2="9"/><line x1="10" y1="9" x2="10.01" y2="9"/><line x1="14" y1="9" x2="14.01" y2="9"/><line x1="18" y1="9" x2="18.01" y2="9"/><line x1="8" y1="15" x2="16" y2="15"/></svg><span class="tb-lbl" data-i18n="快捷键">快捷键</span></button><button class="btn-sm" type="button" id="remoteSnippetBtn" title="代码片段" data-i18n-title="代码片段" aria-label="代码片段" data-i18n-aria-label="代码片段" data-mobile-icon="snippet"><svg class="tb-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg><span class="tb-lbl" data-i18n="片段">片段</span></button></div>
                             <textarea id="remoteCommand" placeholder="例如：uname -a && uptime" data-i18n-placeholder="例如：uname -a && uptime"></textarea>
+                            <p id="remoteSnippetScopeHint" class="field-hint" hidden></p>
                             <div class="remote-command-meta-row">
                                 <label class="remote-timeout-toggle settings-switch-option" for="remoteTimeoutEnabled">
                                     <span class="settings-switch-copy"><strong data-i18n="超时停止命令">超时停止命令</strong></span>
@@ -170,11 +174,13 @@
                                 </button>
                             </div>
                         </div>
-                        <div class="remote-workspace terminal-workspace-grid layout-0" id="remoteWorkspace">
+                        <div class="remote-stage-content" id="remoteStageContent">
+                            <div class="remote-workspace terminal-workspace-grid layout-0" id="remoteWorkspace"></div>
                         </div>
                         <div class="remote-results force-hidden" id="remoteResults"></div>
 
                     </section>
+                    <aside class="remote-tools-dock" id="remoteToolsDock" aria-label="右侧终端工具" data-i18n-aria-label="右侧终端工具" hidden></aside>
                 </div>
             </section>
 
@@ -413,6 +419,7 @@
                         <button class="settings-tab" data-settings="network" data-i18n="代理池">代理池</button>
                         <button class="settings-tab" data-settings="ssh-keys" data-i18n="SSH 密钥库">SSH 密钥库</button>
                         <button class="settings-tab" data-settings="snippets" data-i18n="代码片段">代码片段</button>
+                        <button class="settings-tab" data-settings="shortcuts" data-i18n="快捷键">快捷键</button>
                         <button class="settings-tab" data-settings="ai" data-i18n="AI 助理">AI 助理</button>
                         <button class="settings-tab" data-settings="agent" data-i18n="Zephyr Client">Zephyr Client</button>
                         <button class="settings-tab force-hidden" id="linkSettingsTab" data-settings="link" data-i18n="文件同步">Zephyr Link</button>
@@ -663,6 +670,9 @@
                         <div class="settings-panel" id="settings-ssh-keys">
                             <div class="panel-title-row proxy-panel-title"><h2 data-i18n="SSH 密钥库">SSH 密钥库</h2><button class="btn btn-primary proxy-add-btn" type="button" id="addSshKeyBtn" data-i18n="＋ 新增 SSH 密钥">＋ 新增 SSH 密钥</button></div>
                             <div class="mini-list" id="sshKeyList"></div>
+                        </div>
+                        <div class="settings-panel" id="settings-shortcuts">
+                            <section id="terminalShortcutSettings" class="terminal-shortcut-settings"></section>
                         </div>
                         <div class="settings-panel" id="settings-snippets">
                             <div class="panel-title-row proxy-panel-title"><h2 data-i18n="SSH 代码片段">SSH 代码片段</h2><button class="btn btn-primary proxy-add-btn" type="button" id="addSnippetBtn" data-i18n="＋ 新增代码片段">＋ 新增代码片段</button></div>
@@ -1742,6 +1752,7 @@
     </div>
 
     <!-- 代码片段弹窗专用遮罩：与 SSH 密钥同源（zephyr-motion 驱动虚化） -->
+    <div id="shortcutEditorScrim" aria-hidden="true"></div>
     <div id="snippetModalScrim" aria-hidden="true"></div>
     <div class="modal-backdrop" id="snippetModal" aria-hidden="true">
         <form class="connection-modal snippet-modal" id="snippetForm">
@@ -1774,9 +1785,9 @@
     </div>
 
     <div class="toast-container" id="toastHost" aria-live="polite"></div>
-<script src="preview-mock.js?v=20261101-cold-start27" type="module"></script>
+<script src="preview-mock.js?v=20261101-batch-tools35" type="module"></script>
     <script src="ai-thinking-policy.js?v=20260730-thinking-policy1"></script>
-<script src="app.js?v=20261101-cold-start27" type="module"></script>
+<script src="app.js?v=20261101-batch-tools35" type="module"></script>
     <script>
         // Paint last shell immediately (before module load) to avoid dashboard flash.
         try {

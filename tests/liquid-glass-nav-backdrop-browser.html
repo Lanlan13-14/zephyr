@@ -1,0 +1,18 @@
+<!doctype html>
+<html data-theme="light" data-color-scheme="frost"><meta charset="utf-8">
+<style>
+:root{--bg:#f5f5f7;--surface:#fff;--accent:#1a73e8;--z-global-bg-opacity:.65;--z-global-bg-size:cover}
+body{margin:0;background:var(--bg);font:13px sans-serif}.main-nav{position:relative;width:900px;height:80px}.nav-tabs{position:absolute;left:80px;top:6px;display:flex;width:660px;height:48px;padding:4px;box-sizing:border-box}.nav-tab{width:110px;height:40px;padding:0;border:0;background:transparent;color:transparent}#liquidGlassCanvas{position:absolute;left:0;top:0;pointer-events:none}#view-settings{position:absolute;left:80px;top:150px}.settings-menu{position:relative;width:240px;height:380px;padding:12px;box-sizing:border-box}.settings-tab{display:block;width:216px;height:44px;margin:0 0 6px;padding:0;border:0;background:transparent;color:transparent}#settingsLiquidGlassCanvas{position:absolute;pointer-events:none}
+</style>
+<nav class="main-nav"><div class="nav-tabs"><button class="nav-tab active" data-view="dashboard">仪表盘</button><button class="nav-tab" data-view="activity">活动</button><button class="nav-tab" data-view="terminal">终端</button><button class="nav-tab" data-view="remote">远程</button><button class="nav-tab" data-view="notes">笔记</button><button class="nav-tab" data-view="settings">设置</button></div></nav>
+<div id="zephyrGlobalWallpaper"></div><div id="view-settings" class="active"><div class="settings-menu"><button class="settings-tab active" data-settings="security">安全设置</button><button class="settings-tab" data-settings="language">语言</button><button class="settings-tab" data-settings="network">网络</button><button class="settings-tab" data-settings="appearance">外观</button></div></div>
+<script src="../public/liquid-glass-renderer.js"></script><script src="../public/liquid-glass-tab-layout.js"></script>
+<script>
+// Observe the actual canvas uploaded by production code; keep the real renderer.
+window.navBackdropUploads = new Map();
+const realUpload = LiquidGlassWebGL.LiquidGlassRenderer.prototype.loadWallpaperFromCanvas;
+LiquidGlassWebGL.LiquidGlassRenderer.prototype.loadWallpaperFromCanvas = function(source, key) {
+  if(source) { const c=document.createElement('canvas');c.width=source.width;c.height=source.height;c.getContext('2d').drawImage(source,0,0);navBackdropUploads.set(this.canvas.id,c); }
+  return realUpload.call(this,source,key);
+};
+</script><script src="../public/liquid-glass-nav.js"></script><script src="liquid-glass-nav-backdrop-checks.js"></script></html>
