@@ -60,7 +60,8 @@ function runtime() {
 
 test('new shortcut settings and batch tool keys are complete in catalogs and build inputs', () => {
     assert.ok(Object.keys(settingsText).length >= 50, 'collect the full settings source table');
-    assert.ok(toolKeys.includes('恢复自由浮窗'), 'collect conditional pin labels');
+    assert.ok(toolKeys.includes('停靠/悬浮切换'), 'collect the stable SSH pin toggle label');
+    assert.ok(!toolKeys.includes('恢复自由浮窗'), 'no batch-only conditional pin label');
     assert.ok(toolKeys.includes('暂无代码片段，请到首页 设置 → 代码片段 添加。'), 'collect conditional empty states');
     assert.ok(toolKeys.includes('⌨️ 快捷键') && toolKeys.includes('⚡ 代码片段'), 'collect helper panel titles');
     assert.ok(remoteStart >= 0 && remoteEnd > remoteStart, 'remote source boundaries');

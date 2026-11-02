@@ -1,0 +1,45 @@
+<!doctype html>
+<html data-theme="light" data-color-scheme="frost"><meta charset="utf-8">
+<link rel="stylesheet" href="../public/style.css"><link rel="stylesheet" href="../public/zephyr-terminal-spec.css">
+<style>body{margin:0}.main-nav{position:relative!important}.nav-tabs{--lg-tab-min:0px!important}.brand{width:100px}.nav-actions{width:80px}</style>
+<body class="app-body"><nav class="main-nav"><a class="brand">Zephyr</a><div class="nav-tabs"><button class="nav-tab active" data-view="dashboard">首页</button><button class="nav-tab" data-view="activity">活动</button><button class="nav-tab" data-view="terminal">终端</button><button class="nav-tab" data-view="remote">远程执行</button><button class="nav-tab" data-view="notes">笔记</button><button class="nav-tab" data-view="settings">设置</button></div><div class="nav-actions"></div></nav>
+<script src="../public/liquid-glass-renderer.js"></script><script src="../public/liquid-glass-tab-layout.js"></script>
+<script>
+window.navResizeSamples=[];window.navResizeErrors=[];
+const proto=LiquidGlassWebGL.LiquidGlassRenderer.prototype;
+const real=proto.renderGlassElementPerFbo;
+// Capture actual shared-renderer transformed geometry, not helper predictions.
+proto.renderGlassElementPerFbo=function(el,st,a,b,c,d,t){
+ if(this.canvas.id==='liquidGlassCanvas'){
+  if(el.isBottomTabContainer)this.navResizeContainer={x:t.sx,y:t.sy,w:t.sw,h:t.sh};
+  if(el.isBottomTabIndicator && this.navResizeContainer){
+   const box=this.navResizeContainer;
+   const sample={lens:{x:t.sx,y:t.sy,w:t.sw,h:t.sh},container:box,dpr:this.dpr};
+   navResizeSamples.push(sample);
+   if(t.sx<box.x-0.01||t.sy<box.y-0.01||t.sx+t.sw>box.x+box.w+0.01||t.sy+t.sh>box.y+box.h+0.01)navResizeErrors.push(sample);
+  }
+ }
+ return real.call(this,el,st,a,b,c,d,t);
+};
+window.switchView=function(view){document.querySelectorAll('.nav-tab').forEach(el=>el.classList.toggle('active',el.dataset.view===view));};
+</script><script src="../public/liquid-glass-nav.js"></script>
+<script>
+window.navResizeStep=async function(index,top,theme){
+ document.documentElement.dataset.theme=theme;
+ const bar=document.querySelector('.nav-tabs');
+ bar.style.top=top+'px';
+ const ctrl=ZephyrLiquidGlassBars.topNav;
+ const tabs=[...bar.querySelectorAll('.nav-tab')];
+ switchView(tabs[index].dataset.view);
+ ctrl.renderer.setTabSelected('zephyr-nav',index,tabs.length);
+ // Queue the draw first, then mutate vertical layout to exercise ordering.
+ ctrl.renderer.requestRender();bar.style.top=(top+.375)+'px';
+ await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+ const dom=bar.getBoundingClientRect(),origin=ctrl.canvas.getBoundingClientRect();
+ const config=ctrl.renderer.buttonConfigs.find(e=>e.isBottomTabContainer);
+ if(Math.abs(config.rect.y-(dom.top-origin.top))>.01)throw Error('stale canvas-local y');
+ if(ctrl.canvas.width!==Math.round(ctrl.renderer.cssWidth*ctrl.renderer.dpr))throw Error('stale DPR width');
+ if(ctrl.canvas.height!==Math.round(ctrl.renderer.cssHeight*ctrl.renderer.dpr))throw Error('stale DPR height');
+ return {samples:navResizeSamples.length,errors:navResizeErrors.length,dpr:ctrl.renderer.dpr};
+};
+</script></body></html>

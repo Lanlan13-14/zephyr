@@ -398,7 +398,65 @@
     };
   }
 
+  /* Keep CSS geometry lossless: rounding cache keys can retain an old y/height
+   * (or a whole old FBO at a new DPR) while the DOM has already reflowed. */
+  function navGeometryKey(bar, origin, rects, glass) {
+    return JSON.stringify([bar.left - origin.x, bar.top - origin.y, bar.width, bar.height,
+      glass.x, glass.y, glass.w, glass.h,
+      rects.map(function (r) { return [r.x, r.y, r.w, r.h]; })]);
+  }
+
+  function navPixelRatio(deviceDpr) {
+    return Math.max(2, Math.min(Number(deviceDpr) || 1, 3));
+  }
+
+  /* Match the horizontal renderer transform, then constrain the *transformed*
+   * lens, not its unscaled DOM cell. Keep the spring state/velocity intact.
+   * The returned correction is applied only to this nav renderer instance. */
+  function constrainNavIndicator(indicator, container, state, dpr) {
+    var tg = state || {};
+    var meta = indicator.isBottomTabIndicator;
+    var rect = indicator.rect;
+    var cr = container.rect;
+    var offsets = meta.tabOffsets || [0];
+    var fraction = Math.max(0, Math.min(offsets.length - 1, tg.fraction || 0));
+    var i = Math.floor(fraction);
+    var slide = offsets[i] + ((offsets[Math.min(i + 1, offsets.length - 1)] || 0) - offsets[i]) * (fraction - i);
+    var panel = tg.panelOffset || 0;
+    var sxf = meta.scaleXFactor == null ? 1 : meta.scaleXFactor;
+    var syf = meta.scaleYFactor == null ? 1 : meta.scaleYFactor;
+    var velocity = (tg.velocity || 0) / 10;
+    var sx = indicator.freezePressScale ? 1 : (1 + ((tg.scaleX || 1) - 1) * sxf) /
+      (1 - Math.max(-0.2, Math.min(0.2, velocity * 0.75)) * sxf);
+    var sy = indicator.freezePressScale ? 1 : (1 + ((tg.scaleY || 1) - 1) * syf) *
+      (1 - Math.max(-0.2, Math.min(0.2, velocity * 0.25)) * syf);
+    sx *= indicator.elementScaleX == null ? 1 : indicator.elementScaleX;
+    sy *= indicator.elementScaleY == null ? 1 : indicator.elementScaleY;
+    var containerScale = container.freezePressScale ? 1 : 1 + 16 / Math.max(1, cr.w) * (tg.pressProgress || 0);
+    var cw = cr.w * containerScale;
+    var ch = cr.h * containerScale;
+    var left = cr.x + cr.w / 2 + panel - cw / 2;
+    var top = cr.y + cr.h / 2 - ch / 2;
+    var inset = Math.min(1 / (Number(dpr) || 1), cw / 2, ch / 2);
+    var w = Math.max(0, Math.min(rect.w * sx, cw - inset * 2));
+    var h = Math.max(0, Math.min(rect.h * sy, ch - inset * 2));
+    var cx = rect.x + rect.w / 2 + slide + panel;
+    var cy = rect.y + rect.h / 2;
+    var x = Math.max(left + inset, Math.min(left + cw - inset - w, cx - w / 2));
+    var y = Math.max(top + inset, Math.min(top + ch - inset - h, cy - h / 2));
+    return {
+      dx: x + w / 2 - cx, dy: y + h / 2 - cy,
+      scaleX: rect.w * sx > 0 ? w / (rect.w * sx) : 1,
+      scaleY: rect.h * sy > 0 ? h / (rect.h * sy) : 1,
+      rect: { x: x, y: y, w: w, h: h },
+      bounds: { x: left, y: top, w: cw, h: ch },
+    };
+  }
+
   var api = {
+    navGeometryKey: navGeometryKey,
+    navPixelRatio: navPixelRatio,
+    constrainNavIndicator: constrainNavIndicator,
     pickEqualTabWidth: pickEqualTabWidth,
     equalTabCells: equalTabCells,
     indicatorRect: indicatorRect,

@@ -5,7 +5,7 @@
 .remote-layout.remote-exec-tools-layout { display:grid!important; grid-template-columns:minmax(180px,300px) minmax(0,1fr)!important; grid-template-rows:minmax(0,1fr); gap:12px!important; align-items:stretch!important; min-width:0; min-height:0; overflow:hidden; }
 .remote-layout.remote-exec-tools-layout.remote-exec-has-tools { grid-template-columns:minmax(180px,280px) minmax(0,1fr) min(380px,30%)!important; }
 .remote-exec-tools-layout > .remote-sidebar { grid-column:1; grid-row:1; width:100%; min-width:0; }
-.remote-exec-tools-layout > .remote-stage-shell { grid-column:2; grid-row:1; min-width:0; border-radius:20px; }
+.remote-exec-tools-layout > .remote-stage-shell { grid-column:2; grid-row:1; min-width:0; border-radius:14px; }
 .remote-exec-tools-layout > .remote-stage-shell > * { min-width:0; }
 #remoteStageContent > #remoteWorkspace { grid-column:1; grid-row:1; min-width:0!important; max-width:100%; }
 #remoteToolsDock { grid-column:3; grid-row:1; display:flex; flex-direction:column; gap:10px; min-width:0; min-height:0; max-width:100%; overflow:hidden; }
@@ -17,13 +17,20 @@
 #view-remote > .remote-exec-tools-layer.app-shell { position:absolute!important; inset:0!important; width:100%!important; height:100%!important; min-height:0!important; max-height:100%!important; margin:0!important; padding:0!important; border:0!important; border-radius:0!important; background:transparent!important; background-image:none!important; box-shadow:none!important; backdrop-filter:none!important; -webkit-backdrop-filter:none!important; overflow:hidden; pointer-events:none; z-index:var(--z-idx-floating-panel,10080); }
 #view-remote > .remote-exec-tools-layer.app-shell::before,
 #view-remote > .remote-exec-tools-layer.app-shell::after { content:none!important; display:none!important; }
-.remote-exec-tool-panel { box-sizing:border-box; position:absolute; display:flex; flex-direction:column; min-width:0; max-width:100%; max-height:100%; margin:0; pointer-events:auto; overflow:hidden; animation:none!important; transition:none!important; }
+.remote-exec-tool-panel { box-sizing:border-box; position:absolute; display:flex; flex-direction:column; min-width:0; min-height:0; max-width:100%; max-height:100%; margin:0; pointer-events:auto; overflow:hidden; animation:none!important; transition:none!important; }
 .remote-exec-tool-panel[hidden] { display:none!important; pointer-events:none!important; }
+/* Tier-1 rings live 8px OUTSIDE the glass surface. Keep shared geometry,
+ * opacity and focus rules untouched; only the batch clipping context differs. */
+#view-remote .remote-exec-tool-panel:not(.docked-right):not(.docked-left) { overflow:visible!important; }
+#view-remote .remote-exec-tool-panel > .remote-exec-tool-body { border-radius:0 0 15px 15px; }
 #remoteToolsDock > .remote-exec-tool-panel.docked-right { position:relative!important; inset:auto!important; width:100%!important; height:auto!important; min-height:0!important; flex:1 1 0; z-index:auto!important; }
-/* Same 42px titlebar, 22px surface and 32px shortcut keys as terminal panels.
+/* Same 42px titlebar, 16px free / 14px docked surface and 32px shortcut keys as terminal panels.
  * No local material/button overrides: the shared stylesheet owns those. */
 .remote-exec-tool-panel > .remote-exec-tool-header { flex:0 0 42px; box-sizing:border-box; }
 .remote-exec-tool-panel > .remote-exec-tool-handle { display:none!important; }
+/* Pin chrome intentionally comes from .panel-head-controls in the shared
+ * terminal spec: .z-pin-ico is always rotated 45deg and active/on/pinned owns
+ * the selected fill/border. No batch mask, replacement glyph or state rotation. */
 .remote-exec-tool-panel .remote-exec-tool-actions { display:flex; flex:0 0 auto; align-items:center; gap:4px; }
 .remote-exec-tool-panel > .remote-exec-tool-scope { display:flex; flex:0 0 auto; box-sizing:border-box; width:auto; max-width:calc(100% - 24px); min-width:0; min-height:40px; align-items:center; justify-content:space-between; gap:8px; margin:8px 12px; padding:6px 0; background:transparent; border:0; }
 .remote-exec-tool-scope .settings-switch-copy { flex:1 1 0; min-width:0; overflow-wrap:anywhere; }
@@ -69,11 +76,18 @@
 #remoteWorkspace.layout-0 > .terminal-placeholder { display:grid!important; position:relative!important; inset:auto!important; min-height:0!important; width:100%!important; height:100%!important; place-items:center; padding:0!important; border:0!important; border-radius:0!important; background:transparent!important; box-shadow:none!important; backdrop-filter:none!important; pointer-events:none!important; }
 #remoteWorkspace .terminal-empty-minimal,#remoteWorkspace .terminal-empty-card { display:inline-flex!important; width:auto!important; max-width:none!important; padding:0!important; margin:0!important; border:0!important; border-radius:0!important; background:transparent!important; box-shadow:none!important; pointer-events:none!important; }
 #remoteWorkspace .terminal-empty-text { font-size:14px!important; font-weight:500!important; line-height:1.5!important; letter-spacing:.02em!important; color:color-mix(in srgb,var(--text-secondary,#8e99a6) 76%,transparent)!important; }
-#view-remote .remote-exec-tool-panel { border-radius:22px!important; }
+#view-remote .remote-exec-tool-panel { border-radius:16px!important; }
+#view-remote #remoteToolsDock > .remote-exec-tool-panel.docked-right { border-radius:14px!important; }
+#view-remote #remoteToolsDock > .remote-exec-tool-panel.docked-right > .remote-exec-tool-body { border-radius:0 0 13px 13px; }
 /* panelOpenWasm measures relative to its nearest .app-shell. The global
  * .z-panel-morphing rule is fixed: in this embedded view it must instead stay
  * in that measured coordinate space, or the last frame jumps by view x/y. */
 #view-remote .remote-exec-tools-layer > .remote-exec-tool-panel.z-panel-morphing { position:absolute!important; }
+/* Fullscreen belongs to the batch view, not the outer application viewport. */
+#view-remote .remote-exec-tools-layer > .remote-exec-tool-panel.panel-fullscreen:not(.z-panel-morphing) {
+  position:absolute!important; inset:0!important; width:100%!important; height:100%!important;
+  min-width:0!important; min-height:0!important; max-width:100%!important; max-height:100%!important;
+}
 #view-remote .remote-exec-tool-scope,
 #view-remote .remote-exec-tool-scope:hover,
 #view-remote .remote-exec-tool-scope:active,

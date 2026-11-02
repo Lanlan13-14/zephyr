@@ -63,8 +63,101 @@ test('batch tools: real DOM, layout, scope, shared physics and interruption', { 
             await evaluate('h.tools.close("shortcuts")');
             assert.equal(await evaluate('document.querySelector("#remoteExecShortcutsPanel").hidden'),true);
             await evaluate('h.tools.open("shortcuts")');
-            assert.equal(await evaluate('getComputedStyle(document.querySelector("#remoteExecShortcutsPanel")).borderRadius'), '22px');
+            assert.equal(await evaluate('getComputedStyle(document.querySelector("#remoteExecShortcutsPanel")).borderRadius'), '16px');
             await evaluate('h.dockCalls=[]; const orig=h.Motion.panelDockMorph.bind(h.Motion); h.Motion.panelDockMorph=(...args)=>{h.dockCalls.push({preset:args[2].preset,layoutOnly:args[2].layoutOnly.length});return orig(...args)}');
+        });
+        await t.test('both pin glyphs match terminal across free, right dock, fullscreen and close',async()=>{
+            await evaluate('h.engine=null');
+            for(const kind of ['shortcuts','snippets']) {
+                const id=kind==='shortcuts'?'#remoteExecShortcutsPanel':'#remoteExecSnippetsPanel';
+                await evaluate(`h.tools.open('${kind}')`);
+                const glyph=()=>evaluate(`(()=>{const b=document.querySelector('${id} .panel-pin-toggle'),s=b.querySelector('svg');return {svg:s.outerHTML,title:b.title,label:b.getAttribute('aria-label'),pressed:b.getAttribute('aria-pressed'),active:b.classList.contains('active'),on:b.classList.contains('on'),transform:getComputedStyle(s).transform}})()`);
+                const free=await glyph();assert.equal(free.title,'停靠/悬浮切换');assert.equal(free.label,free.title);assert.equal(free.pressed,'false');assert.match(free.transform,/matrix\(0\.707/);
+                await evaluate(`h.click('${id} .panel-pin-toggle')`);const docked=await glyph();assert.equal(docked.svg,free.svg);assert.equal(docked.transform,free.transform);assert.equal(docked.pressed,'true');assert.equal(docked.active,true);assert.equal(docked.on,true);
+                assert.equal(await evaluate(`document.querySelector('${id}').parentElement.id`),'remoteToolsDock');
+                await evaluate(`h.click('${id} .panel-pin-toggle')`);assert.deepEqual(await glyph(),free);
+                await evaluate(`h.tools.close('${kind}')`);
+            }
+            await evaluate('h.tools.open("shortcuts");h.engine=h.Motion');
+        });
+        await t.test('terminal rings: pointer-only focus, both corners, capture/cancel, fullscreen and bounds', async () => {
+            // Exercise both tools' exact shared ring UI before resizing the shortcut panel.
+            await evaluate('h.engine=null;h.tools.open("snippets")');
+            assert.equal(await evaluate('document.querySelectorAll("#remoteExecSnippetsPanel > .panel-resize-handle").length'),2);
+            await evaluate('document.querySelector("#remoteExecSnippetsPanel").dispatchEvent(new PointerEvent("pointerdown",{bubbles:true}))');
+            assert.equal(await evaluate('getComputedStyle(document.querySelector("#remoteExecSnippetsPanel .panel-resize-handle")).pointerEvents'),'auto');
+            await evaluate('h.tools.close("snippets")');
+            const panel = '#remoteExecShortcutsPanel';
+            const mouse = (type, x, y, button = 'left') => cdp.send('Input.dispatchMouseEvent', { type, x, y, button, buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 }, sessionId);
+            const point = async selector => evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+            const styles = () => evaluate(`(()=>{const p=document.querySelector('${panel}'),a=p.querySelector('.panel-resize-handle');return {focused:p.classList.contains('panel-focused'),opacity:getComputedStyle(a).opacity,events:getComputedStyle(a).pointerEvents,overflow:getComputedStyle(p).overflow,bottom:getComputedStyle(a).bottom,width:getComputedStyle(a).width}})()`);
+            await evaluate('document.body.dispatchEvent(new PointerEvent("pointerdown",{bubbles:true})); document.querySelector("#remoteExecShortcutsPanel button").focus()');
+            const center = await point(`${panel} .remote-exec-tool-header strong`);
+            await mouse('mouseMoved', center.x, center.y, 'none');
+            assert.equal((await styles()).focused, false, 'neither keyboard focus nor hover opens ring');
+            assert.equal((await styles()).events, 'none');
+            await mouse('mousePressed', center.x, center.y); await mouse('mouseReleased', center.x, center.y);
+            await evaluate('new Promise(resolve=>setTimeout(resolve,350))');
+            assert.deepEqual(await styles(), { focused:true, opacity:'1', events:'auto', overflow:'visible', bottom:'-8px', width:'30px' });
+            const start = await evaluate(`h.rect('${panel}')`);
+            let p = await point(`${panel} > .panel-resize-handle.right`);
+            await mouse('mousePressed', p.x, p.y);
+            assert.equal(await evaluate(`document.querySelector('${panel} .right').hasPointerCapture(1)`), true);
+            await mouse('mouseMoved', p.x + 70, p.y + 40); await mouse('mouseReleased', p.x + 70, p.y + 40);
+            let resized = await evaluate(`h.rect('${panel}')`);
+            assert.ok(Math.abs(resized.width-start.width-70)<1 && Math.abs(resized.height-start.height-40)<1);
+            p = await point(`${panel} > .panel-resize-handle.left`);
+            await mouse('mousePressed', p.x, p.y); await mouse('mouseMoved', p.x+40, p.y-20); await mouse('mouseReleased', p.x+40, p.y-20);
+            let left = await evaluate(`h.rect('${panel}')`);
+            assert.ok(Math.abs(left.right-resized.right)<1, 'left corner anchors opposite edge');
+            assert.ok(Math.abs(left.width-resized.width+40)<1);
+            const retained = await evaluate(`({width:document.querySelector('${panel}').style.width,height:document.querySelector('${panel}').style.height})`);
+            await evaluate('h.tools.pin("shortcuts")');
+            assert.equal(await evaluate(`getComputedStyle(document.querySelector('${panel} .right')).display`), 'none');
+            assert.equal(await evaluate(`getComputedStyle(document.querySelector('${panel}')).borderRadius`), '14px');
+            await evaluate('h.tools.free("shortcuts")');
+            assert.equal(await evaluate(`getComputedStyle(document.querySelector('${panel}')).borderRadius`), '16px');
+            assert.deepEqual(await evaluate(`({width:document.querySelector('${panel}').style.width,height:document.querySelector('${panel}').style.height})`), retained);
+            const fullscreen = async () => evaluate(`h.click('${panel} .panel-more-btn');h.click('[data-more-action=fullscreen]');h.nextFrame()`);
+            await fullscreen();
+            assert.equal(await evaluate(`document.querySelector('${panel}').classList.contains('panel-fullscreen')`), true);
+            await evaluate('h.root.style.width="900px";h.root.style.height="650px";h.nextFrame()');
+            assert.equal(await evaluate(`h.rect('${panel}').width`), 900);
+            assert.equal(await evaluate(`h.rect('${panel}').height`), 650);
+            await fullscreen();
+            assert.deepEqual(await evaluate(`({width:document.querySelector('${panel}').style.width,height:document.querySelector('${panel}').style.height})`), retained);
+            // Fullscreen retains resize rings and resizing exits fullscreen, as SSH.
+            await fullscreen();
+            await evaluate(`document.querySelector('${panel}').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
+            p = await point(`${panel} > .panel-resize-handle.right`);
+            await mouse('mousePressed', p.x, p.y); await mouse('mouseMoved', p.x-100,p.y-100); await mouse('mouseReleased',p.x-100,p.y-100);
+            assert.equal(await evaluate(`document.querySelector('${panel}').classList.contains('panel-fullscreen')`), false);
+            for (const stop of ['pointercancel', 'lostpointercapture']) {
+                p = await point(`${panel} > .panel-resize-handle.right`);
+                await mouse('mousePressed',p.x,p.y); await mouse('mouseMoved',p.x+10,p.y+10);
+                await evaluate(`document.querySelector('${panel} .right').dispatchEvent(new PointerEvent('${stop}',{pointerId:1,bubbles:true}))`);
+                const stopped = await evaluate(`h.rect('${panel}')`);
+                await mouse('mouseMoved',p.x+50,p.y+50); await mouse('mouseReleased',p.x+50,p.y+50);
+                assert.deepEqual(await evaluate(`h.rect('${panel}')`),stopped);
+                assert.equal(await evaluate(`document.querySelector('${panel}').classList.contains('resizing')`),false);
+            }
+            // Programmatic pin while captured also tears down all gesture listeners.
+            p = await point(`${panel} > .panel-resize-handle.right`);
+            await mouse('mousePressed',p.x,p.y); await evaluate('h.tools.pin("shortcuts")');
+            await mouse('mouseReleased',p.x,p.y);
+            assert.equal(await evaluate(`document.querySelector('${panel}').classList.contains('resizing')`),false);
+            await evaluate('h.tools.free("shortcuts");h.root.style.width="300px";h.root.style.height="180px";h.nextFrame()');
+            const tiny = await evaluate(`({p:h.rect('${panel}'),r:h.rect('#view-remote')})`);
+            assert.ok(tiny.p.right<=tiny.r.right && tiny.p.bottom<=tiny.r.bottom, 'available host overrides minimum');
+            await evaluate('h.tools.close("shortcuts");h.tools.open("shortcuts")');
+            assert.ok(await evaluate(`h.rect('${panel}').right<=h.rect('#view-remote').right`));
+            await evaluate('h.root.style.width="1100px";h.root.style.height="720px";h.nextFrame()');
+            // The ratio is invariant under host AI/docking classes (no AI-owned DOM mutation).
+            await evaluate('h.root.classList.add("has-docked-right");document.body.classList.add("app-body","ai-docked-right")');
+            assert.equal(await evaluate('getComputedStyle(document.querySelector(".remote-stage-shell")).borderTopLeftRadius'), '14px');
+            assert.equal(await evaluate('getComputedStyle(document.querySelector(".remote-exec-window")).borderTopLeftRadius'), '14px');
+            await evaluate('h.root.classList.remove("has-docked-right");document.body.classList.remove("app-body","ai-docked-right");h.engine=h.Motion');
+            assert.equal(await evaluate('h.frame===document.querySelector("iframe") && h.frameWindow===h.frame.contentWindow'),true);
         });
         await t.test('two pins consume only right-side layout and each panel scrolls',async()=>{
             const full=await evaluate('h.rect("#remoteWorkspace").width');
@@ -128,7 +221,7 @@ test('batch tools: real DOM, layout, scope, shared physics and interruption', { 
             await evaluate('h.engine=h.Motion; h.root.style.width="1000px"; h.tools.open("shortcuts")');
             await evaluate('Promise.all([h.tools.close("shortcuts"),h.tools.open("shortcuts")])');
             assert.equal(await evaluate('h.tools.getState().shortcuts.open && !document.querySelector("#remoteExecShortcutsPanel").hidden'),true);
-            await evaluate('h.tools.destroy(); h.click("#remoteSnippetBtn")');
+            await evaluate('document.querySelector("#remoteExecShortcutsPanel .right").dispatchEvent(new PointerEvent("pointerdown",{pointerId:77,button:0,clientX:400,clientY:350,bubbles:true,cancelable:true}));h.tools.destroy();window.dispatchEvent(new PointerEvent("pointermove",{pointerId:77,clientX:700,clientY:600}));h.click("#remoteSnippetBtn")');
             assert.equal(await evaluate('document.querySelectorAll(".remote-exec-tool-panel").length'),0);
             assert.equal(await evaluate('h.rect("#remoteWorkspace").width===h.rect(".remote-stage-shell").width'),true);
             assert.equal(await evaluate('h.layouts.at(-1).reason'),'destroy');

@@ -18,6 +18,7 @@ const sftpTools = require('./ai-sftp-tools');
 const dockerTools = require('./ai-docker-tools');
 const secretRefs = require('./ai-secret-refs');
 const contextBudget = require('./ai-context-budget');
+const batchExecutionTools = require('./ai-batch-execution-tools');
 const { policyForExtendedTool, EXTENDED_CAPABILITIES } = require('./ai-extended-capabilities');
 const { PLAYBOOKS } = require('./ai-playbooks');
 const { buildIntentRoutingHint } = require('./ai-intent-routing');
@@ -736,6 +737,8 @@ function buildSystemPrompt(ai = {}, context = {}, limits = {}) {
 function toolDefinitions(ai = {}) {
     const p = ai.permissions || {};
     const tools = [];
+    tools.push({ type: 'function', function: { name: 'batch_execution_status_v1', description: '读取当前账户批量执行页快照、用户 view/焦点、已选连接、SSH 实际连接/可控制、超时及回执；不是普通终端上下文。必须先读取此工具，再用 snapshotId 和明确 targetIds 操作。sent 只代表发送，不代表远端命令完成。', parameters: batchExecutionTools.SCHEMAS.batch_execution_status_v1 } });
+    tools.push({ type: 'function', function: { name: 'batch_execution_action_v1', description: '协助操作批量页：select/deselect/focus/promote/reconnect/command/shortcut/font/interrupt/clear。必须绑定 status 返回的 snapshotId、明确目标和唯一 requestId；所有操作走用户审批与现有页面 dispatcher，不可自授权。危险命令同样必须审批。重复 requestId 不会重发；超时/取消/未确认不能声称命令完成。', parameters: batchExecutionTools.SCHEMAS.batch_execution_action_v1 } });
     // Canonical v1 tools. Their narrow schemas make discovery and evaluation
     // reliable; execution validates the exact same schema object.
     tools.push({ type: 'function', function: { name: 'capability_search', description: '检索 Zephyr 当前已实现的 AI 能力、所需工具、风险、确认方式和对应操作规程。遇到不知道该用哪个接口时先调用；不会返回秘密操作能力。', parameters: CAPABILITY_SEARCH_SCHEMA } });
@@ -1614,6 +1617,7 @@ function confirmationSummary(toolName, args, deps) {
     if (toolName === 'snippet_create_v1') return `新增代码片段：${String(args.name || '').slice(0, 120)}`;
     if (toolName === 'snippet_update_v1') return `修改代码片段：${args.snippetId || ''}`;
     if (toolName === 'snippet_delete_v1') return `删除代码片段：${args.snippetId || ''}`;
+    if (toolName === 'batch_execution_action_v1') return `批量页 ${args.action}：目标 ${(args.targetIds || args.connectionIds || []).join(', ')}${args.command ? `；命令 ${String(args.command).slice(0, 200)}` : ''}`;
     if (toolName === 'terminal_send_v1') return `向终端会话 ${args.sessionId || ''} 发送：${String(args.text || '').slice(0, 160)}`;
     if (toolName === 'remote_desktop_action_v1') return `操作远程桌面 ${args.tabId || ''}：${args.action || ''}/${args.control || ''}`;
     if (toolName === 'remote_desktop_cert_decide_v1') {
@@ -1751,6 +1755,10 @@ function requireCanonicalConfirmation(toolName, args, ctx, deps) {
     return createPendingConfirmation(toolName, args, ctx, deps);
 }
 function canonicalToolAuthorization(toolName, args, ctx, deps = {}) {
+    if (String(toolName || '').startsWith('batch_execution_')) {
+        batchExecutionTools.authorizeFeature(deps, ctx?.user);
+        if (toolName === 'batch_execution_action_v1') batchExecutionTools.preflight(deps, ctx, args);
+    }
     if (String(toolName || '').startsWith('note_') && deps.userSettingsService && ctx?.user) {
         const effective = deps.userSettingsService.effective(ctx.user);
         if (!effective?.notes?.enabled) throw new HttpError(403, 'notes_disabled', '当前用户未启用笔记功能');
@@ -1829,11 +1837,19 @@ async function executeAiTool(toolName, args = {}, ctx, deps) {
     }
     const ai = accountAiSettings(deps, ctx?.user);
     const p = ai.permissions || {};
+    if (String(toolName || '').startsWith('batch_execution_')) {
+        batchExecutionTools.authorizeFeature(deps, ctx?.user);
+        if (toolName === 'batch_execution_action_v1') batchExecutionTools.preflight(deps, ctx, args);
+    }
     if (String(toolName || '').startsWith('note_') && deps.userSettingsService && ctx?.user) {
         const effective = deps.userSettingsService.effective(ctx.user);
         if (!effective?.notes?.enabled) throw new HttpError(403, 'notes_disabled', '当前用户未启用笔记功能');
     }
     switch (toolName) {
+        case 'batch_execution_status_v1':
+            return batchExecutionTools.status(deps, ctx);
+        case 'batch_execution_action_v1':
+            return batchExecutionTools.action(deps, ctx, args);
         case 'capability_search':
             return executeCanonicalAiTool(toolName, args, ctx, deps, async () => {
                 const query = String(args.query || '').trim().toLowerCase();
@@ -3690,6 +3706,8 @@ function registerAiRoutes(app, deps) {
         });
     } catch (_) { multerUpload = null; }
 
+    batchExecutionTools.registerRoutes(app, deps, requireUser, handleServiceError);
+
     app.get('/api/ai/status', requireUser, (req, res) => {
         const rawAi = deps.storage.getSettings().ai || {};
         const policy = aiPolicy ? aiPolicy.policyFor(req.user) : { mode: 'admin_shared' };
@@ -4369,6 +4387,8 @@ async function executeAiToolForHost(toolName, args = {}, hostCtx = {}) {
         hostCallGuard?.();
         throwIfAborted(hostCtx.signal);
     };
+    assertLive();
+    batchExecutionTools.bindLedger(deps);
     const hostDeps = hostCallGuard ? guardHostDependencies(deps, assertLive) : deps;
     if (hostCtx?.context?.activeSurface?.kind === 'remote-desktop' && String(toolName || '').startsWith('browser_')) {
         const err = new Error('当前目标是 RDP/VNC 远程桌面；请使用 remote_desktop_cert_status_v1 / remote_desktop_cert_decide_v1 / remote_desktop_capture_v1 / remote_desktop_action_v1 / remote_desktop_verify_v1');

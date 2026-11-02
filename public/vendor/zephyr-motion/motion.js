@@ -182,7 +182,14 @@ function writerFor(st, ch, unit) {
       return v => { el.style.height = `${v}px`; st.managed.add('height'); };
     default:
       if (ch.startsWith('--')) {
-        return v => { el.style.setProperty(ch, `${v}${unit}`); st.managed.add(ch); };
+        return v => {
+          el.style.setProperty(ch, `${v}${unit}`); st.managed.add(ch);
+          if (el.dataset?.aiCompositeMorph === '1' && (ch === '--z-morph-w' || ch === '--z-morph-h')) {
+            const axis = ch === '--z-morph-w' ? 'x' : 'y';
+            const base = Number(el.dataset[axis === 'x' ? 'aiCompositeWidth' : 'aiCompositeHeight']);
+            if (base > 0) el.style.setProperty('--ai-panel-s' + axis, String(v / base));
+          }
+        };
       }
       // Unknown channel: treat as CSS custom property verbatim.
       return v => { el.style.setProperty(ch, `${v}${unit}`); };
@@ -209,6 +216,42 @@ function slotFor(el, ch, unit) {
 function channelsOf(el) {
   const st = elStates.get(el);
   return st ? [...st.slots.values()] : [];
+}
+
+// A stopped slot still paints on every engine frame. Transient geometry must
+// be unbound as well, or unrelated animation resurrects removed CSS variables.
+function releaseCssVarChannels(el, keys) {
+  const st = elStates.get(el);
+  for (const key of keys) {
+    const rec = st?.slots.get(key);
+    if (rec) {
+      engine.stop(rec.id);
+      engine.unbind(rec.id);
+      pool.release(rec.id);
+      st.slots.delete(key);
+      st.managed.delete(key);
+    }
+    el.style.removeProperty(key);
+  }
+}
+
+// AI has a large responsive DOM: keep its target layout stable during the
+// shared geometry spring, painting the same rectangle through compositor scale.
+function clearAiCompositeMorph(panel) {
+  delete panel.dataset.aiCompositeMorph;
+  delete panel.dataset.aiCompositeWidth;
+  delete panel.dataset.aiCompositeHeight;
+  for (const key of ['--ai-panel-base-w', '--ai-panel-base-h', '--ai-panel-sx', '--ai-panel-sy']) panel.style.removeProperty(key);
+}
+function prepareAiCompositeMorph(panel, from, target) {
+  if (panel.id !== 'aiAgentPanel' || (typeof window !== 'undefined' && window.innerWidth <= 760)) return;
+  panel.dataset.aiCompositeMorph = '1';
+  panel.dataset.aiCompositeWidth = String(target['--z-morph-w']);
+  panel.dataset.aiCompositeHeight = String(target['--z-morph-h']);
+  panel.style.setProperty('--ai-panel-base-w', target['--z-morph-w'] + 'px');
+  panel.style.setProperty('--ai-panel-base-h', target['--z-morph-h'] + 'px');
+  panel.style.setProperty('--ai-panel-sx', String(from['--z-morph-w'] / target['--z-morph-w']));
+  panel.style.setProperty('--ai-panel-sy', String(from['--z-morph-h'] / target['--z-morph-h']));
 }
 
 // ── public API ───────────────────────────────────────────────────────────
@@ -3832,6 +3875,7 @@ export const Motion = {
       return true;
     }
     const token = this._bump(panel);
+    clearAiCompositeMorph(panel);
     panel.classList.remove('z-panel-closing', 'panel-closing');
     panel.style.display = 'flex';
     void panel.offsetWidth;
@@ -3846,6 +3890,7 @@ export const Motion = {
     const toT = Math.round(toRect.top - pageRect.top);
     const toW = Math.round(toRect.width);
     const toH = Math.round(toRect.height);
+    const toRadius = Math.max(0, parseFloat(typeof getComputedStyle === 'function' ? getComputedStyle(panel).borderTopLeftRadius : '') || 0);
 
     const scale = 0.88;
     const fromW = Math.round(toW * scale);
@@ -3892,28 +3937,24 @@ export const Motion = {
       '--z-morph-opacity': 0,
     }, { immediate: true, units });
 
-    const guard = withSettleSafetyGuard(panel, 420, () => {
-      if (this._genOf(panel) === token) {
-        panel.classList.remove('z-panel-morphing');
-      }
-    });
+    const finishOpen = () => {
+      if (this._genOf(panel) !== token) return;
+      releaseCssVarChannels(panel, Object.keys(units));
+      panel.classList.remove('z-panel-morphing');
+      for (const key of Object.keys(units)) panel.style.removeProperty(key);
+    };
+    const guard = withSettleSafetyGuard(panel, 420, finishOpen);
     try {
       await this.cssVars(panel, {
         '--z-morph-l': toL,
         '--z-morph-t': toT,
         '--z-morph-w': toW,
         '--z-morph-h': toH,
-        '--z-morph-r': 16,
+        '--z-morph-r': toRadius,
         '--z-morph-opacity': 1,
       }, { preset: { response: 0.22, damping: 0.96 }, units });
     } finally {
       guard();
-      if (this._genOf(panel) === token) {
-        panel.classList.remove('z-panel-morphing');
-        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => {
-          panel.style.removeProperty(k);
-        });
-      }
     }
     return true;
   },
@@ -3943,6 +3984,7 @@ export const Motion = {
     const fromT = Math.round(fromRect.top - pageRect.top);
     const fromW = Math.round(fromRect.width);
     const fromH = Math.round(fromRect.height);
+    clearAiCompositeMorph(panel);
 
     const scale = 0.88;
     const toW = Math.round(fromW * scale);
@@ -3976,6 +4018,7 @@ export const Motion = {
     const closeFromRadius = Math.round(parseFloat(typeof getComputedStyle === 'function' ? getComputedStyle(panel)?.borderTopLeftRadius : '') || 16);
     panel.style.setProperty('--z-morph-r', closeFromRadius + 'px');
     panel.style.setProperty('--z-morph-opacity', '1');
+    prepareAiCompositeMorph(panel, { '--z-morph-w': fromW, '--z-morph-h': fromH }, { '--z-morph-w': fromW, '--z-morph-h': fromH });
     panel.classList.add('z-panel-morphing', 'z-panel-closing');
 
     await this.cssVars(panel, {
@@ -3987,12 +4030,16 @@ export const Motion = {
       '--z-morph-opacity': 1,
     }, { immediate: true, units });
 
-    const guard = withSettleSafetyGuard(panel, 420, () => {
-      if (this._genOf(panel) === token) {
-        panel.classList.remove('z-panel-morphing', 'z-panel-closing', 'open', 'show', 'panel-fullscreen');
-        panel.style.display = 'none';
-      }
-    });
+    const finishClose = () => {
+      if (this._genOf(panel) !== token) return;
+      releaseCssVarChannels(panel, Object.keys(units));
+      panel.style.display = 'none';
+      clearAiCompositeMorph(panel);
+      panel.classList.remove('z-panel-morphing', 'z-panel-closing', 'open', 'show', 'panel-fullscreen');
+      for (const key of Object.keys(units)) panel.style.removeProperty(key);
+      onDone?.();
+    };
+    const guard = withSettleSafetyGuard(panel, 420, finishClose);
     try {
       await this.cssVars(panel, {
         '--z-morph-l': toL,
@@ -4004,14 +4051,6 @@ export const Motion = {
       }, { preset: { response: 0.18, damping: 1.0 }, units });
     } finally {
       guard();
-      if (this._genOf(panel) === token) {
-        panel.classList.remove('z-panel-morphing', 'z-panel-closing', 'open', 'show', 'panel-fullscreen');
-        ['--z-morph-l', '--z-morph-t', '--z-morph-w', '--z-morph-h', '--z-morph-r', '--z-morph-opacity'].forEach((k) => {
-          panel.style.removeProperty(k);
-        });
-        panel.style.display = 'none';
-        onDone?.();
-      }
     }
     return true;
   },
@@ -4062,6 +4101,7 @@ export const Motion = {
       const csBefore = typeof getComputedStyle === 'function' ? getComputedStyle(p) : null;
       const wasVisible = csBefore && csBefore.display !== 'none' && csBefore.visibility !== 'hidden' && p.offsetWidth > 16;
       const fromRect = wasVisible ? p.getBoundingClientRect() : null;
+      clearAiCompositeMorph(p);
       const wasDockedSide = p.classList.contains('docked-left') ? 'left' : (p.classList.contains('docked-right') ? 'right' : null);
       const fromRadius = parseFloat(csBefore?.borderTopLeftRadius) || (wasDockedSide ? 0 : 16);
       p.classList.remove('z-panel-morphing', 'z-panel-opening', 'z-panel-closing', 'dragging', 'panel-physics-baking');
@@ -4189,6 +4229,7 @@ export const Motion = {
       for (const [k, v] of Object.entries(m.fromVars)) {
         m.p.style.setProperty(k, v + (units[k] || ''));
       }
+      prepareAiCompositeMorph(m.p, m.fromVars, m.closingAfterMorph ? m.fromVars : m.toVars);
       m.p.classList.add('z-panel-morphing');
       this.cssVars(m.p, m.fromVars, { immediate: true, units });
     }
@@ -4211,14 +4252,21 @@ export const Motion = {
     void primaryPanel.offsetWidth;
 
     const cleanupAll = () => {
+      // A reversed morph owns the same roots. An older completion must never
+      // remove its column channels, clear its classes or run its callback.
+      if (this._genOf(primaryPanel) !== snapshots.get(primaryPanel)?.token) return;
       if (page?.dataset) delete page.dataset.dockMorphInFlight;
       for (const dt of dockTargets) {
+        releaseCssVarChannels(dt, Object.keys(dockUnits));
         dt.classList.remove('z-dock-cols-morphing');
         dt.style.removeProperty('--z-dock-left-w');
         dt.style.removeProperty('--z-dock-right-w');
       }
       for (const m of activeMorphs) {
         if (this._genOf(m.p) === m.token) {
+          if (m.closingAfterMorph) m.p.style.display = 'none';
+          releaseCssVarChannels(m.p, Object.keys(units));
+          clearAiCompositeMorph(m.p);
           m.p.classList.remove('z-panel-morphing');
           clearVars(m.p);
           m.p.style.transition = '';
@@ -4242,7 +4290,6 @@ export const Motion = {
       await Promise.all(jobs);
     } finally {
       guard();
-      cleanupAll();
     }
     return true;
   },

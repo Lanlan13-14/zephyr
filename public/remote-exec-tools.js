@@ -2,9 +2,34 @@ import { ensureFloatingPanel, ensureFloatingPanelPhysicsDrag, bringPanelToFront,
 import { normalizeTerminalShortcuts, shortcutLabel } from './terminal-shortcuts.js';
 
 const MODIFIERS = ['Ctrl', 'Alt', 'Shift', 'Meta'];
+const BOX_KEYS = ['left', 'top', 'width', 'height', 'right', 'bottom'];
+const captureBox = panel => Object.fromEntries(BOX_KEYS.map(key => [key, panel.style[key]]));
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+// Terminal Tier-1 authority: terminal-sftp-pro bindOuterRingResizeHandles,
+// 320×220 minimum, 8px outer-ring gutter, bottom corners (left anchors right).
+// On a smaller host the available space takes precedence over the minimum.
+export function remoteExecToolBox(box, bounds, delta = null) {
+    const gutter = Math.min(8, Math.max(0, bounds.width) / 4, Math.max(0, bounds.height) / 4);
+    const right = Math.max(gutter + 0.001, bounds.width - gutter);
+    const bottom = Math.max(gutter + 0.001, bounds.height - gutter);
+    const top = clamp(box.top, gutter, Math.max(gutter, bottom - Math.min(220, bottom - gutter)));
+    let left = clamp(box.left, gutter, Math.max(gutter, right - Math.min(320, right - gutter)));
+    let maxWidth = right - left;
+    let width = box.width;
+    if (delta?.edge === 'left') {
+        const anchor = clamp(box.left + box.width, gutter + 0.001, right);
+        maxWidth = anchor - gutter;
+        width = clamp(box.width - delta.x, Math.min(320, maxWidth), maxWidth);
+        left = anchor - width;
+    } else {
+        width = clamp(width + (delta?.x || 0), Math.min(320, maxWidth), maxWidth);
+    }
+    const maxHeight = bottom - top;
+    return { left, top, width, height: clamp(box.height + (delta?.y || 0), Math.min(220, maxHeight), maxHeight) };
+}
 const ICONS = {
-    pin: '<path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"/>',
-    free: '<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4m6-4v4"/>',
+    pin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"/>',
     close: '<path d="m18 6-12 12M6 6l12 12"/>',
 };
 
@@ -97,7 +122,10 @@ export function createRemoteExecTools({
         return el;
     };
     const icon = (button, name, label) => {
-        button.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+        // Match terminal-sftp-pro's Tier-1 SVG verbatim. The shared spec owns
+        // its permanent 45deg rotation (free, docked AND fullscreen); no mask.
+        const pinAttributes = name === 'pin' ? ' class="z-pin-ico"' : '';
+        button.innerHTML = `<svg${pinAttributes} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${name === 'pin' ? '1.9' : '1.85'}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
         button.title = tr(label);
         button.setAttribute('aria-label', tr(label));
     };
@@ -145,31 +173,92 @@ export function createRemoteExecTools({
             const engine = motion();
             engine?.stop?.(stageShell);
             engine?.release?.(stageShell);
-            await engine?.morph?.(stageShell, from, { preset: 'mac', radiusFrom: 22, radiusTo: 22 });
+            await engine?.morph?.(stageShell, from, { preset: 'mac', radiusFrom: 14, radiusTo: 14 });
         } catch { /* Final grid layout remains usable without Motion. */ }
+    };
+    const bounds = () => ({ width: Math.max(1, layer.clientWidth || root.clientWidth), height: Math.max(1, layer.clientHeight || root.clientHeight) });
+    const paintBox = (state, box) => {
+        Object.assign(state.panel.style, Object.fromEntries(Object.entries(box).map(([key, value]) => [key, `${value}px`])));
+        state.panel.style.right = state.panel.style.bottom = 'auto';
     };
     const fitFree = (state, reset = false) => {
         if (state.pinned) return;
-        const width = Math.max(0, layer.clientWidth || root.clientWidth);
-        const height = Math.max(0, layer.clientHeight || root.clientHeight);
-        const margin = Math.min(12, width / 4);
-        const availableWidth = Math.max(1, width - margin * 2);
-        const availableHeight = Math.max(1, height - 24);
+        const area = bounds();
+        if (state.fullscreen) {
+            paintBox(state, { left: 0, top: 0, ...area });
+            return;
+        }
         if (reset || !state.panel.style.width) {
             ensureFloatingPanel(state.panel, {
-                width: Math.min(state.kind === 'shortcuts' ? 420 : 480, availableWidth), height: Math.min(state.kind === 'shortcuts' ? 360 : 520, availableHeight),
-                left: Math.min(24 + (state.kind === 'snippets' ? 32 : 0), margin), top: 12,
+                width: state.kind === 'shortcuts' ? 420 : 480,
+                height: state.kind === 'shortcuts' ? 360 : 520, left: 12, top: 12,
             });
         }
         const style = state.panel.style;
-        style.width = `${Math.min(parseFloat(style.width) || 460, availableWidth)}px`;
-        style.height = `${Math.min(parseFloat(style.height) || 520, availableHeight)}px`;
-        style.left = `${Math.max(margin, Math.min(parseFloat(style.left) || margin, width - parseFloat(style.width) - margin))}px`;
-        style.top = `${Math.max(0, Math.min(parseFloat(style.top) || 12, height - parseFloat(style.height)))}px`;
+        paintBox(state, remoteExecToolBox({ left: parseFloat(style.left) || 12, top: parseFloat(style.top) || 12,
+            width: parseFloat(style.width) || 460, height: parseFloat(style.height) || 520 }, area));
     };
+    // The terminal focuses on document pointerdown, not hover/focusin. Preserve
+    // the ring while its layout popover is clicked; outside/another panel clears it.
+    const focusPanel = target => {
+        for (const state of panels.values()) {
+            const focused = state === target && state.open && !state.pinned;
+            if (state.panel.classList.contains('panel-focused') === focused) continue;
+            if (motion()?.panelResizeRing) void motion().panelResizeRing(state.panel, focused);
+            else state.panel.classList.toggle('panel-focused', focused);
+        }
+    };
+    let activeResize = null;
+    const finishResize = event => {
+        const gesture = activeResize;
+        if (!gesture || (event?.pointerId != null && event.pointerId !== gesture.pointerId)) return;
+        activeResize = null;
+        gesture.cleanup.abort();
+        gesture.state.panel.classList.remove('resizing');
+        try { if (gesture.handle.hasPointerCapture?.(gesture.pointerId)) gesture.handle.releasePointerCapture(gesture.pointerId); } catch { /* Already cancelled by the host. */ }
+        gesture.state.freeStyle = captureBox(gesture.state.panel);
+    };
+    const bindResize = (state, handle) => listen(handle, 'pointerdown', event => {
+        if (destroyed || !state.open || state.pinned || activeResize || (event.button != null && event.button !== 0) ||
+            state.panel.classList.contains('z-panel-morphing') || state.panel.classList.contains('z-panel-closing')) return;
+        event.preventDefault(); event.stopPropagation();
+        closeMore(true);
+        focusPanel(state);
+        bringPanelToFront(state.panel);
+        bakePanelTransform(state.panel, motion());
+        const rect = state.panel.getBoundingClientRect();
+        const parent = layer.getBoundingClientRect();
+        const box = { left: rect.left - parent.left, top: rect.top - parent.top, width: rect.width, height: rect.height };
+        // Exactly as the terminal, resizing a fullscreen panel leaves fullscreen.
+        // Do not restore its pre-fullscreen box: the pointer owns the live box.
+        state.fullscreen = false;
+        state.panel.classList.remove('remote-exec-fullscreen', 'panel-fullscreen');
+        resetMotion(state);
+        paintBox(state, remoteExecToolBox(box, bounds()));
+        state.panel.classList.add('resizing');
+        state.panel.dataset.userPlaced = '1';
+        const cleanup = new win.AbortController();
+        activeResize = { state, handle, pointerId: event.pointerId, cleanup };
+        try { handle.setPointerCapture?.(event.pointerId); } catch { /* Window listeners cover unavailable capture. */ }
+        const move = ev => {
+            if (ev.pointerId !== event.pointerId) return;
+            ev.preventDefault();
+            paintBox(state, remoteExecToolBox(box, bounds(), { edge: handle.dataset.resizeEdge, x: ev.clientX - event.clientX, y: ev.clientY - event.clientY }));
+        };
+        win.addEventListener('pointermove', move, { passive: false, signal: cleanup.signal });
+        win.addEventListener('pointerup', ev => { if (ev.pointerId === event.pointerId) { move(ev); finishResize(ev); } }, { signal: cleanup.signal });
+        win.addEventListener('pointercancel', finishResize, { signal: cleanup.signal });
+        handle.addEventListener('lostpointercapture', finishResize, { signal: cleanup.signal });
+        win.addEventListener('blur', () => finishResize(), { signal: cleanup.signal });
+    });
     const updatePin = state => {
-        icon(state.pin, state.pinned ? 'free' : 'pin', state.pinned ? '恢复自由浮窗' : '停靠到右侧');
+        // Dock state changes chrome, never the glyph or its accessible name.
+        // This is the pro authority, not panel-pin.js's retired island toggles.
+        if (!state.pin.querySelector('.z-pin-ico')) icon(state.pin, 'pin', '停靠/悬浮切换');
+        state.pin.classList.toggle('active', state.pinned);
+        state.pin.classList.toggle('on', state.pinned);
         state.pin.setAttribute('aria-pressed', String(state.pinned));
+        state.panel.classList.toggle('pinned', state.pinned);
         state.panel.classList.toggle('docked-right', state.pinned);
         if (state.pinned) state.panel.dataset.pinSide = 'right';
         else delete state.panel.dataset.pinSide;
@@ -333,8 +422,20 @@ export function createRemoteExecTools({
                 if (item) dispatch(state, onSnippet, item);
             });
         }
+        for (const edge of ['left', 'right']) {
+            const resizeHandle = element('div', `panel-resize-handle ${edge}`);
+            resizeHandle.dataset.resizeEdge = edge;
+            resizeHandle.title = tr('拖动调整大小');
+            panel.append(resizeHandle);
+            bindResize(state, resizeHandle);
+        }
         listen(input, 'change', () => error(state));
-        listen(pin, 'click', () => setPinned(kind, !state.pinned));
+        listen(pin, 'click', event => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            closeMore(true);
+            void setPinned(kind, !state.pinned);
+        }, { capture: true });
         listen(closeButton, 'click', () => close(kind));
         listen(state.trigger, 'click', () => togglePanel(kind));
         state.trigger?.setAttribute('aria-controls', panel.id);
@@ -381,15 +482,23 @@ export function createRemoteExecTools({
         try {
             await motion()?.panelOpenWasm?.(state.panel, anchor || state.trigger, { preset: 'mac' });
         } catch { /* Engine unavailable: leave a fully usable static panel. */ }
+        if (!destroyed && state.revision === revision && state.open && !state.panel.classList.contains('resizing')) fitFree(state);
         return !destroyed && state.revision === revision && state.open;
     };
     const close = async kind => {
         const state = resolve(kind);
         if (destroyed || !state || !state.open) return false;
         const revision = ++state.revision;
+        finishResize();
+        if (!state.pinned && !state.fullscreen) {
+            bakePanelTransform(state.panel, motion());
+            state.freeStyle = captureBox(state.panel);
+        }
         const wasPinned = state.pinned;
+        closeMore(true);
         const stageFrom = wasPinned ? captureStage() : null;
         state.open = false;
+        focusPanel(null);
         state.trigger?.classList.remove('active');
         state.trigger?.setAttribute('aria-expanded', 'false');
         if (!wasPinned) {
@@ -400,6 +509,12 @@ export function createRemoteExecTools({
         // Dock close is immediate and releases the real column: no tiny FLIP
         // residue, no terminal iframe detach/recreate and no hidden placeholder.
         resetMotion(state);
+        if (state.fullscreen) {
+            state.fullscreen = false;
+            state.panel.classList.remove('remote-exec-fullscreen', 'panel-fullscreen');
+            if (state.fullscreenStyle) state.freeStyle = state.fullscreenStyle;
+            restoreFree(state);
+        }
         state.panel.hidden = true;
         state.panel.classList.remove('open', 'front');
         if (wasPinned) {
@@ -418,27 +533,30 @@ export function createRemoteExecTools({
         fitFree(state);
     };
     const setFullscreen = async (state, value) => {
-        if (state.pinned) await setPinned(state.kind, false);
+        if (destroyed || !state.open || state.pinned || state.fullscreen === !!value) return;
+        finishResize();
         const from = state.panel.getBoundingClientRect();
         bakePanelTransform(state.panel, motion()); resetMotion(state);
-        if (value) {
-            state.fullscreenStyle = Object.fromEntries(['left', 'top', 'width', 'height', 'right', 'bottom'].map(key => [key, state.panel.style[key]]));
-            Object.assign(state.panel.style, { left:'0px', top:'0px', right:'auto', bottom:'auto', width:`${layer.clientWidth}px`, height:`${layer.clientHeight}px` });
-        } else {
-            if (state.fullscreenStyle) Object.assign(state.panel.style, state.fullscreenStyle);
-            fitFree(state);
-        }
+        if (value) state.fullscreenStyle = captureBox(state.panel);
+        else if (state.fullscreenStyle) Object.assign(state.panel.style, state.fullscreenStyle);
         state.fullscreen = !!value;
         state.panel.classList.toggle('remote-exec-fullscreen', state.fullscreen);
-        await motion()?.morph?.(state.panel, from, { preset:'mac', radiusFrom:22, radiusTo:22 });
+        // Shared drag/placement authority recognises panel-fullscreen, not the
+        // batch alias. Fullscreen retains handles just like terminal Tier-1.
+        state.panel.classList.toggle('panel-fullscreen', state.fullscreen);
+        fitFree(state);
+        const fullscreenRevision = state.revision;
+        await motion()?.morph?.(state.panel, from, { preset:'mac', radiusFrom:16, radiusTo:16 });
+        if (!destroyed && state.open && state.revision === fullscreenRevision && !state.pinned &&
+            state.fullscreen === !!value && !state.panel.classList.contains('resizing')) fitFree(state);
     };
     const setPinned = async (kind, value = true, side = 'right') => {
         side = 'right'; // Batch supports only the sibling right-hand tool dock.
         const state = resolve(kind);
         if (destroyed || !state) return false;
+        finishResize();
         if (!state.open) await open(state.kind);
-        if (state.fullscreen) await setFullscreen(state, false);
-        if (destroyed || !state.open || (state.pinned === !!value && (!value || state.side === side))) return false;
+        if (destroyed || !state.open || (state.pinned === !!value && (!value || state.side === side) && !state.fullscreen)) return false;
         const revision = ++state.revision;
         const engine = motion();
         const candidates = [...new Set([state.panel, ...[...panels.values()]
@@ -451,10 +569,17 @@ export function createRemoteExecTools({
             layoutRoot.classList.add('remote-exec-dock-morphing');
             stageMotion = true;
             bakePanelTransform(state.panel, engine);
+            const wasFullscreen = state.fullscreen;
+            if (wasFullscreen && state.fullscreenStyle) state.freeStyle = state.fullscreenStyle;
+            state.fullscreen = false;
+            state.panel.classList.remove('remote-exec-fullscreen', 'panel-fullscreen');
             state.pinned = !!value;
             if (state.pinned) {
                 state.side = 'right';
-                if (state.panel.parentElement !== dock) state.freeStyle = Object.fromEntries(['left', 'top', 'width', 'height', 'right', 'bottom'].map(key => [key, state.panel.style[key]]));
+                // A fullscreen pin is one terminal dock morph, not restore +
+                // dock. Unpin must recover the pre-fullscreen floating box.
+                if (state.panel.parentElement !== dock) state.freeStyle = wasFullscreen
+                    ? state.fullscreenStyle || state.freeStyle : captureBox(state.panel);
                 dock.append(state.panel);
                 for (const property of ['left', 'top', 'right', 'bottom', 'width', 'height']) state.panel.style.removeProperty(property);
             } else {
@@ -463,6 +588,10 @@ export function createRemoteExecTools({
                 bringPanelToFront(state.panel);
             }
             updatePin(state);
+            if (state.pinned && state.panel.classList.contains('panel-focused')) {
+                if (motion()?.panelResizeRing) void motion().panelResizeRing(state.panel, false);
+                else state.panel.classList.remove('panel-focused');
+            }
             layout(state.pinned ? 'pin' : 'free');
             for (const other of panels.values()) if (other.open && other.pinned) {
                 const slot = element('div', 'remote-exec-dock-morph-slot');
@@ -496,6 +625,7 @@ export function createRemoteExecTools({
     }]));
     const destroy = () => {
         if (destroyed) return;
+        finishResize();
         destroyed = true;
         abort.abort();
         closeMore(true);
@@ -504,6 +634,7 @@ export function createRemoteExecTools({
         for (const state of panels.values()) {
             ++state.revision;
             resetMotion(state);
+            for (const handle of state.panel.querySelectorAll(':scope > .panel-resize-handle')) motion()?.release?.(handle);
             state.panel.remove();
             state.trigger?.classList.remove('active');
             state.trigger?.removeAttribute('aria-controls');
@@ -529,7 +660,12 @@ export function createRemoteExecTools({
         if (destroyed) return;
         win.cancelAnimationFrame(resizeFrame);
         resizeFrame = win.requestAnimationFrame(() => {
-            for (const state of panels.values()) if (state.open && !state.pinned) fitFree(state);
+            finishResize();
+            for (const state of panels.values()) if (state.open && !state.pinned) {
+                if (state.panel.classList.contains('z-panel-morphing') || state.panel.classList.contains('z-panel-closing')) continue;
+                if (!state.fullscreen) bakePanelTransform(state.panel, motion());
+                fitFree(state);
+            }
             const width = layoutRoot.getBoundingClientRect().width;
             if (Math.abs(width - lastWidth) > 0.5) { lastWidth = width; layout('resize'); }
         });
@@ -539,6 +675,9 @@ export function createRemoteExecTools({
     observer?.observe(stageContent);
     observer?.observe(root);
     listen(doc, 'pointerdown', event => {
+        if (!event.target.closest?.('.z-panel-more-popover')) {
+            focusPanel([...panels.values()].find(state => state.panel.contains(event.target)) || null);
+        }
         if (activeMore && !event.target.closest('.z-panel-more-popover, .panel-more-btn')) closeMore();
     }, { capture:true });
     listen(doc, 'keydown', event => { if (event.key === 'Escape' && activeMore) { event.preventDefault(); event.stopPropagation(); closeMore(); } }, { capture:true });

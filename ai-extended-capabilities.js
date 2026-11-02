@@ -5,6 +5,8 @@ function cap(id, title, risk, confirmation, toolIds, playbookId) {
 }
 
 const EXTENDED_CAPABILITIES = Object.freeze([
+    cap('batch.execution.observe', 'Inspect 批量执行 remote page account focus targets and receipts', 'R0', 'never', ['batch_execution_status_v1'], 'batch-execution-v1'),
+    cap('batch.execution.act', 'Operate 批量执行 snapshot scoped targets through approved page dispatcher', 'R2', 'always', ['batch_execution_action_v1'], 'batch-execution-v1'),
     cap('ui.act', 'Operate the current Zephyr interface', 'R2', 'always', ['ui_action'], 'ui-operations-v1'),
     cap('web.search', 'Search the public web', 'R0', 'never', ['web_search'], 'web-research-v1'),
     cap('web.fetch', 'Fetch a public web page', 'R0', 'never', ['fetch_url'], 'web-research-v1'),

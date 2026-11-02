@@ -94,6 +94,14 @@
     'ssh-keys': [
       { op: 'path', d: 'm21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4' },
     ],
+    shortcuts: [
+      { op: 'rect', x: 2, y: 5, w: 20, h: 14, rx: 2 },
+      { op: 'line', x1: 6, y1: 9, x2: 6.01, y2: 9 },
+      { op: 'line', x1: 10, y1: 9, x2: 10.01, y2: 9 },
+      { op: 'line', x1: 14, y1: 9, x2: 14.01, y2: 9 },
+      { op: 'line', x1: 18, y1: 9, x2: 18.01, y2: 9 },
+      { op: 'line', x1: 8, y1: 15, x2: 16, y2: 15 },
+    ],
     snippets: [
       { op: 'poly', pts: [[16, 18], [22, 12], [16, 6]] },
       { op: 'poly', pts: [[8, 6], [2, 12], [8, 18]] },
@@ -370,6 +378,38 @@
     var lastBgKey = '';
     var lastTerminal = document.body.classList.contains('terminal-mode');
 
+    // A queued renderer frame must measure the current DOM before drawing. A
+    // resize rAF/RO can otherwise run after an already queued spring render.
+    // No captured rectangles, animation cancellation, or shared prototype patch.
+    var renderTopNav = renderer.render;
+    var requestTopRender = renderer.requestRender;
+    var syncingFrame = false;
+    renderer.requestRender = function () {
+      if (syncingFrame) { this.needsRedraw = true; return; }
+      return requestTopRender.apply(this, arguments);
+    };
+    renderer.render = function () {
+      syncingFrame = true;
+      try { layout(false); } finally { syncingFrame = false; }
+      return renderTopNav.apply(this, arguments);
+    };
+    var renderTopGlass = renderer.renderGlassElement;
+    renderer.renderGlassElement = function (el, st, curFbo, curTex, otherFbo, otherTex, rect) {
+      if (el.id === GROUP + '-indicator') {
+        var Layout = window.LiquidGlassTabLayout;
+        var container = this.buttonConfigs.find(function (item) { return item.id === GROUP + '-container'; });
+        if (Layout && container) {
+          var fit = Layout.constrainNavIndicator(el, container, this.toggleStates.get(GROUP), this.dpr);
+          el = Object.assign({}, el, {
+            elementScaleX: (el.elementScaleX == null ? 1 : el.elementScaleX) * fit.scaleX,
+            elementScaleY: (el.elementScaleY == null ? 1 : el.elementScaleY) * fit.scaleY,
+          });
+          rect = Object.assign({}, rect, { x: rect.x + fit.dx, y: rect.y + fit.dy });
+        }
+      }
+      return renderTopGlass.call(this, el, st, curFbo, curTex, otherFbo, otherTex, rect);
+    };
+
     function overlayCanvas() {
       var Layout = window.LiquidGlassTabLayout;
       var bar = navTabs.getBoundingClientRect();
@@ -491,7 +531,7 @@
         if (glass.w > available) available = glass.w;
       }
       var textSig = tabs.map(function (t) { return (t.textContent || '').trim(); }).join('|');
-      var key = tabs.length + ':' + (fill ? 'F' : 'H') + ':' + Math.round(available) + ':' + textSig;
+      var key = tabs.length + ':' + (fill ? 'F' : 'H') + ':' + available + ':' + textSig;
       if (key === cachedTabWKey && cachedTabWVal > 0) {
         navTabs.style.setProperty('--lg-tab-w', cachedTabWVal + 'px');
         return cachedTabWVal;
@@ -687,8 +727,8 @@
           restShadowAlpha: 0.07,
           dimColor: palette.backIconColor.slice(),
           accentColor: accentT.slice(),
-          containerRect: { x: glassX, y: indY, w: glassW, h: indH },
-          containerCornerRadius: indR,
+          containerRect: { x: glassX, y: glassY, w: glassW, h: glassH },
+          containerCornerRadius: glassR,
           containerCenterX: containerX + containerW / 2,
           containerCenterY: containerY + containerH / 2,
           containerWidth: containerW,
@@ -716,22 +756,18 @@
       var h = size.h;
       if (w < 2 || h < 2) return;
       var bar = navTabs.getBoundingClientRect();
-      var measured = measureDomRects(tabs);
-      var rectKey = tabs.length + ':' + Math.round(bar.width) + ':' + Math.round(bar.height);
-      if (measured.length) {
-        var a = measured[0];
-        var b = measured[measured.length - 1];
-        rectKey += ':' + Math.round(a.x) + ',' + Math.round(a.w) + ':' +
-          Math.round(b.x) + ',' + Math.round(b.w);
-      }
+      var origin = canvasOrigin();
+      var measured = measureDomRects(tabs, origin);
+      var glass = glassClient();
+      glass = { x: glass.x - origin.x, y: glass.y - origin.y, w: glass.w, h: glass.h };
+      var rectKey = Layout.navGeometryKey(bar, origin, measured, glass);
       var textSig = tabs.map(function (t) { return (t.textContent || '').trim(); }).join('|');
-      var sizeKey = Layout && Layout.layoutSizeKey
-        ? Layout.layoutSizeKey(w, h)
-        : (Math.round(w) + 'x' + Math.round(h));
-      var contentKey = tabs.length + ':' + Math.round(bar.width) + ':' + Math.round(bar.height) + ':' +
-        (isLightTheme() ? 'L' : 'D') + ':' + rectKey + ':' + themeAccent().join(',') + ':' + textSig;
+      var dpr = Layout.navPixelRatio(window.devicePixelRatio);
+      var sizeKey = w + 'x' + h + '@' + dpr;
+      var contentKey = (isLightTheme() ? 'L' : 'D') + ':' + rectKey + ':' + themeAccent().join(',') + ':' + textSig;
       if (sizeKey !== lastSizeKey) {
         lastSizeKey = sizeKey;
+        renderer.dpr = dpr;
         renderer.resize(w, h);
       }
       applyBackground(Boolean(forceBg));

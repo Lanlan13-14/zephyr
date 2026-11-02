@@ -5157,8 +5157,8 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
     overflow: hidden !important;
   }
 
-  /* AI 浮窗本体：自由浮窗态 16px 圆角，磁贴态 14px 圆角（与终端大卡片 1:1 严丝合缝） */
-  #aiAgentPanel.ai-agent-panel.file-manager {
+  /* AI shares the terminal tool shell: floating 16px, docked 14px. */
+  #aiAgentPanel.ai-agent-panel.file-manager:not(.z-panel-morphing) {
     min-width: 320px !important;
     min-height: 320px !important;
     border-radius: 16px !important;
@@ -5453,9 +5453,11 @@ body.app-body.ai-docked-right:not(.z-dock-cols-morphing) {
     inset: 0 !important;
     z-index: 55 !important;
     border-radius: inherit !important;
-    background: rgba(0, 0, 0, 0.32) !important;
-    backdrop-filter: blur(4px) !important;
-    -webkit-backdrop-filter: blur(4px) !important;
+    // History is a non-modal navigation drawer. Keep its outside-click target
+    // but do not darken or re-blur the conversation underneath it.
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     opacity: 1 !important;
     visibility: visible !important;
     pointer-events: auto !important;
@@ -6434,7 +6436,7 @@ body.desktop-embed .novnc-stage {
     --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4'/%3E%3C/svg%3E");
   }
   #view-settings .settings-menu .settings-tab[data-settings="shortcuts"]::before {
-    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cpath d='M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M8 15h8'/%3E%3C/svg%3E");
+    --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.85' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='5' width='20' height='14' rx='2'/%3E%3Cline x1='6' y1='9' x2='6.01' y2='9'/%3E%3Cline x1='10' y1='9' x2='10.01' y2='9'/%3E%3Cline x1='14' y1='9' x2='14.01' y2='9'/%3E%3Cline x1='18' y1='9' x2='18.01' y2='9'/%3E%3Cline x1='8' y1='15' x2='16' y2='15'/%3E%3C/svg%3E");
   }
   #view-settings .settings-menu .settings-tab[data-settings="snippets"]::before {
     --st-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='16 18 22 12 16 6'/%3E%3Cpolyline points='8 6 2 12 8 18'/%3E%3C/svg%3E");
@@ -8441,7 +8443,8 @@ html[data-theme="dark"] .remote-stage-tab.active::before {
   overflow-y: auto !important;
 }
 
-/* 确保 #remoteWorkspace 内的窗口绝不被 #terminalWorkspace 的分屏抽屉重叠规则绝对定位覆盖 */
+/* 确保 #remoteWorkspace 内的窗口绝不被 #terminalWorkspace 的分屏抽屉重叠规则绝对定位覆盖。
+   Match terminal's 14px shell / 12px inset, including when host AI docks. */
 #remoteWorkspace > .terminal-window.remote-exec-window,
 #remoteWorkspace.terminal-workspace-grid > .terminal-window.remote-exec-window {
   position: relative !important;
@@ -8451,7 +8454,7 @@ html[data-theme="dark"] .remote-stage-tab.active::before {
   min-width: 0 !important;
   min-height: 0 !important;
   margin: 0 !important;
-  border-radius: 16px !important;
+  border-radius: 14px !important;
   display: flex !important;
   flex-direction: column !important;
   overflow: hidden !important;
@@ -8512,7 +8515,7 @@ html[data-theme="dark"] .remote-stage-tab.active::before {
   justify-content: space-between !important;
   gap: 8px !important;
   position: relative !important;
-  border-radius: 14px 14px 0 0 !important;
+  border-radius: 12px 12px 0 0 !important;
   box-sizing: border-box !important;
   user-select: none !important;
 }
@@ -8688,4 +8691,28 @@ html[data-theme="dark"] .remote-stage-tab.active::before {
 #remoteWorkspace.remote-grid-scroll::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, currentColor 28%, transparent);
   border-radius: 8px;
+}
+
+/* AI38: the shared spring owns opacity even over the legacy opaque AI canvas.
+ * Only AI uses stable target layout + compositor scale during dock/close; all
+ * other tool panels retain their accepted geometry implementation. */
+@media (min-width:761px) {
+  html body.app-body #aiAgentPanel.ai-agent-panel.z-panel-morphing {
+    opacity:var(--z-morph-opacity,1)!important;
+  }
+  html body.app-body #aiAgentPanel.ai-agent-panel.z-panel-morphing[data-ai-composite-morph="1"] {
+    width:var(--ai-panel-base-w)!important;
+    height:var(--ai-panel-base-h)!important;
+    min-width:0!important; min-height:0!important;
+    transform-origin:0 0!important;
+    transform:scale(var(--ai-panel-sx,1),var(--ai-panel-sy,1))!important;
+    will-change:transform,opacity;
+  }
+  /* Responsive sidebar/composer state is committed once with the target layout;
+   * do not run a second CSS animation inside the shared outer spring. */
+  #aiAgentPanel[data-ai-composite-morph="1"] .ai-agent-sidebar,
+  #aiAgentPanel[data-ai-composite-morph="1"] .ai-agent-main,
+  #aiAgentPanel[data-ai-composite-morph="1"] .ai-agent-layout {
+    transition:none!important;
+  }
 }

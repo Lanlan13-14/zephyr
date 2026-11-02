@@ -4,13 +4,14 @@ import { reduceParentKeyboardMessage } from './ssh-keyboard/bridge.js?v=20260723
 import { applyZephyrColorScheme, DEFAULT_CUSTOM_THEME_COLORS, normalizeCustomThemeColors, zephyrBrandIconHtml, zephyrDefaultBrandName, zephyrFaviconHref, zephyrResolveBrandName } from './theme-runtime.js?v=20260810-one-brand2';
 import { createNotesController } from './notes.js?v=20261028-ui132';
 import { renderMarkdown as renderMarkdownCore, renderInlineMarkdown as renderInlineMarkdownCore } from './markdown.js?v=20260720-notes-md1';
-import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261102-disclosure36';
+import { t, initI18n, setLocale, getLocale, applyDomI18n, onLocaleChange, formatDateTime } from './i18n/runtime.js?v=20261102-ui39';
 import { localizeActivityMessage } from './activity-i18n.js?v=20261028-ui132';
 import { attachDesktopPanelPin } from './panel-pin.js?v=20261028-ui132';
-import { createRemoteExecTools } from './remote-exec-tools.js?v=20261102-disclosure36';
-import { createTerminalShortcutSettings } from './terminal-shortcut-settings.js?v=20261102-disclosure36';
-import { encodeShortcutKeys } from './terminal-shortcuts.js?v=20261102-disclosure36';
-import { createRemoteToolDispatcher } from './remote-exec-tool-dispatch.js?v=20261102-disclosure36';
+import { createRemoteExecTools } from './remote-exec-tools.js?v=20261102-ui39';
+import { createTerminalShortcutSettings } from './terminal-shortcut-settings.js?v=20261102-ui39';
+import { encodeShortcutKeys } from './terminal-shortcuts.js?v=20261102-ui39';
+import { createRemoteToolDispatcher } from './remote-exec-tool-dispatch.js?v=20261102-ui39';
+import { createBatchExecutionBridge } from './ai-batch-execution-bridge.js?v=20261102-ui39';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -674,7 +675,7 @@ function ensureToastMotion() {
                 }
             }
         } catch { /* TDZ */ }
-        const mod = await import('./vendor/zephyr-motion/index.js?v=20261101-dock35');
+        const mod = await import('./vendor/zephyr-motion/index.js?v=20261102-ui39');
         const Motion = mod?.Motion || window.Motion;
         if (!Motion?.toastPush) throw new Error('Motion.toastPush unavailable');
         try { await Motion.init({ capacity: 256 }); } catch {}
@@ -2851,6 +2852,7 @@ function applySwitchViewCore(name, { enteringAnimated = false } = {}) {
     }
     applySwitchViewCore._lastTarget = target;
     applySwitchViewCore._lastTs = nowSwitchTs;
+    if (currentAppView === 'remote' && target !== 'remote') aiBatchExecutionBridge?.invalidate();
     currentAppView = target;
     rememberLastAppView(target);
     if (target !== 'notes') notesController?.leave?.().catch(() => {});
@@ -6510,12 +6512,12 @@ function createTerminalWindowElement(session) {
         frame.dataset.frame = session.id;
         const frameTheme = getPreferredTheme();
         frame.src = session.page === 'rdp'
-            ? `/rdp.html?embed=1&v=20261102-disclosure36&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+            ? `/rdp.html?embed=1&v=20261102-ui39&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
             : session.page === 'novnc'
-                ? `/novnc.html?embed=1&v=20261102-disclosure36&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
+                ? `/novnc.html?embed=1&v=20261102-ui39&theme=${encodeURIComponent(frameTheme)}&tabId=${encodeURIComponent(session.id)}&connectionId=${encodeURIComponent(session.connectionId || '')}`
                 : session.page === 'telnet-terminal'
-                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261102-disclosure36`
-                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261102-disclosure36`;
+                    ? `/telnet-terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261102-ui39`
+                    : `/terminal.html?embed=1&tabId=${encodeURIComponent(session.id)}&v=20261102-ui39`;
         frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
         frame.addEventListener('load', () => {
             try {
@@ -11868,6 +11870,7 @@ function collectAiContext(options = {}) {
             ? { kind: 'terminal', protocol: activeTerminal.protocol || active?.protocol || '', tabId: activeTerminal.tabId || activeTerminalTab || '', sessionId: activeTerminal.sessionId || activeTerminalTab || '', connectionId: activeTerminal.connectionId || active?.connectionId || '' }
             : { kind: String(view || 'workspace'), protocol: '', tabId: '', connectionId: '' };
     return {
+        batchExecution: getAiBatchExecutionBridge().snapshot(),
         locale: getLocale(),
         view,
         aiChatSessionId: contextSession?.id || '',
@@ -12398,10 +12401,14 @@ async function handleAiClientCapture(data = {}, { providerId = '', model = '', o
     appendAiMessage(t('远程桌面截图 followup 已禁用 Legacy 路径，请启用 Go Runtime'), 'system', { sessionId: targetSessionId });
     throw new Error(t('远程桌面截图 followup 已禁用 Legacy 路径，请启用 Go Runtime'));
 }
-async function syncAiToolSideEffects(toolResults = [], { sessionId = '' } = {}) {
+async function syncAiToolSideEffects(toolResults = [], { sessionId = '', signal = null } = {}) {
     for (const r of toolResults) {
         updateAiBrowserPreviewFromToolResult(r, { sessionId });
         const toolData = r.result?.ok === true && r.result?.data && typeof r.result.data === 'object' ? r.result.data : r.result;
+        if (r.tool === 'batch_execution_action_v1' && toolData?.clientCapture?.type === 'batch_execution_action_v1') {
+            const receipt = await getAiBatchExecutionBridge().execute(toolData.clientCapture, { signal: signal || aiRunForSession(sessionId)?.signal || null });
+            Object.assign(toolData, receipt, { clientCaptureRequired: false });
+        }
         if ((toolData?.uiAction === 'open_connection' || r.tool === 'connection_open_v1') && toolData?.connectionId) {
             try {
                 const openedTabId = await openConnection(toolData.connectionId);
@@ -12961,6 +12968,14 @@ async function sendAiMessageViaRuntime({ session, sessionId, text, providerId, m
                     const maxWidth = Number(captureArgs?.maxWidth || body?.maxWidth || 640) || 640;
                     const callId = body?.callId || captureArgs?.toolCallId || '';
                     const captureType = String(captureArgs?.type || body?.name || '');
+                    if (captureType === 'batch_execution_action_v1') {
+                        const result = await getAiBatchExecutionBridge().execute(captureArgs, { signal: abortController.signal });
+                        if (!abortController.signal.aborted) await api(`/api/ai/runtime/runs/${encodeURIComponent(start.runId)}/capture`, {
+                            method: 'POST', signal: abortController.signal,
+                            body: JSON.stringify({ callId, result, providerId, model }),
+                        });
+                        break;
+                    }
                     const isCertCapture = captureType.includes('remote_desktop_cert_') || captureArgs?.vision === false
                         || (captureArgs?.action && String(captureArgs.action.action || '').startsWith('remote_desktop_cert_'));
                     if (isCertCapture) {
@@ -13431,8 +13446,27 @@ async function resolveAiConfirmation(id, approve) {
                             onLastEventId: (eventId) => {
                                 if (session) session.runtimeLastEventId = Math.max(Number(session.runtimeLastEventId) || 0, Number(eventId) || 0);
                             },
-                            onEvent: ({ type, data }) => {
+                            onEvent: async ({ type, data }) => {
                                 const evType = data?.type || type;
+                                const eventBody = typeof data?.data === 'string' ? (() => { try { return JSON.parse(data.data); } catch { return {}; } })() : (data?.data || data);
+                                if (evType === 'client.capture') {
+                                    const capture = eventBody?.args && typeof eventBody.args === 'object' ? eventBody.args : eventBody;
+                                    if (String(capture?.type || eventBody?.name || '') === 'batch_execution_action_v1') {
+                                        const result = await getAiBatchExecutionBridge().execute(capture, { signal: contController.signal });
+                                        if (!contController.signal.aborted) await api(`/api/ai/runtime/runs/${encodeURIComponent(pending.runId)}/capture`, {
+                                            method: 'POST', signal: contController.signal,
+                                            body: JSON.stringify({ callId: eventBody?.callId || capture.toolCallId || '', result, providerId: pending.providerId, model: pending.model }),
+                                        });
+                                        return;
+                                    }
+                                }
+                                if (evType === 'permission.ask') {
+                                    appendAiConfirmation({ id: eventBody?.askId || eventBody?.callId, tool: eventBody?.name || '', summary: eventBody?.summary || `允许执行 ${eventBody?.name || '操作'}？`, args: eventBody?.args || {} }, { ...pending, runtime: true, runId: pending.runId, sessionId });
+                                    aiStoppedControllers.add(contController);
+                                    contController.abort();
+                                    clearAiSessionRun(sessionId, contController);
+                                    return;
+                                }
                                 if (evType === 'text.delta') {
                                     const body = typeof data?.data === 'string' ? (() => { try { return JSON.parse(data.data); } catch { return {}; } })() : (data?.data || data);
                                     if (body?.text) appendAiMessage(body.text, 'assistant', { sessionId, store: true });
@@ -13458,7 +13492,7 @@ async function resolveAiConfirmation(id, approve) {
 
         const data = await api(`/api/ai/confirm/${encodeURIComponent(id)}`, { method: 'POST', signal: abortController.signal, body: JSON.stringify({ approve }) });
         if (approve && data.result) {
-            await syncAiToolSideEffects([{ tool: data.toolName || (data.result?.plan ? 'plan_update' : ''), args: data.args || {}, result: data.result }], { sessionId });
+            await syncAiToolSideEffects([{ tool: data.toolName || (data.result?.plan ? 'plan_update' : ''), args: data.args || {}, result: data.result }], { sessionId, signal: abortController.signal });
             appendAiMessage(formatAiToolResult({ tool: data.toolName || 'confirmed', result: data.result, args: data.args || {}, durationMs: data.durationMs }), 'trace', { rawHtml: true, sessionId });
             clearAiSessionRun(sessionId, abortController);
             await continueAiAfterConfirmation(id, true, data);
@@ -15710,7 +15744,7 @@ function createRemoteExecWindowElement(session) {
     frame.dataset.frame = session.id;
     frame.title = remoteExecLabel(session);
     frame.allow = 'fullscreen; virtual-keyboard; clipboard-read; clipboard-write';
-    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261102-disclosure36`;
+    frame.src = `/terminal.html?embed=1&lite=1&tabId=${encodeURIComponent(session.id)}&sessionId=${encodeURIComponent(session.sessionId)}&v=20261102-ui39`;
     frame.addEventListener('load', () => initializeRemoteExecFrame(session));
     session.frame = frame;
     session.element = article;
@@ -16099,6 +16133,27 @@ let remoteExecTools = null;
 let terminalShortcutSettings = null;
 let remoteToolDispatcher = null;
 let remoteSnippetDraftScope = null;
+let aiBatchExecutionBridge = null;
+function getAiBatchExecutionBridge() {
+    if (!aiBatchExecutionBridge) aiBatchExecutionBridge = createBatchExecutionBridge({
+        api,
+        getAccountId: () => myIdentity.userId,
+        getView: () => currentAppView,
+        getFocusedId: () => activeRemoteTab,
+        getSessions: () => remoteExecSessions.values(),
+        getConnections: () => connections,
+        canControl: (session) => window.__zephyrRemoteExecViewPolicy(session.id, session.frame?.contentWindow).canControl,
+        dispatch: (type, payload, scope) => getRemoteToolDispatcher().send(type, payload, scope),
+        select: (id) => openRemoteExecWindow(id),
+        deselect: (id) => closeRemoteExecWindow(id),
+        focus: (id) => activateRemoteExecWindow(id, { focusTerminal: false }),
+        promote: async (id) => { await promoteRemoteWindowToFullTerminal(id); return !!terminalTabs.find(tab => tab.id === id); },
+        reconnect: (id) => { runRemoteExecAction('reconnect', id); return remoteExecSessions.get(id)?.status === 'connecting'; },
+        getTimeoutSeconds: () => document.getElementById('remoteTimeoutEnabled')?.checked
+            ? Math.max(1, Math.min(300, Number(document.getElementById('remoteTimeout')?.value) || 30)) : null,
+    });
+    return aiBatchExecutionBridge;
+}
 function armRemoteCommandTimeout(session, seconds) {
     if (session.timeoutTimer) clearTimeout(session.timeoutTimer);
     if (session.timeoutStopFallback) clearTimeout(session.timeoutStopFallback);
@@ -16377,6 +16432,7 @@ function bindRemoteWorkspaceEvents() {
             }
             return;
         }
+        aiBatchExecutionBridge?.observeTimeout(session, data);
         if (remoteToolDispatcher?.acknowledge(session, data)) { event.stopImmediatePropagation(); return; }
         if (data.type === 'remote-lite-click') activateRemoteExecWindow(session.id, { focusTerminal: false });
         else if (data.type === 'remote-lite-dblclick') zoomRemoteExecWindow(session.id);
@@ -17410,7 +17466,7 @@ const sshKeyMotion = {
     _pressBound: false,
     _ensure() {
         if (this.engine || this.failed) return Promise.resolve(this.engine);
-        return import('./vendor/zephyr-motion/index.js?v=20261101-dock35')
+        return import('./vendor/zephyr-motion/index.js?v=20261102-ui39')
             .then(async (mod) => {
                 const Motion = mod?.Motion || window.Motion;
                 if (!Motion) throw new Error('Motion missing from zephyr-motion module');
@@ -20030,9 +20086,6 @@ function toggleAiPanelDockState(panel, explicitSide) {
             if (Motion?.panelResizeRing) Motion.panelResizeRing(panel, true);
             else panel.classList.add('panel-focused');
             updateAiPanelResponsiveState();
-            if (document.body.classList.contains('terminal-mode')) {
-                try { applySplitSlideState({ animate: true }); } catch {}
-            }
         } else if (explicitSide === 'fullscreen') {
             const navBottom = Math.max(56, Math.round(document.querySelector('.main-nav')?.getBoundingClientRect?.()?.bottom || 56));
             const vw = window.innerWidth || 1280;
@@ -20063,9 +20116,6 @@ function toggleAiPanelDockState(panel, explicitSide) {
             if (Motion?.panelResizeRing) Motion.panelResizeRing(panel, false);
             syncHostAiDockState(panel);
             updateAiPanelResponsiveState();
-            if (document.body.classList.contains('terminal-mode')) {
-                try { applySplitSlideState({ animate: true }); } catch {}
-            }
         }
     };
 
@@ -20095,9 +20145,6 @@ window.__zephyrCloseDockedAiPanel = function closeDockedAiPanel(panel, cycle) {
         delete panel.dataset.pinSide;
         delete panel.dataset.pinMode;
         syncHostAiDockState(panel);
-        if (document.body.classList.contains('terminal-mode')) {
-            try { applySplitSlideState({ animate: true }); } catch {}
-        }
     };
     const finishClose = () => {
         if (cycle !== openAiAssistantPanel._cycle) return;
