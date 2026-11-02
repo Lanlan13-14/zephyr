@@ -28,7 +28,18 @@ function readPackageVersion() {
     }
 }
 
+function readPackagedReleaseVersion() {
+    try {
+        const metadata = JSON.parse(fs.readFileSync(path.join(__dirname, 'zephyr-one-release.json'), 'utf8'));
+        return normalizeVersion(metadata.fullVersion || metadata.version);
+    } catch {
+        return '';
+    }
+}
+
 function getAppVersion() {
+    const packaged = readPackagedReleaseVersion();
+    if (packaged) return packaged;
     if (process.env.ZEPHYR_ONE_FULL_VERSION) {
         return normalizeVersion(process.env.ZEPHYR_ONE_FULL_VERSION) || '3.0.0';
     }

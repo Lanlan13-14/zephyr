@@ -132,6 +132,17 @@ fi
 cp "$REPO/zephyr-one-embed.css" "$OUT/public/zephyr-one-embed.css"
 cp "$REPO/zephyr-one-window-chrome.js" "$OUT/public/zephyr-one-window-chrome.js"
 
+# Write release metadata into the staged core. The packaged desktop process
+# does not inherit the CI shell environment, so the embedded core must have
+# a durable source for About's full display version (including preN).
+cat > "$OUT/zephyr-one-release.json" <<EOF
+{
+  "version": "${ZEPHYR_ONE_VERSION_NAME:-}",
+  "prerelease": "${ZEPHYR_ONE_PRERELEASE:-}",
+  "fullVersion": "${ZEPHYR_ONE_FULL_VERSION:-}"
+}
+EOF
+
 cat > "$OUT/ZEPHYR_ONE_CORE.json" <<EOF
 {
   "role": "zephyr-one-local-core",
@@ -139,12 +150,12 @@ cat > "$OUT/ZEPHYR_ONE_CORE.json" <<EOF
   "stagedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF
-
 # Desktop One keeps the Web WASM RDP client. FreeRDP staging is gone with the
 # retired desktop shell; public/rdp.html and rdp-wasm-* stay in the staged core so the
 # embedded UI matches hosted Zephyr.
 
 echo "Staged core OK: $OUT"
+test -f "$OUT/zephyr-one-release.json"
 test -f "$OUT/server.js"
 test -d "$OUT/public"
 test -f "$OUT/public/app.html"
