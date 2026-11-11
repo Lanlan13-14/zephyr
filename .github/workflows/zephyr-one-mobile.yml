@@ -420,7 +420,7 @@ jobs:
     # contracts job already ran the static gate on ubuntu, so this job exists
     # purely to run a compiler over the same tree -- which is the step no
     # amount of source scanning can replace.
-    runs-on: macos-14
+    runs-on: macos-15
     defaults:
       run:
         working-directory: zephyr_one/mobile/ios
