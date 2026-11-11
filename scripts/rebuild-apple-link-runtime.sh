@@ -6,7 +6,7 @@ out="${2:?absolute output archive}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ "$(uname -s)" == Darwin ]] || { echo 'Apple SDK runner required' >&2; exit 1; }
 [[ "$out" == /* ]] || { echo 'Absolute output archive required' >&2; exit 1; }
-[[ "$(go env GOVERSION)" == go1.26.10 ]] || { echo 'Go 1.26.10 required' >&2; exit 1; }
+[[ "$(go env GOVERSION)" == go1.27.4 ]] || { echo 'Go 1.27.4 required' >&2; exit 1; }
 mkdir -p "$(dirname "$out")"
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/zephyr-link-apple.XXXXXX")"
 trap 'rm -rf "$work"' EXIT

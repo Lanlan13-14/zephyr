@@ -24,7 +24,7 @@ for module in zephyr-ai zephyr-link; do
   cat "$output/$name.buildinfo.txt"
   rg -F "vcs.revision=$revision" "$output/$name.buildinfo.txt"
   rg -F 'vcs.modified=false' "$output/$name.buildinfo.txt"
-  rg -F 'go1.26.10' "$output/$name.buildinfo.txt"
+  rg -F 'go1.27.4' "$output/$name.buildinfo.txt"
 done
 for name in libzephyr_ai_runtime.so libzephyr_link.so; do
   cp "$output/$name" "$root/zephyr_one/mobile/android/app/src/main/jniLibs/arm64-v8a/$name"

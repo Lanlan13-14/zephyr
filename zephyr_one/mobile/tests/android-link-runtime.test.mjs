@@ -228,5 +228,5 @@ test('embedded Link runtime has a CI freshness gate like the AI runtime', () => 
   assert.match(rebuild, /checkout --detach/);
   assert.match(rebuild, /vcs\.modified=false/);
   assert.match(inspect, /vcs\.revision=/);
-  assert.match(inspect, /go1\.26\.10/);
+  assert.match(inspect, /go1\.27\.4/);
 });
