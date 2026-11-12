@@ -106,6 +106,7 @@ if [ ! -f "$ABI_PREFIX/lib/libcjson.a" ]; then
   rm -rf "$CJSON_SRC"
   tar -xzf "$CJSON_TGZ" -C "$WORKDIR"
   cmake -S "$CJSON_SRC" -B "$CJSON_SRC/build" -G Ninja \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI="$ABI" \
     -DANDROID_PLATFORM="android-$API" \
