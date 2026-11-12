@@ -5,7 +5,7 @@ import XCTest
 final class AppleLinkChannelTests: XCTestCase {
     func testNativeArchiveActuallyRunsAndHasCurrentBuildIdentity() async throws {
         let info = try AppleLinkNativeRuntime.buildInfo()
-        XCTAssertEqual(info["goVersion"], .string("go1.26.10"))
+        XCTAssertEqual(info["goVersion"], .string("go1.27.4"))
         XCTAssertEqual(info["vcs.modified"], .string("false"))
         if let revision = ProcessInfo.processInfo.environment["GITHUB_SHA"] {
             XCTAssertEqual(info["vcs.revision"], .string(revision))
